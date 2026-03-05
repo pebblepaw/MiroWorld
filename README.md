@@ -1,4 +1,4 @@
-**Singapore-Centric Data-Driven Decision Support via Synthetic Population Simulation**
+## **AI Consultant with Synthetic Population Simulation (Singapore-Centric)**
 
 Traditional methods of gauging public sentiment—surveys, focus groups, and town halls—are slow, expensive, and increasingly unreliable due to declining participation rates and response biases. In Singapore's fast-paced policy and business landscape, decision-makers need a way to stress-test their ideas against a realistic cross-section of the population *before* committing resources to a full public rollout.
 
