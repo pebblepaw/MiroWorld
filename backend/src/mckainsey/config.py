@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     lightrag_workdir: str = "data/lightrag"
     demo_default_policy_markdown: str = "Sample_Inputs/fy2026_budget_statement.md"
 
+    simulation_db_path: str = "data/simulation.db"
+    default_agent_count: int = 50
+    default_rounds: int = 10
+    simulation_platform: str = "reddit"
+    enable_real_oasis: bool = False
+    frontend_dist_path: str = "../frontend/dist"
+
     @property
     def resolved_gemini_key(self) -> str | None:
         return self.gemini_api_key or self.gemini_api

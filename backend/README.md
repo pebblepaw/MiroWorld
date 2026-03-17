@@ -19,6 +19,14 @@ Phase A backend for persona sampling (Mode 1: HuggingFace streaming + DuckDB on 
 - `GET /health`
 - `POST /api/v1/phase-a/personas/sample`
 - `POST /api/v1/phase-a/knowledge/process`
+- `POST /api/v1/phase-b/simulations/run`
+- `GET /api/v1/phase-b/simulations/{simulation_id}`
+- `POST /api/v1/phase-c/memory/sync`
+- `GET /api/v1/phase-c/memory/{simulation_id}/{agent_id}`
+- `POST /api/v1/phase-c/chat/agent`
+- `GET /api/v1/phase-d/report/{simulation_id}`
+- `POST /api/v1/phase-d/report/chat`
+- `GET /api/v1/phase-e/dashboard/{simulation_id}`
 
 ## Demo Default Document
 
@@ -35,3 +43,8 @@ Example body:
 ```
 
 The default markdown file path is configured via `DEMO_DEFAULT_POLICY_MARKDOWN`.
+
+## Validation Scripts
+
+- End-to-end flow: `python scripts/run_e2e.py`
+- Benchmarks: `python scripts/benchmark.py`

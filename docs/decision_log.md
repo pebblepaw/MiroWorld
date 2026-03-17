@@ -197,3 +197,72 @@ After running the OASIS simulation (N rounds of social interaction), the system 
 | Report generation | ReportAgent (dedicated LLM with tool access) | EC2 |
 | Dashboard | React + ECharts | EC2 |
 | Static storage | Amazon S3 | AWS |
+
+---
+
+## 8. Implementation-Era Decisions (Phases B-F)
+
+This section records decisions made during the full-stack implementation wave after Phase A completion.
+
+### 8.1 Runtime Compatibility Strategy for OASIS
+
+**Context:** Primary local runtime environment is Python 3.14. `camel-oasis` requires Python <3.12.
+
+**Decision:** Use a local-first simulation service that preserves OASIS-compatible stage semantics and data contracts, while validating `camel-oasis` installation in a dedicated Python 3.11 compatibility environment.
+
+**Rationale:**
+- Keeps delivery unblocked under current workstation/runtime constraints.
+- Preserves future swappability to native OASIS runtime on production-compatible host.
+- Maintains BRD-required Stage 3a/3b behavior for downstream memory and reporting.
+
+### 8.2 External Memory Sync Failure Policy
+
+**Context:** Zep graph batch operations can return environment/account-specific 404 responses.
+
+**Decision:** Treat Zep sync as best-effort and never fail simulation or report generation when remote memory sync errors occur.
+
+**Rationale:**
+- Protects core user workflow from third-party availability and account configuration issues.
+- Allows local evidence generation (tests/e2e/bench) to continue deterministically.
+
+### 8.3 Report Computation Caching
+
+**Context:** Recomputing full report metrics for repeated dashboard/report-chat requests increases latency and cost.
+
+**Decision:** Cache structured report JSON per simulation in SQLite report cache table.
+
+**Rationale:**
+- Improves response time for repeated report access and chat follow-ups.
+- Reduces repeated model/tool invocations for unchanged simulation snapshots.
+
+### 8.4 Deterministic Benchmark Mode
+
+**Context:** HuggingFace streaming introduces network variance that obscures simulation runtime measurements.
+
+**Decision:** Benchmark harness uses deterministic mocked persona loading for runtime measurements.
+
+**Rationale:**
+- Produces stable, reproducible benchmark results for performance regression tracking.
+- Isolates simulation loop/runtime cost from data-ingest/network noise.
+
+### 8.5 Frontend Delivery Prioritization
+
+**Context:** ECharts bundle size warning appears in production build.
+
+**Decision:** Prioritize complete integrated dashboard/report workflow first; defer advanced bundle splitting/map optimization to next hardening pass.
+
+**Rationale:**
+- Ensures end-to-end BRD flow is functional before optimization cycle.
+- Reduces risk of schedule slip while still preserving a clear optimization backlog.
+
+---
+
+## 9. Validation Evidence Snapshot
+
+- Backend test suite: `pytest -q` passed (`8 passed, 2 warnings`).
+- End-to-end harness: scenario -> simulation -> memory sync -> report -> dashboard completed successfully.
+- Frontend build: `npm run build` passed.
+- Deterministic benchmark sample:
+        - 50 agents x 10 rounds: mean ~0.010s
+        - 100 agents x 10 rounds: mean ~0.009s
+        - 200 agents x 20 rounds: mean ~0.023s

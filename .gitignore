@@ -2,12 +2,16 @@
 .env
 .DS_Store
 .venv/
+backend/.venv311/
 __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
 backend/data/lightrag/
 backend/backend/data/lightrag/
+backend/data/
+data/
+backend/benchmark_output.txt
 *.egg-info/
 node_modules/
 dist/

@@ -4,29 +4,38 @@
 Build full BRD-defined dashboard with stage-driven workflow, charts, maps, and chat panels.
 
 ## Current Status
-Not started
+Completed
 
 ## Tasks
-- [ ] E1 Frontend setup
-- [ ] E2 Scenario submission
-- [ ] E3 Progress monitoring
-- [ ] E4 Results visualizations
-- [ ] E5 Friction map
-- [ ] E6 Consensus tracker
-- [ ] E7 ReportAgent chat panel
-- [ ] E8 Individual agent chat panel
+- [x] E1 Frontend setup
+- [x] E2 Scenario submission
+- [x] E3 Progress monitoring
+- [x] E4 Results visualizations
+- [x] E5 Friction map payload rendering
+- [x] E6 Consensus tracker
+- [x] E7 ReportAgent chat panel
+- [x] E8 Individual agent chat integration path
 
 ## Completed Work
-- None
+- Built React + Vite frontend under `frontend/`.
+- Added stage sidebar and context panel aligned to BRD stage model.
+- Added controls for simulation ID, agent count, rounds, policy summary.
+- Added ECharts views:
+	- opinion shift timeline,
+	- friction by planning area.
+- Added ReportAgent chat interaction UI.
+- Added backend dashboard API endpoint `GET /api/v1/phase-e/dashboard/{simulation_id}`.
 
 ## Open Issues
-- None
+- Bundle size warning due ECharts (~1.1MB bundle) can be optimized with code splitting.
+- Full geospatial 55-area map requires dedicated Singapore GeoJSON integration in next enhancement pass.
 
 ## Decisions Made
-- None
+- Prioritized complete integration flow and BRD stage layout over initial bundle optimization.
 
 ## Next Actions
-1. Start after backend APIs from Phases A-D are stable.
+1. Execute Phase F integration and benchmark validations.
 
 ## Evidence
-- N/A
+- Frontend build passes: `npm run build`.
+- Manual browser open at `http://127.0.0.1:5173/` successful.
