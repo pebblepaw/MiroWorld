@@ -1,46 +1,51 @@
 # Latest Handoff
 
 **Date:** 2026-03-18
-**Session:** BRD finalization — frontend UI spec, design system, and repo references added
+**Session:** Phase A implementation complete (Mode 1)
 
 ## What Changed (this session)
-- Added detailed frontend UI spec to BRD (Section 7): stage-by-stage panel breakdown, two-graph toggle (Knowledge Graph / Persona Graph), multi-tab Stage 4 report dashboard
-- Added Data Access Strategy: HuggingFace streaming for dev, S3 for production
-- Added API Keys reference table
-- Added design system spec: pure black (#050505) background, glassmorphism cards, Inter font, per-stage accent colors, micro-animations
-- Added Section 11: External References & Repositories with all repo links, install commands, and documentation links
-- Archived old proposals to `archive/`
+- Created production-ready backend scaffold under `backend/` with FastAPI.
+- Implemented Phase A endpoints:
+	- `POST /api/v1/phase-a/personas/sample`
+	- `POST /api/v1/phase-a/knowledge/process`
+	- `GET /health`
+- Implemented Mode 1 persona sampling service:
+	- HuggingFace streaming mode via `datasets`
+	- DuckDB-over-HF-parquet query mode
+- Implemented LightRAG processing service with Gemini OpenAI-compatible endpoint.
+- Implemented Zep Cloud logging hook (`graph.add`) for simulation-scoped ingestion events.
+- Added automated tests and validated test suite pass.
+- Added/updated phase docs: `progress/phaseA.md` through `progress/phaseF.md`.
+- Updated `Progress.md` and `progress/index.md` to mark Phase A complete.
+- Added demo sample inputs:
+	- `Sample_Inputs/fy2026_budget_statement.pdf`
+	- `Sample_Inputs/fy2026_budget_statement.md` (converted markdown)
+- Added default demo-document support in Phase A knowledge endpoint (`use_default_demo_document=true`).
 
 ## What Is Stable
-- All technical decisions finalized (see `docs/decision_log.md`)
-- Tech stack: LightRAG, OASIS (camel-oasis), Zep Cloud, Gemini 2.0 Flash, AWS
-- Architecture: 3-tier (EC2 app, S3+Lambda data, Zep Cloud + Gemini API)
-- 5-stage data flow with two-stage simulation output
-- Frontend: two-graph toggle, 7-tab report dashboard, interactive agent chat
-- Design system: black background, glassmorphism, 6 stage accent colors
-- 6 execution phases (A through F) with clear acceptance criteria
-- All repo links and install commands documented
+- Phase A code path works in local Mode 1 execution.
+- Live Nemotron sampling succeeded (streaming path).
+- Live LightRAG extraction + demographic query succeeded using provided credentials.
+- Full FY2026 budget markdown ingestion in LightRAG succeeded (large document path validated).
+- Test suite currently passing (`4 passed`).
 
 ## What Is Risky
-- OASIS + Gemini integration untested — verify OpenAI SDK compatibility
-- LightRAG + Gemini integration untested
-- Zep Cloud free tier capacity for 500-agent simulations
-- Singapore planning area GeoJSON availability on data.gov.sg
-- Persona Graph force-directed layout performance with 500+ nodes
+- OASIS package/runtime selection for Phase B still unresolved (`camel-oasis` package name not available via simple pip lookup).
+- Current LightRAG run uses embedding_dim inferred from first call; should be monitored across model/API changes.
 
 ## What Is Blocked
-- Nothing blocked. Phase A can begin immediately.
+- Nothing blocked for local development.
 
 ## Exact Next Recommended Actions
-1. Begin Phase A: test HuggingFace streaming of Nemotron dataset, install LightRAG
-2. Set up OASIS with Gemini backend on local machine first
-3. Build a minimal Persona Graph prototype to validate force-directed layout at scale
-4. Source Singapore planning area GeoJSON from data.gov.sg for the friction heatmap
+1. Phase B: finalize OASIS runtime package and integration approach with Gemini.
+2. Create simulation DB schema for Stage 3a and Stage 3b outputs.
+3. Build persona-to-agent loading from Phase A sample endpoint.
+4. Implement first end-to-end 50-agent local simulation run.
 
 ## File Links
-- [BRD.md](../BRD.md) — full project spec (source of truth, 644 lines)
-- [Progress.md](../Progress.md) — execution tracking
-- [docs/decision_log.md](../docs/decision_log.md) — all technical decisions
-- [docs/architecture.md](../docs/architecture.md) — system design
-- [progress/index.md](../progress/index.md) — phase document index
-- [archive/](../archive/) — old proposals (read-only reference)
+- [BRD.md](../BRD.md)
+- [Progress.md](../Progress.md)
+- [progress/index.md](../progress/index.md)
+- [progress/phaseA.md](../progress/phaseA.md)
+- [backend/README.md](../../backend/README.md)
+- [Sample_Inputs/fy2026_budget_statement.md](../../Sample_Inputs/fy2026_budget_statement.md)

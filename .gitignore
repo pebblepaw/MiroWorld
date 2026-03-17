@@ -1,2 +1,14 @@
 /archive/*
 .env
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+backend/data/lightrag/
+backend/backend/data/lightrag/
+*.egg-info/
+node_modules/
+dist/
+build/

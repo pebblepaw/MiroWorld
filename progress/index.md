@@ -2,7 +2,7 @@
 
 | Phase | Document | Status | Description |
 |:------|:---------|:-------|:------------|
-| A | [phaseA.md](phaseA.md) | Not started | Data Pipeline & LightRAG Integration |
+| A | [phaseA.md](phaseA.md) | Completed | Data Pipeline & LightRAG Integration (Mode 1 local pipeline) |
 | B | [phaseB.md](phaseB.md) | Not started | OASIS Simulation Engine Setup |
 | C | [phaseC.md](phaseC.md) | Not started | Agent Memory (Zep Cloud Integration) |
 | D | [phaseD.md](phaseD.md) | Not started | ReportAgent & Analysis Pipeline |

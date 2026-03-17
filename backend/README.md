@@ -1,0 +1,37 @@
+# McKAInsey Backend
+
+Phase A backend for persona sampling (Mode 1: HuggingFace streaming + DuckDB on HF parquet), LightRAG ingestion/query, and Zep event logging.
+
+## Quick Start
+
+1. Create and activate a Python virtual environment.
+2. Install dependencies:
+   - `pip install -e .[dev]`
+3. Configure environment variables:
+   - Copy `.env.example` to `.env` and set values.
+4. Run API:
+   - `uvicorn mckainsey.main:app --reload --port 8000`
+5. Run tests:
+   - `pytest -q`
+
+## API Endpoints
+
+- `GET /health`
+- `POST /api/v1/phase-a/personas/sample`
+- `POST /api/v1/phase-a/knowledge/process`
+
+## Demo Default Document
+
+The route `POST /api/v1/phase-a/knowledge/process` supports a default demo document.
+
+Example body:
+
+```json
+{
+   "simulation_id": "demo-budget-2026",
+   "use_default_demo_document": true,
+   "demographic_focus": "low-income households and seniors in Woodlands"
+}
+```
+
+The default markdown file path is configured via `DEMO_DEFAULT_POLICY_MARKDOWN`.
