@@ -27,6 +27,7 @@ Completed
 - Added full report tabs and deep-dive panel with ReportAgent + agent-level chat UX.
 - Added ReportAgent chat interaction UI.
 - Added backend dashboard API endpoint `GET /api/v1/phase-e/dashboard/{simulation_id}`.
+- Added unified frontend boot modes (`auto`, `demo`, `live`) wired through `quick_start.sh --mode` to control demo/live startup behavior on the same site.
 
 ## Open Issues
 - Custom document upload is not yet wired in frontend Stage 1 flow.

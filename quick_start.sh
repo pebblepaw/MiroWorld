@@ -15,6 +15,7 @@ OASIS_PY_BIN_DEFAULT="$BACKEND_DIR/.venv311/bin/python"
 
 REFRESH_DEMO=false
 REAL_OASIS=false
+BOOT_MODE="auto"
 
 for arg in "$@"; do
   case "$arg" in
@@ -24,13 +25,21 @@ for arg in "$@"; do
     --real-oasis)
       REAL_OASIS=true
       ;;
+    --mode=*)
+      BOOT_MODE="${arg#*=}"
+      ;;
+    --mode)
+      echo "Missing value for --mode. Use: --mode auto|demo|live"
+      exit 1
+      ;;
     -h|--help)
       cat <<'EOF'
-Usage: ./quick_start.sh [--refresh-demo] [--real-oasis]
+Usage: ./quick_start.sh [--refresh-demo] [--real-oasis] [--mode auto|demo|live]
 
 Options:
   --refresh-demo  Regenerate demo cache before launching servers.
   --real-oasis    Enable native OASIS runtime for backend simulation runs.
+  --mode          Frontend bootstrap mode: auto (default), demo, or live.
 
 Environment overrides:
   PY_BIN, BACKEND_HOST, BACKEND_PORT, FRONTEND_HOST, FRONTEND_PORT
@@ -44,6 +53,16 @@ EOF
       ;;
   esac
 done
+
+case "$BOOT_MODE" in
+  auto|demo|live)
+    ;;
+  *)
+    echo "Invalid --mode value: $BOOT_MODE"
+    echo "Valid values: auto, demo, live"
+    exit 1
+    ;;
+esac
 
 if [[ ! -x "$PY_BIN" ]]; then
   echo "Python executable not found at: $PY_BIN"
@@ -143,7 +162,7 @@ done
 echo "[frontend] Starting UI on http://$FRONTEND_HOST:$FRONTEND_PORT ..."
 (
   cd "$FRONTEND_DIR"
-  VITE_API_BASE="http://$BACKEND_HOST:$BACKEND_PORT" npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1
+  VITE_API_BASE="http://$BACKEND_HOST:$BACKEND_PORT" VITE_BOOT_MODE="$BOOT_MODE" npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1
 ) &
 FRONTEND_PID=$!
 
@@ -153,6 +172,7 @@ echo ""
 echo "Demo is up:"
 echo "  Frontend: http://$FRONTEND_HOST:$FRONTEND_PORT"
 echo "  Backend:  http://$BACKEND_HOST:$BACKEND_PORT"
+echo "  Boot mode: $BOOT_MODE"
 echo ""
 echo "Logs:"
 echo "  $BACKEND_LOG"

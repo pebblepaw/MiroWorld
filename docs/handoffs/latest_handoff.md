@@ -23,6 +23,7 @@
 	- `quick_start.sh` to boot backend + frontend together,
 	- optional `--refresh-demo` and `--real-oasis` flags,
 	- startup health checks and log paths.
+	- mode switch support via `--mode auto|demo|live` to choose boot preference on same site.
 
 ## What Is Stable
 - Full local integrated pipeline runs end-to-end:
@@ -33,6 +34,7 @@
 - Planning-area GeoJSON endpoint serves valid `FeatureCollection` with 55 features.
 - Browser interaction sweep completed without frontend runtime errors after Sankey fix.
 - `quick_start.sh` starts both services successfully when required ports are free.
+- Frontend now supports explicit boot preference (`auto` default, `demo`, `live`) via launcher mode flag.
 
 ## What Is Risky
 - Native `camel-oasis` runtime requires Python 3.11 side environment while default backend runtime may differ.

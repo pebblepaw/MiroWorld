@@ -66,3 +66,14 @@ The default markdown file path is configured via `DEMO_DEFAULT_POLICY_MARKDOWN`.
 
 - End-to-end flow: `python scripts/run_e2e.py`
 - Benchmarks: `python scripts/benchmark.py`
+
+## Unified Local Launcher
+
+From repo root, use `./quick_start.sh` to start backend + frontend together.
+
+Examples:
+
+- `./quick_start.sh --mode auto` (default): live dashboard first, then static demo fallback.
+- `./quick_start.sh --mode demo`: static demo-first boot behavior.
+- `./quick_start.sh --mode live`: live backend-first boot behavior.
+- `./quick_start.sh --refresh-demo --real-oasis --mode demo`: regenerate cached demo artifacts with native OASIS and boot demo-first.

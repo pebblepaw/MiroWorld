@@ -17,8 +17,16 @@ import {
 
 const reportTabs = ['overview', 'friction-map', 'opinion-flow', 'timeline', 'influential', 'arguments', 'recommendations'] as const;
 type ReportTab = (typeof reportTabs)[number];
+type BootMode = 'auto' | 'demo' | 'live';
+
+function resolveBootMode(): BootMode {
+  const mode = String(import.meta.env.VITE_BOOT_MODE ?? 'auto').toLowerCase();
+  if (mode === 'demo' || mode === 'live') return mode;
+  return 'auto';
+}
 
 export default function App() {
+  const bootMode = resolveBootMode();
   const [stage, setStage] = useState('stage1');
   const [simulationId, setSimulationId] = useState('demo-budget-2026');
   const [policySummary, setPolicySummary] = useState('FY2026 budget package focused on cost-of-living support, transport affordability, and senior support.');
@@ -43,30 +51,58 @@ export default function App() {
 
   useEffect(() => {
     async function bootstrapDemo() {
-      try {
-        const live = await getDashboard(simulationId);
-        setDashboard(live);
-        const top = live?.report?.influential_agents?.[0]?.agent_id;
-        if (top) setSelectedAgent(top);
-        setStage('stage4');
-      } catch {
+      async function tryLoadLive() {
+        try {
+          const live = await getDashboard(simulationId);
+          setDashboard(live);
+          const top = live?.report?.influential_agents?.[0]?.agent_id;
+          if (top) setSelectedAgent(top);
+          setStage('stage4');
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      async function tryLoadCached() {
         try {
           const cached = await loadStaticDemoOutput();
-          if (cached?.dashboard) {
-            setDashboard(cached.dashboard);
-            setMemoryStatus(cached?.memory_sync?.zep_enabled ? 'Synced to Zep' : 'Sync fallback mode');
-            const top = cached?.report?.influential_agents?.[0]?.agent_id;
-            if (top) setSelectedAgent(top);
-            setStage('stage4');
-          }
+          if (!cached?.dashboard) return false;
+          setDashboard(cached.dashboard);
+          setMemoryStatus(cached?.memory_sync?.zep_enabled ? 'Synced to Zep' : 'Sync fallback mode');
+          const top = cached?.report?.influential_agents?.[0]?.agent_id;
+          if (top) setSelectedAgent(top);
+          setStage('stage4');
+          return true;
         } catch {
-          // keep initial blank state; user can run a live simulation.
+          return false;
         }
+      }
+
+      if (bootMode === 'demo') {
+        const demoOk = await tryLoadCached();
+        if (!demoOk) {
+          await tryLoadLive();
+        }
+        return;
+      }
+
+      if (bootMode === 'live') {
+        const liveOk = await tryLoadLive();
+        if (!liveOk) {
+          await tryLoadCached();
+        }
+        return;
+      }
+
+      const liveOk = await tryLoadLive();
+      if (!liveOk) {
+        await tryLoadCached();
       }
     }
 
     void bootstrapDemo();
-  }, [simulationId]);
+  }, [simulationId, bootMode]);
 
   useEffect(() => {
     async function bootstrapGeoJson() {
@@ -570,6 +606,7 @@ export default function App() {
           <p><strong>Approval Post:</strong> {dashboard?.simulation?.stats?.approval_post ?? '-'}</p>
           <p><strong>Memory Sync:</strong> {memoryStatus}</p>
           <p><strong>Runtime:</strong> {dashboard?.simulation?.runtime ?? dashboard?.simulation?.stats?.runtime ?? '-'}</p>
+          <p><strong>Boot Mode:</strong> {bootMode}</p>
           <p><strong>Top Friction Area:</strong> {dashboard?.report?.friction_by_planning_area?.[0]?.planning_area ?? '-'}</p>
 
           <h4>ReportAgent Reply</h4>
