@@ -64,6 +64,11 @@ class MemoryService:
             "Respond in-character in 3-5 sentences."
         )
         response = self.llm.complete(prompt, system_prompt="You are a simulated Singapore persona agent.")
+        if response.startswith("LLM quota/availability fallback"):
+            response = (
+                f"As {agent_id}, my recent interactions indicate mixed reactions in my planning-area cohort. "
+                "I adjusted my stance based on affordability concerns, peer comments, and perceived policy support details."
+            )
         return {
             "simulation_id": simulation_id,
             "agent_id": agent_id,

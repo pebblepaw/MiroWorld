@@ -28,3 +28,28 @@ def test_phase_e_dashboard_payload(monkeypatch):
     body = response.json()
     assert body["simulation"]["simulation_id"] == "sim-dashboard"
     assert "friction_map" in body
+    assert "opinion_flow" in body
+    assert "heatmap_matrix" in body
+
+
+def test_phase_e_geojson_endpoint(monkeypatch):
+    fake_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "WOODLANDS"},
+                "geometry": {"type": "Polygon", "coordinates": []},
+            }
+        ],
+    }
+
+    from mckainsey.services.geo_service import PlanningAreaGeoService
+
+    monkeypatch.setattr(PlanningAreaGeoService, "get_geojson", lambda self, force_refresh=False: fake_geojson)
+
+    response = client.get("/api/v1/phase-e/geo/planning-areas")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["type"] == "FeatureCollection"
+    assert body["features"][0]["properties"]["name"] == "WOODLANDS"

@@ -27,14 +27,15 @@ Completed
 - Integrated Gemini-backed ReportAgent response generation with fallback if model unavailable.
 
 ## Open Issues
-- Current recommendation generation is rule-based baseline; can be upgraded with stronger model prompting and confidence scoring.
+- None for BRD-defined scope.
 
 ## Decisions Made
 - Cached report JSON to reduce repeated analysis cost and latency.
 
 ## Next Actions
-1. Continue frontend dashboard integration (Phase E).
+1. Maintain and monitor production behavior under live quota/network variation.
 
 ## Evidence
 - Phase D tests added: `tests/test_phase_d_report.py`.
 - End-to-end run confirms report payload keys and chat response path.
+- Report chat and individual agent chat validated in browser interaction sweep on live backend.

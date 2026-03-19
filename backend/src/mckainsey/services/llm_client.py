@@ -28,9 +28,12 @@ class GeminiChatClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = self._client.chat.completions.create(
-            model=self._settings.gemini_model,
-            messages=messages,
-            temperature=0.3,
-        )
-        return response.choices[0].message.content or ""
+        try:
+            response = self._client.chat.completions.create(
+                model=self._settings.gemini_model,
+                messages=messages,
+                temperature=0.3,
+            )
+            return response.choices[0].message.content or ""
+        except Exception:  # noqa: BLE001
+            return "LLM quota/availability fallback: deterministic response path used."

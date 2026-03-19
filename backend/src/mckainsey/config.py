@@ -3,7 +3,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=("../.env", ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_name: str = "McKAInsey API"
     nemotron_dataset: str = "nvidia/Nemotron-Personas-Singapore"
@@ -28,6 +32,16 @@ class Settings(BaseSettings):
     default_rounds: int = 10
     simulation_platform: str = "reddit"
     enable_real_oasis: bool = False
+    oasis_python_bin: str = ".venv311/bin/python"
+    oasis_runner_script: str = "scripts/oasis_reddit_runner.py"
+    oasis_db_dir: str = "data/oasis"
+    oasis_timeout_seconds: int = 1800
+    oasis_run_log_dir: str = "data/oasis/logs"
+
+    datagov_api_key: str | None = None
+    planning_area_dataset_id: str = "d_4765db0e87b9c86336792efe8a1f7a66"
+    planning_area_geojson_cache_path: str = "data/geo/planning_area_boundaries.geojson"
+
     frontend_dist_path: str = "../frontend/dist"
 
     @property

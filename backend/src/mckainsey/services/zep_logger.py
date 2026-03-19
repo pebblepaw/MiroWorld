@@ -15,9 +15,13 @@ class ZepEventLogger:
         if not self._client:
             return
 
-        self._client.graph.add(
-            user_id=simulation_id,
-            data=payload,
-            type="text",
-            source_description=source,
-        )
+        try:
+            self._client.graph.add(
+                user_id=simulation_id,
+                data=payload,
+                type="text",
+                source_description=source,
+            )
+        except Exception:  # noqa: BLE001
+            # Zep availability/config issues should not block scenario processing.
+            return

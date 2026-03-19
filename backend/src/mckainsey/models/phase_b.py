@@ -23,6 +23,7 @@ class SimulationRunResponse(BaseModel):
     stage3b_approval_rate: float
     net_opinion_shift: float
     sqlite_path: str
+    runtime: str
 
 
 class SimulationSnapshotResponse(BaseModel):

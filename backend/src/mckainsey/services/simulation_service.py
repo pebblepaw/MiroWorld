@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import json
 import random
+import subprocess
+import tempfile
+import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from mckainsey.config import Settings
@@ -10,6 +16,9 @@ from mckainsey.models.phase_b import SimulationRunRequest
 from mckainsey.services.llm_client import GeminiChatClient
 from mckainsey.services.persona_sampler import PersonaSampler
 from mckainsey.services.storage import SimulationStore
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 
 
 @dataclass
@@ -34,30 +43,149 @@ class SimulationService:
         if not personas:
             raise ValueError("No personas matched provided filters.")
 
-        agents = self._build_agents(personas)
-        interactions: list[dict[str, Any]] = []
+        if self.settings.enable_real_oasis:
+            result = self._run_oasis(req, personas)
+            agents = result["agents"]
+            interactions = result["interactions"]
+            stage3a_approval_rate = float(result["stage3a_approval_rate"])
+            stage3b_approval_rate = float(result["stage3b_approval_rate"])
+            net_opinion_shift = float(result["net_opinion_shift"])
+            runtime = "oasis"
+        else:
+            agents = self._build_agents(personas)
+            interactions: list[dict[str, Any]] = []
 
-        for round_no in range(1, req.rounds + 1):
-            round_delta = self._run_round(req.policy_summary, agents, round_no, interactions)
-            for agent in agents:
-                agent["opinion_post"] = max(1.0, min(10.0, agent["opinion_post"] + round_delta * 0.05))
+            for round_no in range(1, req.rounds + 1):
+                round_delta = self._run_round(req.policy_summary, agents, round_no, interactions)
+                for agent in agents:
+                    agent["opinion_post"] = max(1.0, min(10.0, agent["opinion_post"] + round_delta * 0.05))
 
-        self.store.upsert_simulation(req.simulation_id, req.policy_summary, req.rounds, len(agents))
+            pre = [a["opinion_pre"] for a in agents]
+            post = [a["opinion_post"] for a in agents]
+            stage3a_approval_rate = _approval_rate(pre)
+            stage3b_approval_rate = _approval_rate(post)
+            net_opinion_shift = (sum(post) / len(post)) - (sum(pre) / len(pre))
+            runtime = "heuristic"
+
+        self.store.upsert_simulation(req.simulation_id, req.policy_summary, req.rounds, len(agents), runtime=runtime)
         self.store.replace_agents(req.simulation_id, agents)
         self.store.replace_interactions(req.simulation_id, interactions)
 
-        pre = [a["opinion_pre"] for a in agents]
-        post = [a["opinion_post"] for a in agents]
         return {
             "simulation_id": req.simulation_id,
             "platform": self.settings.simulation_platform,
             "agent_count": len(agents),
             "rounds": req.rounds,
-            "stage3a_approval_rate": _approval_rate(pre),
-            "stage3b_approval_rate": _approval_rate(post),
-            "net_opinion_shift": (sum(post) / len(post)) - (sum(pre) / len(pre)),
+            "stage3a_approval_rate": stage3a_approval_rate,
+            "stage3b_approval_rate": stage3b_approval_rate,
+            "net_opinion_shift": net_opinion_shift,
             "sqlite_path": self.settings.simulation_db_path,
+            "runtime": runtime,
         }
+
+    def _run_oasis(self, req: SimulationRunRequest, personas: list[dict[str, Any]]) -> dict[str, Any]:
+        runner = Path(self.settings.oasis_runner_script)
+        if not runner.is_absolute():
+            runner = BACKEND_ROOT / runner
+        if not runner.exists():
+            raise RuntimeError(f"OASIS runner script not found: {runner}")
+
+        python_bin = Path(self.settings.oasis_python_bin)
+        if not python_bin.is_absolute():
+            python_bin = BACKEND_ROOT / python_bin
+        if not python_bin.exists():
+            raise RuntimeError(
+                f"OASIS python runtime not found: {python_bin}. "
+                "Create backend/.venv311 and install camel-oasis first."
+            )
+
+        gemini_key = self.settings.resolved_gemini_key
+        if not gemini_key:
+            raise RuntimeError("GEMINI_API_KEY/GEMINI_API is required for real OASIS runtime.")
+
+        oasis_db_root = Path(self.settings.oasis_db_dir)
+        if not oasis_db_root.is_absolute():
+            oasis_db_root = BACKEND_ROOT / oasis_db_root
+        oasis_db = oasis_db_root / f"{req.simulation_id}.db"
+
+        run_log_dir = Path(self.settings.oasis_run_log_dir)
+        if not run_log_dir.is_absolute():
+            run_log_dir = BACKEND_ROOT / run_log_dir
+        run_log_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        run_log_path = run_log_dir / f"{req.simulation_id}-{ts}.log"
+
+        payload = {
+            "simulation_id": req.simulation_id,
+            "policy_summary": req.policy_summary,
+            "rounds": req.rounds,
+            "personas": personas,
+            "model_name": self.settings.gemini_model,
+            "gemini_api_key": gemini_key,
+            "openai_base_url": self.settings.gemini_openai_base_url,
+            "oasis_db_path": str(oasis_db),
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = Path(temp_dir) / "oasis_input.json"
+            output_path = Path(temp_dir) / "oasis_output.json"
+            input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            cmd = [
+                str(python_bin),
+                str(runner),
+                str(input_path),
+                str(output_path),
+            ]
+            with run_log_path.open("w", encoding="utf-8") as log_file:
+                log_file.write(f"command={cmd}\n")
+                log_file.write(f"simulation_id={req.simulation_id}\n")
+                log_file.write(f"started_at={datetime.now(UTC).isoformat()}\n")
+                log_file.flush()
+
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+
+                start = time.time()
+                heartbeat_every = 10
+                while True:
+                    rc = proc.poll()
+                    elapsed = int(time.time() - start)
+                    if rc is not None:
+                        log_file.write(
+                            f"process_exit_code={rc} finished_at={datetime.now(UTC).isoformat()} elapsed_seconds={elapsed}\n"
+                        )
+                        log_file.flush()
+                        if rc != 0:
+                            tail = _tail_file(run_log_path, lines=40)
+                            raise RuntimeError(
+                                "Real OASIS simulation failed. "
+                                f"run_log={run_log_path} tail={tail}"
+                            )
+                        break
+
+                    if elapsed > self.settings.oasis_timeout_seconds:
+                        proc.kill()
+                        tail = _tail_file(run_log_path, lines=40)
+                        raise RuntimeError(
+                            "Real OASIS simulation timed out. "
+                            f"timeout_seconds={self.settings.oasis_timeout_seconds} "
+                            f"run_log={run_log_path} tail={tail}"
+                        )
+
+                    if elapsed % heartbeat_every == 0:
+                        log_file.write(f"heartbeat elapsed_seconds={elapsed}\n")
+                        log_file.flush()
+                    time.sleep(1)
+
+            if not output_path.exists():
+                raise RuntimeError("OASIS runner completed but no output payload was produced.")
+
+            return json.loads(output_path.read_text(encoding="utf-8"))
 
     def snapshot(self, simulation_id: str) -> dict[str, Any]:
         simulation = self.store.get_simulation(simulation_id)
@@ -80,6 +208,7 @@ class SimulationService:
                 "interactions": len(interactions),
                 "approval_pre": _approval_rate(stage3a),
                 "approval_post": _approval_rate(stage3b),
+                "runtime": simulation.get("runtime", "heuristic"),
             },
             "stage3a_scores": stage3a,
             "stage3b_scores": stage3b,
@@ -145,6 +274,14 @@ class SimulationService:
                 )
 
         return sum(deltas) / len(deltas)
+
+
+def _tail_file(path: Path, lines: int = 40) -> str:
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return "\n".join(content[-lines:])
+    except Exception:  # noqa: BLE001
+        return "<unable to read run log>"
 
 
 def _persona_seed_opinion(persona: dict[str, Any]) -> float:

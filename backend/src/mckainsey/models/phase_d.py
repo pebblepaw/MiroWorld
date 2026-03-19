@@ -8,6 +8,8 @@ class ReportResponse(BaseModel):
     executive_summary: str
     approval_rates: dict[str, float]
     top_dissenting_demographics: list[dict[str, Any]]
+    friction_by_planning_area: list[dict[str, Any]] = Field(default_factory=list)
+    income_cohorts: list[dict[str, Any]] = Field(default_factory=list)
     influential_agents: list[dict[str, Any]]
     key_arguments_for: list[dict[str, Any]]
     key_arguments_against: list[dict[str, Any]]

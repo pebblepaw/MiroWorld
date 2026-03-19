@@ -27,6 +27,7 @@ class SimulationStore:
                     policy_summary TEXT NOT NULL,
                     rounds INTEGER NOT NULL,
                     agent_count INTEGER NOT NULL,
+                    runtime TEXT NOT NULL DEFAULT 'heuristic',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -58,19 +59,31 @@ class SimulationStore:
                 );
                 """
             )
+            # Backward-compatible migration for existing local DB files.
+            columns = [r[1] for r in conn.execute("PRAGMA table_info(simulations)").fetchall()]
+            if "runtime" not in columns:
+                conn.execute("ALTER TABLE simulations ADD COLUMN runtime TEXT NOT NULL DEFAULT 'heuristic'")
 
-    def upsert_simulation(self, simulation_id: str, policy_summary: str, rounds: int, agent_count: int) -> None:
+    def upsert_simulation(
+        self,
+        simulation_id: str,
+        policy_summary: str,
+        rounds: int,
+        agent_count: int,
+        runtime: str = "heuristic",
+    ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO simulations(simulation_id, policy_summary, rounds, agent_count)
-                VALUES(?, ?, ?, ?)
+                INSERT INTO simulations(simulation_id, policy_summary, rounds, agent_count, runtime)
+                VALUES(?, ?, ?, ?, ?)
                 ON CONFLICT(simulation_id) DO UPDATE SET
                     policy_summary=excluded.policy_summary,
                     rounds=excluded.rounds,
-                    agent_count=excluded.agent_count
+                    agent_count=excluded.agent_count,
+                    runtime=excluded.runtime
                 """,
-                (simulation_id, policy_summary, rounds, agent_count),
+                (simulation_id, policy_summary, rounds, agent_count, runtime),
             )
 
     def replace_agents(self, simulation_id: str, agents: list[dict[str, Any]]) -> None:

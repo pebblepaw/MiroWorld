@@ -23,19 +23,22 @@ Completed
 - Added ECharts views:
 	- opinion shift timeline,
 	- friction by planning area.
+- Integrated Singapore planning-area GeoJSON cache and backend refresh endpoint for area-level map rendering.
+- Added full report tabs and deep-dive panel with ReportAgent + agent-level chat UX.
 - Added ReportAgent chat interaction UI.
 - Added backend dashboard API endpoint `GET /api/v1/phase-e/dashboard/{simulation_id}`.
 
 ## Open Issues
-- Bundle size warning due ECharts (~1.1MB bundle) can be optimized with code splitting.
-- Full geospatial 55-area map requires dedicated Singapore GeoJSON integration in next enhancement pass.
+- None for BRD-defined scope.
 
 ## Decisions Made
 - Prioritized complete integration flow and BRD stage layout over initial bundle optimization.
 
 ## Next Actions
-1. Execute Phase F integration and benchmark validations.
+1. Optional production optimization pass for frontend bundle splitting.
 
 ## Evidence
 - Frontend build passes: `npm run build`.
 - Manual browser open at `http://127.0.0.1:5173/` successful.
+- Planning area GeoJSON endpoint validated (`FeatureCollection`, 55 features).
+- Browser interaction sweep validated all report tabs, deep-dive panel, and both chat actions.

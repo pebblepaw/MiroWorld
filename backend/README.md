@@ -27,6 +27,24 @@ Phase A backend for persona sampling (Mode 1: HuggingFace streaming + DuckDB on 
 - `GET /api/v1/phase-d/report/{simulation_id}`
 - `POST /api/v1/phase-d/report/chat`
 - `GET /api/v1/phase-e/dashboard/{simulation_id}`
+- `GET /api/v1/phase-e/geo/planning-areas`
+
+## Real OASIS Runtime (Python 3.11 Sidecar)
+
+The backend default venv may run on Python 3.14, while `camel-oasis` requires Python 3.11.
+
+Setup:
+
+1. `cd backend`
+2. `python3.11 -m venv .venv311`
+3. `.venv311/bin/pip install -U pip camel-oasis`
+
+Enable native OASIS for simulation runs:
+
+- Set `ENABLE_REAL_OASIS=true`
+- Ensure `GEMINI_API_KEY` or `GEMINI_API` is set (used as OpenAI-compatible key)
+
+The service will execute `backend/scripts/oasis_reddit_runner.py` via `.venv311/bin/python` and ingest OASIS outputs into the project simulation store.
 
 ## Demo Default Document
 

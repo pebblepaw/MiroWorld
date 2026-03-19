@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import json
 from typing import Any
 
 from mckainsey.config import Settings
@@ -24,69 +25,128 @@ class ReportService:
         if not agents:
             raise ValueError(f"Simulation not found: {simulation_id}")
 
-        pre = [a["opinion_pre"] for a in agents]
-        post = [a["opinion_post"] for a in agents]
+        pre = [float(a["opinion_pre"]) for a in agents]
+        post = [float(a["opinion_post"]) for a in agents]
 
-        by_area: dict[str, list[float]] = defaultdict(list)
+        by_area_pre: dict[str, list[float]] = defaultdict(list)
+        by_area_post: dict[str, list[float]] = defaultdict(list)
+        by_income_post: dict[str, list[float]] = defaultdict(list)
         influence: dict[str, float] = defaultdict(float)
+        agent_persona: dict[str, dict[str, Any]] = {}
         for a in agents:
             area = str(a["persona"].get("planning_area", "Unknown"))
-            by_area[area].append(a["opinion_post"])
+            income = str(a["persona"].get("income_bracket", "Unknown"))
+            by_area_pre[area].append(float(a["opinion_pre"]))
+            by_area_post[area].append(float(a["opinion_post"]))
+            by_income_post[income].append(float(a["opinion_post"]))
+            agent_persona[a["agent_id"]] = a["persona"]
 
         for i in interactions:
             if i.get("target_agent_id"):
                 influence[i["actor_agent_id"]] += abs(float(i.get("delta", 0)))
 
-        influential_agents = [
-            {
-                "agent_id": agent_id,
-                "influence_score": round(score, 4),
-            }
-            for agent_id, score in sorted(influence.items(), key=lambda x: x[1], reverse=True)[:10]
-        ]
+        last_reason_by_agent: dict[str, str] = {}
+        for i in interactions:
+            text = str(i.get("content", "")).strip()
+            if text:
+                last_reason_by_agent[i["actor_agent_id"]] = text[:240]
 
-        top_dissenting = sorted(
-            [
+        influential_agents: list[dict[str, Any]] = []
+        for agent_id, score in sorted(influence.items(), key=lambda x: x[1], reverse=True)[:10]:
+            persona = agent_persona.get(agent_id, {})
+            influential_agents.append(
+                {
+                    "agent_id": agent_id,
+                    "influence_score": round(score, 4),
+                    "planning_area": str(persona.get("planning_area", "Unknown")),
+                    "occupation": str(persona.get("occupation", "Unknown")),
+                    "income_bracket": str(persona.get("income_bracket", "Unknown")),
+                    "latest_argument": last_reason_by_agent.get(agent_id, "No recent argument captured."),
+                }
+            )
+
+        area_metrics: list[dict[str, Any]] = []
+        for area, post_scores in by_area_post.items():
+            pre_scores = by_area_pre.get(area, [])
+            post_mean = _mean(post_scores)
+            pre_mean = _mean(pre_scores)
+            approval_post = _approval(post_scores)
+            mean_shift = post_mean - pre_mean
+            friction = abs(mean_shift) * (1 - approval_post)
+            area_metrics.append(
                 {
                     "planning_area": area,
-                    "avg_post_opinion": round(sum(scores) / len(scores), 4),
-                    "cohort_size": len(scores),
+                    "avg_pre_opinion": round(pre_mean, 4),
+                    "avg_post_opinion": round(post_mean, 4),
+                    "approval_post": round(approval_post, 4),
+                    "mean_shift": round(mean_shift, 4),
+                    "friction_index": round(friction, 4),
+                    "cohort_size": len(post_scores),
                 }
-                for area, scores in by_area.items()
-            ],
-            key=lambda x: x["avg_post_opinion"],
-        )[:5]
+            )
+
+        top_dissenting = sorted(
+            area_metrics,
+            key=lambda x: (x["approval_post"], -x["friction_index"]),
+        )[:8]
+
+        income_metrics = [
+            {
+                "income_bracket": income,
+                "approval_post": round(_approval(scores), 4),
+                "avg_post_opinion": round(_mean(scores), 4),
+                "cohort_size": len(scores),
+            }
+            for income, scores in by_income_post.items()
+        ]
 
         arguments_for = [
             {
                 "text": i.get("content", ""),
                 "agent_id": i["actor_agent_id"],
                 "round_no": i["round_no"],
+                "strength": round(abs(float(i.get("delta", 0))), 4),
             }
             for i in interactions
             if float(i.get("delta", 0)) > 0
-        ][:10]
+        ]
+        arguments_for = sorted(arguments_for, key=lambda x: x["strength"], reverse=True)[:12]
 
         arguments_against = [
             {
                 "text": i.get("content", ""),
                 "agent_id": i["actor_agent_id"],
                 "round_no": i["round_no"],
+                "strength": round(abs(float(i.get("delta", 0))), 4),
             }
             for i in interactions
             if float(i.get("delta", 0)) < 0
-        ][:10]
+        ]
+        arguments_against = sorted(arguments_against, key=lambda x: x["strength"], reverse=True)[:12]
 
         executive_summary = self.llm.complete(
             prompt=(
                 f"Generate a concise executive summary for simulation {simulation_id}. "
                 f"Pre approval={_approval(pre):.2f}, post approval={_approval(post):.2f}, "
-                f"net shift={_mean(post)-_mean(pre):.2f}."
+                f"net shift={_mean(post)-_mean(pre):.2f}. "
+                f"Top dissent cohorts={top_dissenting[:3]}."
             ),
             system_prompt="You are ReportAgent. Return concise strategic summary.",
         )
+        if executive_summary.startswith("LLM quota/availability fallback"):
+            top_area = top_dissenting[0]["planning_area"] if top_dissenting else "None"
+            executive_summary = (
+                f"Simulation {simulation_id} summary: approval shifted from {_approval(pre):.2f} to {_approval(post):.2f} "
+                f"(delta {_approval(post) - _approval(pre):.2f}). Highest observed friction cohort: {top_area}."
+            )
 
-        recommendations = self._recommend(top_dissenting)
+        recommendations = self._recommend(
+            simulation_id=simulation_id,
+            top_dissenting=top_dissenting,
+            income_metrics=income_metrics,
+            arguments_for=arguments_for,
+            arguments_against=arguments_against,
+        )
 
         report = {
             "simulation_id": simulation_id,
@@ -94,8 +154,11 @@ class ReportService:
             "approval_rates": {
                 "stage3a": round(_approval(pre), 4),
                 "stage3b": round(_approval(post), 4),
+                "delta": round(_approval(post) - _approval(pre), 4),
             },
             "top_dissenting_demographics": top_dissenting,
+            "friction_by_planning_area": sorted(area_metrics, key=lambda x: x["friction_index"], reverse=True),
+            "income_cohorts": sorted(income_metrics, key=lambda x: x["approval_post"]),
             "influential_agents": influential_agents,
             "key_arguments_for": arguments_for,
             "key_arguments_against": arguments_against,
@@ -112,30 +175,166 @@ class ReportService:
             f"User asks: {message}\n"
             "Provide a direct, data-grounded answer with concrete cohort references."
         )
-        return self.llm.complete(prompt, system_prompt="You are McKAInsey ReportAgent.")
-
-    def _recommend(self, top_dissenting: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        output: list[dict[str, Any]] = []
-        for item in top_dissenting[:3]:
-            area = item["planning_area"]
-            output.append(
-                {
-                    "title": f"Targeted mitigation for {area}",
-                    "rationale": "Post-deliberation sentiment remains low in this area.",
-                    "target_demographic": area,
-                    "expected_impact": "Medium to high",
-                }
+        response = self.llm.complete(prompt, system_prompt="You are McKAInsey ReportAgent.")
+        if response.startswith("LLM quota/availability fallback"):
+            rates = report.get("approval_rates", {})
+            friction = report.get("friction_by_planning_area", [])
+            top_area = friction[0]["planning_area"] if friction else "N/A"
+            return (
+                "Fallback report answer: "
+                f"approval moved from {rates.get('stage3a', 'N/A')} to {rates.get('stage3b', 'N/A')}, "
+                f"with highest friction in {top_area}. "
+                "Use recommendations tab for cohort-specific mitigation actions."
             )
-        if not output:
-            output.append(
+        return response
+
+    def _recommend(
+        self,
+        simulation_id: str,
+        top_dissenting: list[dict[str, Any]],
+        income_metrics: list[dict[str, Any]],
+        arguments_for: list[dict[str, Any]],
+        arguments_against: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not top_dissenting:
+            return [
                 {
-                    "title": "Maintain messaging consistency",
-                    "rationale": "No significant dissent clusters detected.",
+                    "title": "Maintain broad-based communication cadence",
+                    "rationale": "No major friction clusters detected in planning-area analysis.",
                     "target_demographic": "All cohorts",
                     "expected_impact": "Medium",
+                    "execution_plan": [
+                        "Keep monthly policy updates with simple impact examples.",
+                        "Run sentiment pulse checks by demographic cohorts.",
+                    ],
+                    "confidence": 0.62,
+                }
+            ]
+
+        prompt = (
+            "Generate 5 concrete policy communication/mitigation recommendations in JSON. "
+            "Use ONLY this schema: "
+            "[{\"title\": str, \"rationale\": str, \"target_demographic\": str, "
+            "\"expected_impact\": str, \"execution_plan\": [str, str, str], \"confidence\": number}]\n"
+            f"simulation_id={simulation_id}\n"
+            f"top_dissenting={top_dissenting[:6]}\n"
+            f"income_metrics={sorted(income_metrics, key=lambda x: x['approval_post'])[:6]}\n"
+            f"arguments_for={arguments_for[:6]}\n"
+            f"arguments_against={arguments_against[:6]}\n"
+            "Rules: recommendations must be specific, non-generic, and tied to at least one planning area or cohort. "
+            "confidence must be between 0 and 1."
+        )
+
+        if self.llm.is_enabled():
+            raw = self.llm.complete(
+                prompt=prompt,
+                system_prompt="You are McKAInsey ReportAgent. Return valid JSON only.",
+            )
+            parsed = self._parse_recommendations(raw)
+            if parsed:
+                return parsed
+
+        return self._algorithmic_recommendations(top_dissenting, income_metrics)
+
+    def _parse_recommendations(self, raw: str) -> list[dict[str, Any]]:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            if cleaned.lower().startswith("json"):
+                cleaned = cleaned[4:].strip()
+
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return []
+
+        if not isinstance(data, list):
+            return []
+
+        out: list[dict[str, Any]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", "")).strip()
+            rationale = str(item.get("rationale", "")).strip()
+            target = str(item.get("target_demographic", "")).strip()
+            impact = str(item.get("expected_impact", "")).strip()
+            plan = item.get("execution_plan", [])
+            try:
+                conf = float(item.get("confidence", 0.5))
+            except (TypeError, ValueError):
+                conf = 0.5
+
+            if not title or not rationale or not target:
+                continue
+
+            plan_list = [str(x).strip() for x in plan if str(x).strip()]
+            if len(plan_list) < 2:
+                plan_list = [
+                    "Run targeted messaging sessions with affected households.",
+                    "Track sentiment changes weekly and refine intervention messaging.",
+                ]
+
+            out.append(
+                {
+                    "title": title,
+                    "rationale": rationale,
+                    "target_demographic": target,
+                    "expected_impact": impact or "Medium",
+                    "execution_plan": plan_list[:4],
+                    "confidence": max(0.0, min(1.0, round(conf, 2))),
                 }
             )
-        return output
+
+        return out[:6]
+
+    def _algorithmic_recommendations(
+        self,
+        top_dissenting: list[dict[str, Any]],
+        income_metrics: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        recommendations: list[dict[str, Any]] = []
+        low_income = sorted(income_metrics, key=lambda x: x["approval_post"])[:2]
+
+        for item in top_dissenting[:4]:
+            area = item["planning_area"]
+            friction = float(item.get("friction_index", 0.0))
+            target_income = low_income[0]["income_bracket"] if low_income else "Lower-income households"
+            confidence = 0.55 + min(0.35, friction)
+            recommendations.append(
+                {
+                    "title": f"Targeted affordability mitigation for {area}",
+                    "rationale": (
+                        f"{area} shows elevated friction ({friction:.2f}) with below-target post approval "
+                        f"({item.get('approval_post', 0):.2f})."
+                    ),
+                    "target_demographic": f"{area} residents, especially {target_income}",
+                    "expected_impact": "High" if friction >= 0.3 else "Medium",
+                    "execution_plan": [
+                        f"Deploy area-specific budget explainers in {area} community channels.",
+                        "Add concrete household cashflow examples for affected segments.",
+                        "Collect 2-week feedback pulse and adjust subsidy messaging.",
+                    ],
+                    "confidence": round(min(0.95, confidence), 2),
+                }
+            )
+
+        if not recommendations:
+            recommendations.append(
+                {
+                    "title": "Cross-cohort message calibration",
+                    "rationale": "No sharply concentrated friction cluster was detected.",
+                    "target_demographic": "Multi-cohort",
+                    "expected_impact": "Medium",
+                    "execution_plan": [
+                        "Segment messages by age and income before public rollout.",
+                        "Prioritize FAQs around transport and cost-of-living concerns.",
+                    ],
+                    "confidence": 0.6,
+                }
+            )
+
+        return recommendations[:6]
 
 
 def _approval(scores: list[float]) -> float:

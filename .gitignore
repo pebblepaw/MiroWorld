@@ -16,3 +16,6 @@ backend/benchmark_output.txt
 node_modules/
 dist/
 build/
+.vscode/
+log/
+backend/log/
