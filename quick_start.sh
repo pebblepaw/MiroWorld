@@ -17,20 +17,27 @@ REFRESH_DEMO=false
 REAL_OASIS=false
 BOOT_MODE="auto"
 
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --refresh-demo)
       REFRESH_DEMO=true
+      shift
       ;;
     --real-oasis)
       REAL_OASIS=true
+      shift
       ;;
     --mode=*)
-      BOOT_MODE="${arg#*=}"
+      BOOT_MODE="${1#*=}"
+      shift
       ;;
     --mode)
-      echo "Missing value for --mode. Use: --mode auto|demo|live"
-      exit 1
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --mode. Use: --mode auto|demo|live"
+        exit 1
+      fi
+      BOOT_MODE="$2"
+      shift 2
       ;;
     -h|--help)
       cat <<'EOF'
@@ -47,7 +54,7 @@ EOF
       exit 0
       ;;
     *)
-      echo "Unknown option: $arg"
+      echo "Unknown option: $1"
       echo "Use --help for usage."
       exit 1
       ;;

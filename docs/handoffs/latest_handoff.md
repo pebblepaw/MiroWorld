@@ -30,6 +30,10 @@
 - Added Stage 4 robustness controls in frontend:
 	- explicit "Load Live Dashboard" and "Load Demo Cache" actions,
 	- clear empty-state messaging when report payload is not loaded.
+- Fixed launcher argument parsing bug:
+	- `--mode demo` and `--mode=demo` are both now accepted.
+- Updated root README quick-start section:
+	- clarified `bash` usage and mode semantics (`auto` is live-first).
 
 ## What Is Stable
 - Full local integrated pipeline runs end-to-end:

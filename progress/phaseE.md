@@ -34,6 +34,7 @@ Completed
 - Added explicit Stage 4 report loading reliability controls:
 	- manual "Load Live Dashboard" and "Load Demo Cache" actions,
 	- clear empty-state message when dashboard payload is missing.
+- Fixed launcher flag parsing so both `--mode demo` and `--mode=demo` work.
 
 ## Open Issues
 - Custom document upload is not yet wired in frontend Stage 1 flow.
@@ -52,3 +53,4 @@ Completed
 - Planning area GeoJSON endpoint validated (`FeatureCollection`, 55 features).
 - Browser interaction sweep validated all report tabs, deep-dive panel, and both chat actions.
 - Feature B build validation after graph/report fix: `npm run build` passes.
+- Launcher parser regression fix validated via script syntax and `--help` invocation.
