@@ -8,6 +8,11 @@
 - Frontend Stage 1 currently runs knowledge processing with default demo document mode.
 - Custom document upload/input controls are not yet wired to send `document_text` or `source_path` to the Phase A knowledge endpoint.
 
+## Recently Completed Reliability Improvements
+- Added same-site boot-mode control (`auto`, `demo`, `live`) through `quick_start.sh --mode` and frontend bootstrap behavior.
+- Implemented actual Knowledge Graph and Persona Graph rendering in frontend graph toggle panel.
+- Added explicit Stage 4 report loading controls and empty-state feedback to prevent silent blank report views.
+
 ## Phase Checklist
 - [x] Phase A — Data Pipeline & LightRAG Integration — [progress/phaseA.md](progress/phaseA.md)
 - [x] Phase B — OASIS Simulation Engine Setup — [progress/phaseB.md](progress/phaseB.md)

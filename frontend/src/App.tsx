@@ -46,19 +46,41 @@ export default function App() {
   const [agentReply, setAgentReply] = useState('');
   const [agentMemoryRows, setAgentMemoryRows] = useState<any[]>([]);
   const [graphView, setGraphView] = useState<'knowledge' | 'persona'>('knowledge');
+  const [knowledgeSnapshot, setKnowledgeSnapshot] = useState<any>(null);
+  const [bootstrapStatus, setBootstrapStatus] = useState('');
 
   const scores = dashboard?.simulation;
+
+  async function loadLiveDashboard() {
+    const live = await getDashboard(simulationId);
+    setDashboard(live);
+    const top = live?.report?.influential_agents?.[0]?.agent_id;
+    if (top) setSelectedAgent(top);
+    setStage('stage4');
+    setBootstrapStatus('Loaded live dashboard data.');
+    return true;
+  }
+
+  async function loadDemoCache() {
+    const cached = await loadStaticDemoOutput();
+    if (!cached?.dashboard) {
+      return false;
+    }
+    setDashboard(cached.dashboard);
+    setKnowledgeSnapshot(cached.knowledge ?? null);
+    setMemoryStatus(cached?.memory_sync?.zep_enabled ? 'Synced to Zep' : 'Sync fallback mode');
+    const top = cached?.report?.influential_agents?.[0]?.agent_id;
+    if (top) setSelectedAgent(top);
+    setStage('stage4');
+    setBootstrapStatus('Loaded cached demo dataset.');
+    return true;
+  }
 
   useEffect(() => {
     async function bootstrapDemo() {
       async function tryLoadLive() {
         try {
-          const live = await getDashboard(simulationId);
-          setDashboard(live);
-          const top = live?.report?.influential_agents?.[0]?.agent_id;
-          if (top) setSelectedAgent(top);
-          setStage('stage4');
-          return true;
+          return await loadLiveDashboard();
         } catch {
           return false;
         }
@@ -66,14 +88,7 @@ export default function App() {
 
       async function tryLoadCached() {
         try {
-          const cached = await loadStaticDemoOutput();
-          if (!cached?.dashboard) return false;
-          setDashboard(cached.dashboard);
-          setMemoryStatus(cached?.memory_sync?.zep_enabled ? 'Synced to Zep' : 'Sync fallback mode');
-          const top = cached?.report?.influential_agents?.[0]?.agent_id;
-          if (top) setSelectedAgent(top);
-          setStage('stage4');
-          return true;
+          return await loadDemoCache();
         } catch {
           return false;
         }
@@ -286,15 +301,121 @@ export default function App() {
     return rows.find((row: any) => String(row.planning_area).toUpperCase() === selectedArea.toUpperCase()) ?? null;
   }, [dashboard, selectedArea]);
 
+  const knowledgeGraphOption = useMemo<EChartsOption>(() => {
+    const summary = String(knowledgeSnapshot?.summary ?? '').trim();
+    const focus = String(knowledgeSnapshot?.demographic_context ?? '').trim();
+    const friction = (dashboard?.report?.friction_by_planning_area ?? []).slice(0, 6);
+    const influential = (dashboard?.report?.influential_agents ?? []).slice(0, 8);
+
+    const nodes: Array<{ name: string; value?: number; symbolSize?: number; itemStyle?: { color?: string } }> = [
+      { name: 'Policy Document', symbolSize: 56, itemStyle: { color: '#f59e0b' } },
+    ];
+    const links: Array<{ source: string; target: string; value?: number }> = [];
+
+    if (focus) {
+      nodes.push({ name: 'Demographic Focus', symbolSize: 42, itemStyle: { color: '#06b6d4' } });
+      links.push({ source: 'Policy Document', target: 'Demographic Focus', value: 1 });
+    }
+
+    for (const area of friction) {
+      const areaName = String(area.planning_area || 'Unknown Area');
+      nodes.push({ name: areaName, symbolSize: 28, itemStyle: { color: '#ef4444' } });
+      links.push({ source: focus ? 'Demographic Focus' : 'Policy Document', target: areaName, value: Number(area.friction_index || 0) });
+    }
+
+    for (const agent of influential) {
+      const agentName = String(agent.agent_id || 'agent');
+      const areaName = String(agent.planning_area || 'Unknown Area');
+      const score = Number(agent.influence_score || 0);
+      nodes.push({ name: agentName, value: score, symbolSize: 18 + Math.min(30, score * 60), itemStyle: { color: '#8b5cf6' } });
+      if (nodes.find((node) => node.name === areaName)) {
+        links.push({ source: areaName, target: agentName, value: score });
+      } else {
+        links.push({ source: 'Policy Document', target: agentName, value: score });
+      }
+    }
+
+    if (!summary && !focus && friction.length === 0 && influential.length === 0) {
+      return {
+        title: { text: 'Knowledge Graph (No data loaded)', textStyle: { color: '#ddd' } },
+      };
+    }
+
+    return {
+      tooltip: { trigger: 'item' },
+      series: [
+        {
+          type: 'graph',
+          layout: 'force',
+          roam: true,
+          data: nodes,
+          links,
+          force: {
+            repulsion: 240,
+            edgeLength: [50, 160],
+          },
+          label: { show: true, color: '#ddd' },
+          lineStyle: { color: 'source', curveness: 0.18 },
+        },
+      ],
+    };
+  }, [dashboard, knowledgeSnapshot]);
+
+  const personaGraphOption = useMemo<EChartsOption>(() => {
+    const influential = (dashboard?.report?.influential_agents ?? []).slice(0, 18);
+    if (influential.length === 0) {
+      return {
+        title: { text: 'Persona Graph (No influential agents yet)', textStyle: { color: '#ddd' } },
+      };
+    }
+
+    const nodes: Array<{ name: string; category: number; symbolSize: number; value?: number; itemStyle?: { color?: string } }> = [];
+    const links: Array<{ source: string; target: string; value?: number }> = [];
+    const areaSeen = new Set<string>();
+
+    for (const agent of influential) {
+      const agentId = String(agent.agent_id || 'agent');
+      const area = String(agent.planning_area || 'Unknown Area');
+      const score = Number(agent.influence_score || 0);
+
+      if (!areaSeen.has(area)) {
+        nodes.push({ name: area, category: 0, symbolSize: 30, itemStyle: { color: '#06b6d4' } });
+        areaSeen.add(area);
+      }
+
+      nodes.push({ name: agentId, category: 1, symbolSize: 16 + Math.min(28, score * 60), value: score, itemStyle: { color: '#22c55e' } });
+      links.push({ source: area, target: agentId, value: score });
+    }
+
+    return {
+      tooltip: { trigger: 'item' },
+      legend: [{ data: ['Planning Areas', 'Influential Agents'], textStyle: { color: '#ddd' } }],
+      series: [
+        {
+          type: 'graph',
+          layout: 'force',
+          roam: true,
+          categories: [{ name: 'Planning Areas' }, { name: 'Influential Agents' }],
+          data: nodes,
+          links,
+          force: { repulsion: 260, edgeLength: [45, 130] },
+          label: { show: true, color: '#ddd' },
+          lineStyle: { color: '#6b7280', opacity: 0.8 },
+        },
+      ],
+    };
+  }, [dashboard]);
+
   async function handleRun() {
     setLoading(true);
     setError('');
     try {
-      await processKnowledge({
+      const knowledge = await processKnowledge({
         simulation_id: simulationId,
         use_default_demo_document: true,
         demographic_focus: 'Singapore FY2026 budget policy reactions by planning area and income cohorts',
       });
+      setKnowledgeSnapshot(knowledge);
       await runSimulation({
         simulation_id: simulationId,
         policy_summary: policySummary,
@@ -309,6 +430,7 @@ export default function App() {
       if (top) setSelectedAgent(top);
       setStage('stage4');
       setReportTab('overview');
+      setBootstrapStatus('Completed live run and loaded Stage 4 report.');
     } catch (err: any) {
       setError(String(err.message ?? err));
     } finally {
@@ -403,16 +525,70 @@ export default function App() {
             </label>
             <div className="actions">
               <button onClick={handleRun} disabled={loading}>Run Stage 3 Simulation</button>
+              <button
+                onClick={async () => {
+                  setLoading(true);
+                  setError('');
+                  try {
+                    await loadLiveDashboard();
+                  } catch (err: any) {
+                    setError(String(err.message ?? err));
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading}
+              >
+                Load Live Dashboard
+              </button>
+              <button
+                onClick={async () => {
+                  setLoading(true);
+                  setError('');
+                  try {
+                    const ok = await loadDemoCache();
+                    if (!ok) {
+                      setError('Demo cache missing dashboard payload.');
+                    }
+                  } catch (err: any) {
+                    setError(String(err.message ?? err));
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading}
+              >
+                Load Demo Cache
+              </button>
               <button onClick={handleAskReport} disabled={loading || !dashboard}>Ask ReportAgent</button>
               <button onClick={() => setStage('stage4')} disabled={!dashboard}>Open Report</button>
               <button onClick={() => setStage('stage5')} disabled={!dashboard}>Open Deep Dive</button>
             </div>
+            {bootstrapStatus && <p>{bootstrapStatus}</p>}
             {error && <p className="error">{error}</p>}
+          </section>
+
+          <section className="glass-card report-zone">
+            <h3>{graphView === 'knowledge' ? 'Knowledge Graph' : 'Persona Graph'}</h3>
+            {graphView === 'knowledge' ? (
+              <EChartPanel title="Policy & Cohort Knowledge Graph" option={knowledgeGraphOption} />
+            ) : (
+              <EChartPanel title="Influence Persona Graph" option={personaGraphOption} />
+            )}
           </section>
 
           {stage !== 'stage5' && (
             <section className="glass-card report-zone">
-              <div className="report-tabs">
+              {!dashboard && (
+                <section className="summary-box">
+                  <h4>Stage 4 Report Data Not Loaded</h4>
+                  <p>Use "Load Live Dashboard" or "Load Demo Cache" above to populate report tabs.</p>
+                </section>
+              )}
+
+              {dashboard && (
+                <>
+                <div className="report-tabs">
                 {reportTabs.map((tab) => (
                   <button key={tab} className={reportTab === tab ? 'pill active' : 'pill'} onClick={() => setReportTab(tab)}>
                     {tab.replace('-', ' ')}
@@ -542,6 +718,8 @@ export default function App() {
                     </article>
                   ))}
                 </section>
+              )}
+                </>
               )}
             </section>
           )}

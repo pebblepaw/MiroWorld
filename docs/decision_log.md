@@ -266,6 +266,20 @@ This section records decisions made during the full-stack implementation wave af
 - Avoided introducing late-stage UI/file-handling regressions during stabilization window.
 - Explicitly tracked as a follow-up handoff item so the next agent can complete Stage 1 upload UX.
 
+### 8.7 Frontend Boot + Visualization Reliability Controls
+
+**Context:** Operators required one command/site for demo and live behavior, and reported non-rendering graph/report states in UI.
+
+**Decision:**
+- Add explicit frontend boot modes (`auto`, `demo`, `live`) controlled via `quick_start.sh --mode`.
+- Implement real rendering logic for Knowledge/Persona graph toggle views.
+- Add explicit Stage 4 dashboard load controls (`Load Live Dashboard`, `Load Demo Cache`) and clear empty-state messages.
+
+**Rationale:**
+- Removes ambiguity in startup behavior while keeping demo and live on one site.
+- Prevents user confusion from silent blank panels when data bootstrap fails or is delayed.
+- Improves operator recoverability without restarting services.
+
 ---
 
 ## 9. Validation Evidence Snapshot

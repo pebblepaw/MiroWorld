@@ -28,6 +28,12 @@ Completed
 - Added ReportAgent chat interaction UI.
 - Added backend dashboard API endpoint `GET /api/v1/phase-e/dashboard/{simulation_id}`.
 - Added unified frontend boot modes (`auto`, `demo`, `live`) wired through `quick_start.sh --mode` to control demo/live startup behavior on the same site.
+- Implemented graph toggle rendering with actual ECharts graph views:
+	- Knowledge Graph panel with policy/cohort/influential-agent relationships.
+	- Persona Graph panel showing influential-agent to planning-area network links.
+- Added explicit Stage 4 report loading reliability controls:
+	- manual "Load Live Dashboard" and "Load Demo Cache" actions,
+	- clear empty-state message when dashboard payload is missing.
 
 ## Open Issues
 - Custom document upload is not yet wired in frontend Stage 1 flow.
@@ -45,3 +51,4 @@ Completed
 - Manual browser open at `http://127.0.0.1:5173/` successful.
 - Planning area GeoJSON endpoint validated (`FeatureCollection`, 55 features).
 - Browser interaction sweep validated all report tabs, deep-dive panel, and both chat actions.
+- Feature B build validation after graph/report fix: `npm run build` passes.

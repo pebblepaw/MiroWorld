@@ -1,7 +1,7 @@
 # Latest Handoff
 
 **Date:** 2026-03-19
-**Session:** Final hardening + real OASIS validation + Playwright interaction completion + operator quick-start handoff
+**Session:** Final hardening + real OASIS validation + Playwright interaction completion + operator quick-start handoff + frontend reliability pass
 
 ## What Changed (this session)
 - Hardened native OASIS sidecar execution in `SimulationService`:
@@ -24,6 +24,12 @@
 	- optional `--refresh-demo` and `--real-oasis` flags,
 	- startup health checks and log paths.
 	- mode switch support via `--mode auto|demo|live` to choose boot preference on same site.
+- Implemented actual graph rendering for top-bar toggle views:
+	- Knowledge Graph panel now renders an ECharts force graph from available policy/cohort/report data.
+	- Persona Graph panel now renders an influential-agent network by planning area.
+- Added Stage 4 robustness controls in frontend:
+	- explicit "Load Live Dashboard" and "Load Demo Cache" actions,
+	- clear empty-state messaging when report payload is not loaded.
 
 ## What Is Stable
 - Full local integrated pipeline runs end-to-end:
@@ -35,6 +41,7 @@
 - Browser interaction sweep completed without frontend runtime errors after Sankey fix.
 - `quick_start.sh` starts both services successfully when required ports are free.
 - Frontend now supports explicit boot preference (`auto` default, `demo`, `live`) via launcher mode flag.
+- Knowledge/Persona graph views and Stage 4 report panel now have explicit render paths instead of silent no-op/blank behavior.
 
 ## What Is Risky
 - Native `camel-oasis` runtime requires Python 3.11 side environment while default backend runtime may differ.
