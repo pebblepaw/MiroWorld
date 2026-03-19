@@ -255,11 +255,22 @@ This section records decisions made during the full-stack implementation wave af
 - Ensures end-to-end BRD flow is functional before optimization cycle.
 - Reduces risk of schedule slip while still preserving a clear optimization backlog.
 
+### 8.6 Stage 1 Input Wiring Strategy (Current State)
+
+**Context:** The backend knowledge endpoint supports custom document content/path submission. The frontend currently prioritizes deterministic demo execution.
+
+**Decision:** Keep default demo document mode as the active run path for the current delivery checkpoint, and defer full custom upload wiring to immediate follow-up.
+
+**Rationale:**
+- Preserved deterministic demo reliability for final integration validation and handoff.
+- Avoided introducing late-stage UI/file-handling regressions during stabilization window.
+- Explicitly tracked as a follow-up handoff item so the next agent can complete Stage 1 upload UX.
+
 ---
 
 ## 9. Validation Evidence Snapshot
 
-- Backend test suite: `pytest -q` passed (`8 passed, 2 warnings`).
+- Backend test suite: `pytest -q` passed (`9 passed, 2 warnings`).
 - End-to-end harness: scenario -> simulation -> memory sync -> report -> dashboard completed successfully.
 - Frontend build: `npm run build` passed.
 - Deterministic benchmark sample:

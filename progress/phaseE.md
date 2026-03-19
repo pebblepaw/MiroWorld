@@ -29,13 +29,15 @@ Completed
 - Added backend dashboard API endpoint `GET /api/v1/phase-e/dashboard/{simulation_id}`.
 
 ## Open Issues
-- None for BRD-defined scope.
+- Custom document upload is not yet wired in frontend Stage 1 flow.
+- Current run path triggers knowledge processing with `use_default_demo_document=true`; UI does not yet send user-provided `document_text` or `source_path`.
 
 ## Decisions Made
 - Prioritized complete integration flow and BRD stage layout over initial bundle optimization.
 
 ## Next Actions
-1. Optional production optimization pass for frontend bundle splitting.
+1. Wire Stage 1 upload controls to pass user document content/path to Phase A knowledge process endpoint.
+2. Optional production optimization pass for frontend bundle splitting.
 
 ## Evidence
 - Frontend build passes: `npm run build`.

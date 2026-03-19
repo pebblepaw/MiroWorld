@@ -1,7 +1,7 @@
 # Latest Handoff
 
 **Date:** 2026-03-19
-**Session:** Final hardening + real OASIS validation + Playwright interaction completion
+**Session:** Final hardening + real OASIS validation + Playwright interaction completion + operator quick-start handoff
 
 ## What Changed (this session)
 - Hardened native OASIS sidecar execution in `SimulationService`:
@@ -19,6 +19,10 @@
 	- deep-dive opening,
 	- ReportAgent chat send/receive,
 	- individual agent chat send path.
+- Added root quick launcher script:
+	- `quick_start.sh` to boot backend + frontend together,
+	- optional `--refresh-demo` and `--real-oasis` flags,
+	- startup health checks and log paths.
 
 ## What Is Stable
 - Full local integrated pipeline runs end-to-end:
@@ -28,19 +32,32 @@
 - Frontend production build passes.
 - Planning-area GeoJSON endpoint serves valid `FeatureCollection` with 55 features.
 - Browser interaction sweep completed without frontend runtime errors after Sankey fix.
+- `quick_start.sh` starts both services successfully when required ports are free.
 
 ## What Is Risky
 - Native `camel-oasis` runtime requires Python 3.11 side environment while default backend runtime may differ.
 - External provider availability/quota (Gemini, Data.gov, Zep) can vary; deterministic fallback paths are now in place.
 - Frontend bundle size warning due ECharts can affect first-load performance if unoptimized.
+- Current Stage 1 frontend run path is wired to default demo document processing, not user-supplied upload content.
 
 ## What Is Blocked
 - No hard blockers for local development and demonstration flow.
+- Product gap: custom document upload is not yet wired in UI-to-API flow.
 
 ## Exact Next Recommended Actions
-1. Add CI automation for backend tests, frontend build, and a lightweight UI smoke interaction run.
-2. Implement frontend bundle splitting and optional lazy chart loading for ECharts modules.
-3. Promote OASIS Python 3.11 sidecar setup into deployment profile documentation/scripts.
+1. Wire custom document upload in frontend Stage 1 and pass `document_text` or `source_path` to `/api/v1/phase-a/knowledge/process` instead of forcing `use_default_demo_document=true`.
+2. Add CI automation for backend tests, frontend build, and a lightweight UI smoke interaction run.
+3. Implement frontend bundle splitting and optional lazy chart loading for ECharts modules.
+4. Promote OASIS Python 3.11 sidecar setup into deployment profile documentation/scripts.
+
+## Known Gap Details (for takeover)
+- Backend supports custom content submission for knowledge processing.
+- Frontend API type also supports `document_text` and `source_path`.
+- Current Run handler in frontend currently hardcodes default demo processing and does not present file/text upload controls.
+- Expected follow-up change:
+	- add file input or text area in Stage 1,
+	- map selected content into knowledge process request,
+	- preserve fallback toggle for default demo doc mode.
 
 ## File Links
 - [BRD.md](../BRD.md)
@@ -53,3 +70,4 @@
 - [progress/phaseF.md](../progress/phaseF.md)
 - [docs/decision_log.md](../decision_log.md)
 - [backend/README.md](../../backend/README.md)
+- [quick_start.sh](../../quick_start.sh)
