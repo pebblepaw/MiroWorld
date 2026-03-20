@@ -2,13 +2,17 @@
 
 ## Global Status
 **Project:** McKAInsey — AI-Powered Population Simulation Consulting Service
-**Status:** Phase A-G implementation completed locally with live console contracts, real uploaded-document parsing, live Nemotron sampling, native OASIS streaming, and verified Stage 5 Gemini + Zep Cloud chat.
+**Status:** Phase A-H completed locally. Screen 1 on the Frontend V2 shell is live, graph-hardened, and documented. Phase I planning is now active for Screen 2 sampling logic, live cohort generation, and agent graph design.
 
 ## Current Operator Status
 - `./quick_start.sh --mode demo` remains the supported demo launcher path.
 - `./quick_start.sh --mode live --real-oasis` is the supported live launcher path when the OASIS Python 3.11 sidecar is available.
-- Stage 1 accepts real uploaded files (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.json`, `.csv`, `.yaml`, `.yml`) and persists screen-ready knowledge artifacts.
-- Stage 2 uses a real document-aware relevance scorer plus balanced hybrid sampling over the Nemotron Singapore dataset.
+- Stage 1 on the Frontend V2 shell accepts real uploaded files (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.json`, `.csv`, `.yaml`, `.yml`) and persists screen-ready knowledge artifacts.
+- Screen 1 graph controls are now split into:
+  - `All / Nemotron Entities / Other Entities`
+  - bucket filters for `Organization`, `Persons`, `Location`, `Age Group`, `Event`, `Concept`, `Industry`, `Other`
+- Screen 1 hides generic placeholder nodes and non-facet low-value orphan nodes by default, while preserving them in the artifact.
+- Stage 2 backend sampling from the earlier console rebuild exists, but Phase I is redefining the Frontend V2 Screen 2 logic around the local Singapore Nemotron parquet, dual sampling modes, repeatable re-sampling, and graph-aware cohort reasoning.
 - Stage 3 runs native OASIS and streams live events into the console.
 - Stage 5 report chat and agent chat now make real Gemini and Zep Cloud API calls. No placeholder UI handlers remain.
 
@@ -18,6 +22,13 @@
 - Added local parquet-backed Nemotron retrieval for faster live sampling and deterministic local operation.
 - Added SSE-backed simulation event streaming and persisted simulation state snapshots.
 - Regenerated the demo-cache pipeline so demo and live share the same screen contracts.
+- Completed a dedicated Screen 1 hardening pass on the Frontend V2 codebase:
+  - LightRAG-native graph adapter
+  - explicit Screen 1 display buckets
+  - facet-aware filtering
+  - hidden-node logic
+  - relation-label toggle fix
+  - live CNA sample verification
 
 ## Phase Checklist
 - [x] Phase A — Data Pipeline & LightRAG Integration — [progress/phaseA.md](progress/phaseA.md)
@@ -27,6 +38,8 @@
 - [x] Phase E — Dashboard & Frontend — [progress/phaseE.md](progress/phaseE.md)
 - [x] Phase F — Integration Testing & Evaluation — [progress/phaseF.md](progress/phaseF.md)
 - [x] Phase G — McKAInsey Console Rebuild & Real-Time Validation — [progress/phaseG.md](progress/phaseG.md)
+- [x] Phase H — Screen 1 Frontend V2 Adoption & Graph Hardening — [progress/phaseH.md](progress/phaseH.md)
+- [ ] Phase I — Screen 2 Sampling Logic & Agent Graph — [progress/phaseI.md](progress/phaseI.md)
 
 ## Feature and Subtask Checklists
 
@@ -105,3 +118,22 @@
 - [x] G7 Implement real Stage 5 report chat and agent chat with Gemini + Zep Cloud
 - [x] G8 Add Playwright coverage for demo and live console boot paths
 - [x] G9 Verify a real multi-round OASIS run end-to-end from console session to Stage 5 chat
+
+### Phase H — Screen 1 Frontend V2 Adoption & Graph Hardening
+- [x] H1 Adopt the Frontend V2 codebase for Screen 1
+- [x] H2 Wire the Screen 1 upload flow to the live Stage 1 backend
+- [x] H3 Prefer native LightRAG graph output over the old presentation-only extraction path
+- [x] H4 Add Screen 1 display buckets and facet metadata
+- [x] H5 Add segmented family controls and bucket filters
+- [x] H6 Add default hidden-node logic for placeholders / low-value orphan noise
+- [x] H7 Fix the relationship-label toggle so lines remain visible
+- [x] H8 Verify Screen 1 live against the CNA shrinking birth rate sample
+
+### Phase I — Screen 2 Sampling Logic & Agent Graph
+- [x] I1 Define the two-mode sampling strategy (`Affected Groups` vs `Population Baseline`)
+- [x] I2 Define the exact → BM25 → semantic rerank retrieval stack
+- [x] I3 Define the `Sampling Instructions` text-box parsing approach
+- [x] I4 Lock the local Singapore Nemotron parquet as the Screen 2 source-of-truth schema
+- [ ] I5 Implement the live agent count selector and repeatable re-sampling
+- [ ] I6 Implement Screen 2 backend retrieval/scoring
+- [ ] I7 Implement Screen 2 agent graph styling and live integration

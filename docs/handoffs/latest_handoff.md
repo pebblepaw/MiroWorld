@@ -1,50 +1,60 @@
 # Latest Handoff
 
-**Date:** 2026-03-20
-**Session:** McKAInsey console rebuild completion + real Stage 1 upload flow + real Stage 5 Gemini/Zep chat + native OASIS live verification
+**Date:** 2026-03-21
+**Session:** Screen 1 Frontend V2 hardening complete + Screen 2 sampling plan locked
 
 ## What Changed
-- Replaced the inherited dashboard with the new McKAInsey console shell and 7 priority screens.
-- Added the new console backend surface under `/api/v2/console/...`.
-- Implemented real Stage 1 uploaded file parsing:
-  - PDF via `pypdf`
-  - DOCX via `python-docx`
-  - text-like files via direct decoding and normalization
-- Implemented real Stage 2 document-aware Nemotron sampling:
-  - local parquet-backed retrieval
-  - relevance scoring against the uploaded document artifact
-  - balanced hybrid sampling across planning area, income bracket, and age bucket
-- Implemented Stage 3 native OASIS event streaming persistence and SSE delivery.
-- Split Stage 4 into distinct report, opinions, and friction-map payloads.
-- Implemented Stage 5 real report chat and agent chat backed by Gemini and Zep Cloud.
-- Updated `quick_start.sh` to keep demo and live boot as the primary operator flows.
-- Added Playwright coverage for demo boot and live boot smoke validation.
+- Completed Screen 1 on the Frontend V2 codebase and documented it as [progress/phaseH.md](../../progress/phaseH.md).
+- Hardened the Stage 1 LightRAG graph adapter in [backend/src/mckainsey/services/lightrag_service.py](../../backend/src/mckainsey/services/lightrag_service.py):
+  - controlled facet inference
+  - named-person / photo-credit suppression
+  - explicit `display_bucket`
+  - `support_count`, `degree_count`, `importance_score`
+  - `generic_placeholder`, `low_value_orphan`, `ui_default_hidden`
+- Hardened the Screen 1 UI in [frontend/src/pages/PolicyUpload.tsx](../../frontend/src/pages/PolicyUpload.tsx):
+  - segmented control: `All`, `Nemotron Entities`, `Other Entities`
+  - separate bucket filter row
+  - hidden-node filtering for default graph and `Top 3`
+  - edge-label toggle now hides only text labels, not the lines
+- Added Screen 1 regression coverage in:
+  - [backend/tests/test_lightrag_service.py](../../backend/tests/test_lightrag_service.py)
+  - [frontend/src/pages/PolicyUpload.test.tsx](../../frontend/src/pages/PolicyUpload.test.tsx)
+- Added Screen 2 planning and next-phase design doc in [progress/phaseI.md](../../progress/phaseI.md), including:
+  - two explicit sampling modes
+  - local Singapore parquet as the source-of-truth
+  - exact → BM25 → semantic rerank retrieval order
+  - `Sampling Instructions` parsing
+  - repeatable re-sampling
+  - Screen 1-style agent graph design
 
 ## What Is Stable
 - `./quick_start.sh --mode demo` remains the primary demo launch path.
 - `./quick_start.sh --mode live --real-oasis` boots the live console path when the OASIS sidecar is installed.
-- Stage 1 file upload is fully wired UI -> API -> persisted knowledge artifact.
-- Stage 2 returns real sampled personas, representativeness diagnostics, and agent selection reasons.
-- Stage 3 supports native OASIS runs and live stream/state retrieval.
-- Stage 5 report chat and agent chat both make real API calls to Gemini and Zep Cloud.
-- Backend tests, frontend build, and Playwright smoke tests all pass.
+- Stage 1 file upload is fully wired UI -> API -> persisted knowledge artifact on the Frontend V2 shell.
+- Screen 1 now has stable filter semantics:
+  - family filter via `facet_kind`
+  - bucket filter via `display_bucket`
+  - zero-count buckets hidden
+  - hidden-node policy driven by `ui_default_hidden`
+- Generic placeholders like `Concept` stay in the artifact but do not appear in the default graph or `Top 3`.
+- Isolated facet nodes remain visible, so `Nemotron Entities` no longer collapses to an empty state for valid facet matches.
+- Stage 2/3/4/5 code from the earlier console rebuild remains intact and working.
+- The Screen 2 planning target now assumes the local Singapore parquet in `backend/data/nemotron/data/*.parquet`, not a generic fallback dataset shape.
 
 ## What Was Verified
-- Backend tests: `19 passed`
+- Backend tests: `14 passed`
+- Frontend tests: `5 passed`
 - Frontend build: passed
-- Playwright:
-  - demo console smoke passed
-  - live boot smoke passed
-- Real live end-to-end session:
-  - session id: `oasis-v2-docx-1773994001`
-  - uploaded DOCX parsed successfully
-  - population preview returned a real selected cohort
-  - native OASIS completed a 2-round run
-  - persisted event count reached `36`
-  - report chat returned `200` with Gemini + Zep context
-  - agent chat returned `200` with Gemini + Zep context
-- Real PDF upload path was also verified using:
-  - `Sample_Inputs/fy2026_budget_statement.pdf`
+- Live Screen 1 verification on `Sample_Inputs/CNA SHrinking Birth Rate.docx`:
+  - `75` entities
+  - `50` relationships
+  - `8` paragraphs
+  - `Concept` preserved with `generic_placeholder=true` and `ui_default_hidden=true`
+  - `Nemotron Entities` populated by a live visible facet node:
+    - `Elderly People` → `age_cohort:senior`
+- Browser spot-check:
+  - Screen 1 completed extraction in live mode
+  - clicking `Nemotron Entities` produced the `Age Group` filtered view instead of an empty graph
 
 ## Operator Runbook
 1. Demo mode
@@ -59,18 +69,25 @@
    - `./quick_start.sh --refresh-demo --mode demo`
 
 ## Remaining Risks
-- Live mode still depends on external service health for Gemini and Zep Cloud.
-- Native OASIS still requires the Python 3.11 sidecar runtime.
-- Frontend bundle size remains large because graphing/mapping modules are not yet split into lazy chunks.
+- Screen 1 facet extraction is intentionally conservative now. It is less noisy, but some documents may still yield only a small number of Nemotron-aligned facet nodes.
+- Hidden nodes are artifact-preserved but currently have no explicit “show hidden nodes” control in the UI.
+- Stage 2 has not yet been reworked for the Frontend V2 shell; that is the next active phase.
 
 ## Recommended Next Work
-1. Add frontend code-splitting for graph and map bundles.
-2. Add CI automation for backend tests, frontend build, and Playwright smoke coverage.
-3. Add a longer live Playwright scenario that exercises a full multi-step simulation run once provider quotas allow.
+1. Implement Screen 2 using the plan in [progress/phaseI.md](../../progress/phaseI.md).
+2. Ship two explicit sampling modes:
+   - `Affected Groups`
+   - `Population Baseline`
+3. Keep `Affected Groups` as the default first-generation mode.
+4. Add the `Sampling Instructions` text box and parse it into structured boosts/filters.
+5. Implement repeatable re-sampling with a visible seed.
+6. Reuse the Screen 1 graph visual language for the Stage 2 agent graph.
 
 ## File Links
 - [BRD.md](../../BRD.md)
 - [Progress.md](../../Progress.md)
 - [progress/index.md](../../progress/index.md)
 - [progress/phaseG.md](../../progress/phaseG.md)
+- [progress/phaseH.md](../../progress/phaseH.md)
+- [progress/phaseI.md](../../progress/phaseI.md)
 - [quick_start.sh](../../quick_start.sh)
