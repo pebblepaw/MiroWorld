@@ -2,7 +2,7 @@
 
 ## Global Status
 **Project:** McKAInsey — AI-Powered Population Simulation Consulting Service
-**Status:** Phase A-H completed locally. Screen 1 on the Frontend V2 shell is live, graph-hardened, and documented. Phase I planning is now active for Screen 2 sampling logic, live cohort generation, and agent graph design.
+**Status:** Phase A-H completed locally. Screen 1 is live and graph-hardened on the Frontend V2 shell. Phase I implementation is now complete locally for Screen 2 live sampling, cohort generation, parsed instruction summaries, and the Frontend V2 agent graph, pending operator review.
 
 ## Current Operator Status
 - `./quick_start.sh --mode demo` remains the supported demo launcher path.
@@ -12,7 +12,38 @@
   - `All / Nemotron Entities / Other Entities`
   - bucket filters for `Organization`, `Persons`, `Location`, `Age Group`, `Event`, `Concept`, `Industry`, `Other`
 - Screen 1 hides generic placeholder nodes and non-facet low-value orphan nodes by default, while preserving them in the artifact.
-- Stage 2 backend sampling from the earlier console rebuild exists, but Phase I is redefining the Frontend V2 Screen 2 logic around the local Singapore Nemotron parquet, dual sampling modes, repeatable re-sampling, and graph-aware cohort reasoning.
+- Screen 2 on the Frontend V2 shell is now live against `/api/v2/console/session/{id}/sampling/preview`.
+- Screen 2 supports two explicit modes:
+  - `Affected Groups`
+  - `Population Baseline`
+- Screen 2 now uses the local Singapore Nemotron parquet as the source-of-truth population store.
+- Screen 2 request parsing now follows:
+  - structured filters over local categorical fields
+  - BM25 shortlist over short/list text
+  - semantic rerank over bounded long-text candidates
+- The `Sampling Instructions` box now feeds a real parser:
+  - Gemini JSON parse first
+  - deterministic fallback when Gemini is unavailable or returns notes-only / non-actionable output
+- Parsed instruction buckets now affect backend behavior for:
+  - hard filters
+  - soft boosts
+  - soft penalties
+  - exclusions
+  - distribution-target bias
+- Screen 2 hobby / skill instruction keys now match the real Nemotron list fields instead of dead placeholder fields.
+- Screen 2 shows a read-only parsed summary for:
+  - hard filters
+  - soft boosts
+  - exclusions
+  - distribution targets
+- Screen 2 `Generate Agents` and `Re-sample` are both live, and the generated seed is surfaced back to the user.
+- The Screen 2 agent-count control is now aligned with the backend contract and capped at `500`.
+- The Stage 2 agent graph now uses the same visual language as Screen 1:
+  - small nodes
+  - external labels
+  - always-visible edges
+  - optional edge-label toggle
+  - legend from live graph categories
 - Stage 3 runs native OASIS and streams live events into the console.
 - Stage 5 report chat and agent chat now make real Gemini and Zep Cloud API calls. No placeholder UI handlers remain.
 
@@ -29,6 +60,16 @@
   - hidden-node logic
   - relation-label toggle fix
   - live CNA sample verification
+- Completed the Screen 2 Frontend V2 implementation pass:
+  - live `/sampling/preview` wiring
+  - real `Affected Groups` / `Population Baseline` mode toggle
+  - live count selector with repeatable re-sampling
+  - local parquet candidate retrieval caps for interactive latency
+  - exact → BM25 → semantic rerank scoring stack
+  - parser fallback when Gemini returns notes-only output
+  - read-only parsed instruction summary
+  - Screen 1-style agent graph and cohort diagnostics
+  - live browser validation from Screen 1 upload into Screen 2 cohort generation
 
 ## Phase Checklist
 - [x] Phase A — Data Pipeline & LightRAG Integration — [progress/phaseA.md](progress/phaseA.md)
@@ -134,6 +175,6 @@
 - [x] I2 Define the exact → BM25 → semantic rerank retrieval stack
 - [x] I3 Define the `Sampling Instructions` text-box parsing approach
 - [x] I4 Lock the local Singapore Nemotron parquet as the Screen 2 source-of-truth schema
-- [ ] I5 Implement the live agent count selector and repeatable re-sampling
-- [ ] I6 Implement Screen 2 backend retrieval/scoring
-- [ ] I7 Implement Screen 2 agent graph styling and live integration
+- [x] I5 Implement the live agent count selector and repeatable re-sampling
+- [x] I6 Implement Screen 2 backend retrieval/scoring
+- [x] I7 Implement Screen 2 agent graph styling and live integration

@@ -33,6 +33,7 @@ class GeminiChatClient:
                 model=self._settings.gemini_model,
                 messages=messages,
                 temperature=0.3,
+                timeout=self._settings.gemini_timeout_seconds,
             )
             return response.choices[0].message.content or ""
         except Exception:  # noqa: BLE001
@@ -52,6 +53,7 @@ class GeminiChatClient:
                 model=self._settings.gemini_model,
                 messages=messages,
                 temperature=0.3,
+                timeout=self._settings.gemini_timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"Gemini request failed: {exc}") from exc
@@ -60,3 +62,35 @@ class GeminiChatClient:
         if not content.strip():
             raise RuntimeError("Gemini returned an empty response.")
         return content
+
+
+class GeminiEmbeddingClient:
+    def __init__(self, settings: Settings):
+        self._settings = settings
+        api_key = settings.resolved_gemini_key
+        self._client = None
+        if api_key:
+            self._client = OpenAI(
+                api_key=api_key,
+                base_url=settings.gemini_openai_base_url,
+            )
+
+    def is_enabled(self) -> bool:
+        return self._client is not None
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        if not self._client:
+            raise RuntimeError("Gemini embeddings are unavailable because no GEMINI_API_KEY/GEMINI_API is configured.")
+        if not texts:
+            return []
+
+        try:
+            response = self._client.embeddings.create(
+                model=self._settings.gemini_embed_model,
+                input=texts,
+                timeout=self._settings.gemini_timeout_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Gemini embedding request failed: {exc}") from exc
+
+        return [list(item.embedding) for item in response.data]

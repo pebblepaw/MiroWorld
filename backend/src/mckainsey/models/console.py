@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ConsoleSessionCreateRequest(BaseModel):
@@ -35,21 +35,29 @@ class KnowledgeArtifactResponse(BaseModel):
 
 
 class PopulationPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     agent_count: int = Field(default=50, ge=2, le=500)
+    sample_mode: Literal["affected_groups", "population_baseline"] = "affected_groups"
+    sampling_instructions: str | None = None
+    seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
     min_age: int | None = Field(default=None, ge=0, le=120)
     max_age: int | None = Field(default=None, ge=0, le=120)
     planning_areas: list[str] = Field(default_factory=list)
-    income_brackets: list[str] = Field(default_factory=list)
 
 
 class PopulationArtifactResponse(BaseModel):
     session_id: str
     candidate_count: int
     sample_count: int
+    sample_mode: Literal["affected_groups", "population_baseline"]
+    sample_seed: int
+    parsed_sampling_instructions: dict[str, Any] = Field(default_factory=dict)
     coverage: dict[str, Any]
     sampled_personas: list[dict[str, Any]]
     agent_graph: dict[str, Any]
     representativeness: dict[str, Any]
+    selection_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class SimulationStartRequest(BaseModel):

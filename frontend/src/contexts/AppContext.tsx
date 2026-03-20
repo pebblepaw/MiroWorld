@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState, ReactNode } from 'react';
 import { Agent, SimPost } from '@/data/mockData';
-import { KnowledgeArtifact } from '@/lib/console-api';
+import { KnowledgeArtifact, PopulationArtifact } from '@/lib/console-api';
 
 interface AppState {
   currentStep: number;
@@ -13,6 +13,12 @@ interface AppState {
   knowledgeLoading: boolean;
   knowledgeError: string | null;
   agentCount: number;
+  sampleMode: 'affected_groups' | 'population_baseline';
+  samplingInstructions: string;
+  sampleSeed: number | null;
+  populationArtifact: PopulationArtifact | null;
+  populationLoading: boolean;
+  populationError: string | null;
   agents: Agent[];
   agentsGenerated: boolean;
   simulationRounds: number;
@@ -32,6 +38,12 @@ interface AppContextType extends AppState {
   setKnowledgeLoading: (loading: boolean) => void;
   setKnowledgeError: (error: string | null) => void;
   setAgentCount: (count: number) => void;
+  setSampleMode: (mode: 'affected_groups' | 'population_baseline') => void;
+  setSamplingInstructions: (value: string) => void;
+  setSampleSeed: (seed: number | null) => void;
+  setPopulationArtifact: (artifact: PopulationArtifact | null) => void;
+  setPopulationLoading: (loading: boolean) => void;
+  setPopulationError: (error: string | null) => void;
   setAgents: (agents: Agent[]) => void;
   setAgentsGenerated: (gen: boolean) => void;
   setSimulationRounds: (rounds: number) => void;
@@ -54,6 +66,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     knowledgeLoading: false,
     knowledgeError: null,
     agentCount: 500,
+    sampleMode: 'affected_groups',
+    samplingInstructions: '',
+    sampleSeed: null,
+    populationArtifact: null,
+    populationLoading: false,
+    populationError: null,
     agents: [],
     agentsGenerated: false,
     simulationRounds: 3,
@@ -62,25 +80,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     chatHistory: {},
   });
 
-  const setCurrentStep = (step: number) => setState(s => ({ ...s, currentStep: step }));
-  const completeStep = (step: number) => setState(s => ({
+  const setCurrentStep = useCallback((step: number) => setState(s => ({ ...s, currentStep: step })), []);
+  const completeStep = useCallback((step: number) => setState(s => ({
     ...s,
     completedSteps: s.completedSteps.includes(step) ? s.completedSteps : [...s.completedSteps, step],
-  }));
-  const setSessionId = (sessionId: string | null) => setState(s => ({ ...s, sessionId }));
-  const setUploadedFile = (file: File | null) => setState(s => ({ ...s, uploadedFile: file }));
-  const setGuidingPrompt = (prompt: string) => setState(s => ({ ...s, guidingPrompt: prompt }));
-  const setKnowledgeGraphReady = (ready: boolean) => setState(s => ({ ...s, knowledgeGraphReady: ready }));
-  const setKnowledgeArtifact = (knowledgeArtifact: KnowledgeArtifact | null) => setState(s => ({ ...s, knowledgeArtifact }));
-  const setKnowledgeLoading = (knowledgeLoading: boolean) => setState(s => ({ ...s, knowledgeLoading }));
-  const setKnowledgeError = (knowledgeError: string | null) => setState(s => ({ ...s, knowledgeError }));
-  const setAgentCount = (count: number) => setState(s => ({ ...s, agentCount: count }));
-  const setAgents = (agents: Agent[]) => setState(s => ({ ...s, agents }));
-  const setAgentsGenerated = (gen: boolean) => setState(s => ({ ...s, agentsGenerated: gen }));
-  const setSimulationRounds = (rounds: number) => setState(s => ({ ...s, simulationRounds: rounds }));
-  const setSimulationComplete = (complete: boolean) => setState(s => ({ ...s, simulationComplete: complete }));
-  const setSimPosts = (posts: SimPost[]) => setState(s => ({ ...s, simPosts: posts }));
-  const addChatMessage = (agentId: string, role: 'user' | 'agent', content: string) => {
+  })), []);
+  const setSessionId = useCallback((sessionId: string | null) => setState(s => ({ ...s, sessionId })), []);
+  const setUploadedFile = useCallback((file: File | null) => setState(s => ({ ...s, uploadedFile: file })), []);
+  const setGuidingPrompt = useCallback((prompt: string) => setState(s => ({ ...s, guidingPrompt: prompt })), []);
+  const setKnowledgeGraphReady = useCallback((ready: boolean) => setState(s => ({ ...s, knowledgeGraphReady: ready })), []);
+  const setKnowledgeArtifact = useCallback((knowledgeArtifact: KnowledgeArtifact | null) => setState(s => ({ ...s, knowledgeArtifact })), []);
+  const setKnowledgeLoading = useCallback((knowledgeLoading: boolean) => setState(s => ({ ...s, knowledgeLoading })), []);
+  const setKnowledgeError = useCallback((knowledgeError: string | null) => setState(s => ({ ...s, knowledgeError })), []);
+  const setAgentCount = useCallback((count: number) => setState(s => ({ ...s, agentCount: count })), []);
+  const setSampleMode = useCallback((sampleMode: 'affected_groups' | 'population_baseline') => setState(s => ({ ...s, sampleMode })), []);
+  const setSamplingInstructions = useCallback((samplingInstructions: string) => setState(s => ({ ...s, samplingInstructions })), []);
+  const setSampleSeed = useCallback((sampleSeed: number | null) => setState(s => ({ ...s, sampleSeed })), []);
+  const setPopulationArtifact = useCallback((populationArtifact: PopulationArtifact | null) => setState(s => ({ ...s, populationArtifact })), []);
+  const setPopulationLoading = useCallback((populationLoading: boolean) => setState(s => ({ ...s, populationLoading })), []);
+  const setPopulationError = useCallback((populationError: string | null) => setState(s => ({ ...s, populationError })), []);
+  const setAgents = useCallback((agents: Agent[]) => setState(s => ({ ...s, agents })), []);
+  const setAgentsGenerated = useCallback((gen: boolean) => setState(s => ({ ...s, agentsGenerated: gen })), []);
+  const setSimulationRounds = useCallback((rounds: number) => setState(s => ({ ...s, simulationRounds: rounds })), []);
+  const setSimulationComplete = useCallback((complete: boolean) => setState(s => ({ ...s, simulationComplete: complete })), []);
+  const setSimPosts = useCallback((posts: SimPost[]) => setState(s => ({ ...s, simPosts: posts })), []);
+  const addChatMessage = useCallback((agentId: string, role: 'user' | 'agent', content: string) => {
     setState(s => ({
       ...s,
       chatHistory: {
@@ -88,15 +112,60 @@ export function AppProvider({ children }: { children: ReactNode }) {
         [agentId]: [...(s.chatHistory[agentId] || []), { role, content }],
       },
     }));
-  };
+  }, []);
+
+  const value = useMemo(() => ({
+    ...state,
+    setCurrentStep,
+    completeStep,
+    setSessionId,
+    setUploadedFile,
+    setGuidingPrompt,
+    setKnowledgeGraphReady,
+    setKnowledgeArtifact,
+    setKnowledgeLoading,
+    setKnowledgeError,
+    setAgentCount,
+    setSampleMode,
+    setSamplingInstructions,
+    setSampleSeed,
+    setPopulationArtifact,
+    setPopulationLoading,
+    setPopulationError,
+    setAgents,
+    setAgentsGenerated,
+    setSimulationRounds,
+    setSimulationComplete,
+    setSimPosts,
+    addChatMessage,
+  }), [
+    state,
+    setCurrentStep,
+    completeStep,
+    setSessionId,
+    setUploadedFile,
+    setGuidingPrompt,
+    setKnowledgeGraphReady,
+    setKnowledgeArtifact,
+    setKnowledgeLoading,
+    setKnowledgeError,
+    setAgentCount,
+    setSampleMode,
+    setSamplingInstructions,
+    setSampleSeed,
+    setPopulationArtifact,
+    setPopulationLoading,
+    setPopulationError,
+    setAgents,
+    setAgentsGenerated,
+    setSimulationRounds,
+    setSimulationComplete,
+    setSimPosts,
+    addChatMessage,
+  ]);
 
   return (
-    <AppContext.Provider value={{
-      ...state, setCurrentStep, completeStep, setSessionId, setUploadedFile, setGuidingPrompt,
-      setKnowledgeGraphReady, setKnowledgeArtifact, setKnowledgeLoading, setKnowledgeError,
-      setAgentCount, setAgents, setAgentsGenerated,
-      setSimulationRounds, setSimulationComplete, setSimPosts, addChatMessage,
-    }}>
+    <AppContext.Provider value={value}>
       {children}
     </AppContext.Provider>
   );

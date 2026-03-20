@@ -27,6 +27,7 @@ const NODE_LABEL_GAP = 8;
 const RELATIONSHIP_LABEL_STORAGE_KEY = 'screen1-relationship-labels';
 
 type FamilyFilter = 'all' | 'nemotron' | 'other';
+type DisplayBucket = typeof DISPLAY_BUCKET_ORDER[number];
 type GraphNodeDatum = {
   id: string;
   name: string;
@@ -73,7 +74,7 @@ export default function PolicyUpload() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 500, height: 400 });
   const [familyFilter, setFamilyFilter] = useState<FamilyFilter>('all');
-  const [activeBuckets, setActiveBuckets] = useState<string[]>([]);
+  const [activeBuckets, setActiveBuckets] = useState<DisplayBucket[]>([]);
   const [showRelationshipLabels, setShowRelationshipLabels] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.sessionStorage.getItem(RELATIONSHIP_LABEL_STORAGE_KEY) === 'on';
@@ -101,7 +102,7 @@ export default function PolicyUpload() {
       )
     : [];
 
-  const availableBuckets = graphReady
+  const availableBuckets: DisplayBucket[] = graphReady
     ? DISPLAY_BUCKET_ORDER.filter((bucket) => familyScopedNodes.some((node) => resolveDisplayBucket(node.type, node.facet_kind, node.display_bucket) === bucket))
     : [];
 
@@ -586,9 +587,9 @@ function matchesFamilyFilter(facetKind?: string | null, familyFilter: FamilyFilt
   return familyFilter === 'nemotron' ? isNemotronEntity : !isNemotronEntity;
 }
 
-function resolveDisplayBucket(type?: string, facetKind?: string | null, explicitBucket?: string | null) {
+function resolveDisplayBucket(type?: string, facetKind?: string | null, explicitBucket?: string | null): DisplayBucket {
   const normalizedExplicit = (explicitBucket || '').trim().toLowerCase();
-  if (normalizedExplicit && DISPLAY_BUCKET_STYLES[normalizedExplicit]) return normalizedExplicit;
+  if (normalizedExplicit && normalizedExplicit in DISPLAY_BUCKET_STYLES) return normalizedExplicit as DisplayBucket;
 
   const normalizedFacet = (facetKind || '').trim().toLowerCase();
   if (normalizedFacet === 'age_cohort') return 'age_group';

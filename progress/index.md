@@ -10,4 +10,4 @@
 | F | [phaseF.md](phaseF.md) | Completed | Integration Testing & Evaluation |
 | G | [phaseG.md](phaseG.md) | Completed | McKAInsey Console Rebuild & Real-Time Validation |
 | H | [phaseH.md](phaseH.md) | Completed | Screen 1 Frontend V2 Adoption & Graph Hardening |
-| I | [phaseI.md](phaseI.md) | In Progress | Screen 2 Sampling Logic & Agent Graph |
+| I | [phaseI.md](phaseI.md) | Awaiting Review | Screen 2 Sampling Logic & Agent Graph |

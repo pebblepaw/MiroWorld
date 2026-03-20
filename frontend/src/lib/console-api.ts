@@ -53,6 +53,90 @@ export interface KnowledgeArtifact {
   demographic_focus_summary?: string | null;
 }
 
+export interface ParsedSamplingInstructions {
+  hard_filters: Record<string, string[]>;
+  soft_boosts: Record<string, string[]>;
+  soft_penalties?: Record<string, string[]>;
+  exclusions: Record<string, string[]>;
+  distribution_targets: Record<string, string[]>;
+  notes_for_ui: string[];
+  source?: string;
+}
+
+export interface PopulationSelectionReason {
+  score: number;
+  selection_score?: number;
+  matched_facets: string[];
+  matched_document_entities: string[];
+  instruction_matches: string[];
+  bm25_terms: string[];
+  semantic_summary: string;
+  semantic_relevance: number;
+  bm25_relevance?: number;
+  geographic_relevance: number;
+  socioeconomic_relevance: number;
+  digital_behavior_relevance: number;
+  filter_alignment: number;
+}
+
+export interface SampledPersona {
+  agent_id: string;
+  persona: Record<string, unknown>;
+  selection_reason: PopulationSelectionReason;
+}
+
+export interface PopulationGraphNode {
+  id: string;
+  label: string;
+  subtitle?: string;
+  planning_area?: string;
+  industry?: string;
+  node_type?: string;
+  score?: number;
+  age?: number;
+  sex?: string;
+}
+
+export interface PopulationGraphLink {
+  source: string;
+  target: string;
+  weight?: number;
+  reason?: string;
+  reasons?: string[];
+  label?: string;
+}
+
+export interface PopulationArtifact {
+  session_id: string;
+  candidate_count: number;
+  sample_count: number;
+  sample_mode: "affected_groups" | "population_baseline";
+  sample_seed: number;
+  parsed_sampling_instructions: ParsedSamplingInstructions;
+  coverage: {
+    planning_areas: string[];
+    age_buckets: Record<string, number>;
+    sex_distribution?: Record<string, number>;
+  };
+  sampled_personas: SampledPersona[];
+  agent_graph: {
+    nodes: PopulationGraphNode[];
+    links: PopulationGraphLink[];
+  };
+  representativeness: {
+    status: string;
+    planning_area_distribution?: Record<string, number>;
+    sex_distribution?: Record<string, number>;
+  };
+  selection_diagnostics: {
+    candidate_count?: number;
+    structured_filter_count?: number;
+    shortlist_count?: number;
+    bm25_shortlist_count?: number;
+    semantic_rerank_count?: number;
+  };
+}
+
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 const DEFAULT_MODE: ConsoleMode = import.meta.env.VITE_BOOT_MODE === "live" ? "live" : "demo";
 
@@ -96,6 +180,23 @@ export async function uploadKnowledgeFile(
   const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/knowledge/upload`, {
     method: "POST",
     body: formData,
+  });
+  return parseJson(response);
+}
+
+export async function previewPopulation(
+  sessionId: string,
+  payload: {
+    agent_count: number;
+    sample_mode: "affected_groups" | "population_baseline";
+    sampling_instructions?: string;
+    seed?: number;
+  },
+): Promise<PopulationArtifact> {
+  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/sampling/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
   return parseJson(response);
 }

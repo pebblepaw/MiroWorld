@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.0-flash"
     gemini_embed_model: str = "gemini-embedding-001"
     gemini_openai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    gemini_timeout_seconds: int = 20
 
     zep_api_key: str | None = None
     zep_cloud: str | None = None

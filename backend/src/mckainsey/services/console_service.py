@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import uuid
 from pathlib import Path
+import random
 from typing import Any
 
 from fastapi import HTTPException
@@ -19,6 +20,11 @@ from mckainsey.services.report_service import ReportService
 from mckainsey.services.simulation_service import SimulationService
 from mckainsey.services.simulation_stream_service import SimulationStreamService
 from mckainsey.services.storage import SimulationStore
+
+MAX_AFFECTED_GROUPS_CANDIDATES = 1000
+MAX_BASELINE_CANDIDATES = 1200
+MIN_AFFECTED_GROUPS_CANDIDATES = 400
+MIN_BASELINE_CANDIDATES = 600
 
 
 class ConsoleService:
@@ -122,23 +128,49 @@ class ConsoleService:
         if not knowledge:
             raise HTTPException(status_code=404, detail=f"Knowledge artifact not found for session {session_id}")
 
-        candidate_limit = max(request.agent_count * 6, 60)
-        personas = self.sampler.sample(
-            PersonaFilterRequest(
-                min_age=request.min_age,
-                max_age=request.max_age,
-                planning_areas=request.planning_areas,
-                income_brackets=request.income_brackets,
-                limit=candidate_limit,
-                mode="local",
-            )
+        parsed_instructions = self.relevance.parse_sampling_instructions(
+            request.sampling_instructions,
+            knowledge_artifact=knowledge,
         )
+        effective_seed = int(request.seed if request.seed is not None else random.randint(1, 2_147_483_647))
+        if request.sample_mode == "population_baseline":
+            candidate_limit = min(
+                max(request.agent_count * 3, MIN_BASELINE_CANDIDATES),
+                MAX_BASELINE_CANDIDATES,
+            )
+        else:
+            candidate_limit = min(
+                max(request.agent_count * 2, MIN_AFFECTED_GROUPS_CANDIDATES),
+                MAX_AFFECTED_GROUPS_CANDIDATES,
+            )
+        merged_filters = self._merge_population_filters(request, parsed_instructions)
+        personas = self.sampler.query_candidates(
+            limit=candidate_limit,
+            seed=effective_seed,
+            min_age=merged_filters["min_age"],
+            max_age=merged_filters["max_age"],
+            planning_areas=merged_filters["planning_areas"],
+            sexes=merged_filters["sexes"],
+            marital_statuses=merged_filters["marital_statuses"],
+            education_levels=merged_filters["education_levels"],
+            occupations=merged_filters["occupations"],
+            industries=merged_filters["industries"],
+        )
+        if not personas:
+            raise HTTPException(status_code=422, detail="No personas matched the current sampling configuration.")
+
         artifact = self.relevance.build_population_artifact(
             session_id,
             personas=personas,
             knowledge_artifact=knowledge,
-            filters=request.model_dump(),
+            filters={
+                **request.model_dump(),
+                **merged_filters,
+            },
             agent_count=request.agent_count,
+            sample_mode=request.sample_mode,
+            seed=effective_seed,
+            parsed_sampling_instructions=parsed_instructions,
         )
         self.store.save_population_artifact(session_id, artifact)
         return artifact
@@ -309,3 +341,56 @@ class ConsoleService:
             }
             self.store.save_simulation_state_snapshot(session_id, failure_state)
             self.store.upsert_console_session(session_id=session_id, mode=mode, status="simulation_failed")
+
+    def _merge_population_filters(self, request: Any, parsed_instructions: dict[str, Any]) -> dict[str, Any]:
+        hard_filters = parsed_instructions.get("hard_filters", {})
+
+        min_age = request.min_age
+        max_age = request.max_age
+        requested_age_cohorts = hard_filters.get("age_cohort", [])
+        if requested_age_cohorts:
+            age_bounds = [self._age_bounds_for_cohort(cohort) for cohort in requested_age_cohorts]
+            age_bounds = [bounds for bounds in age_bounds if bounds is not None]
+            if age_bounds:
+                derived_min = min(bounds[0] for bounds in age_bounds)
+                derived_max = max(bounds[1] for bounds in age_bounds)
+                min_age = derived_min if min_age is None else max(min_age, derived_min)
+                max_age = derived_max if max_age is None else min(max_age, derived_max)
+
+        return {
+            "min_age": min_age,
+            "max_age": max_age,
+            "planning_areas": self._merge_unique_values(request.planning_areas, hard_filters.get("planning_area", []), title_case=True),
+            "sexes": self._merge_unique_values([], hard_filters.get("sex", []), title_case=True),
+            "marital_statuses": self._merge_unique_values([], hard_filters.get("marital_status", [])),
+            "education_levels": self._merge_unique_values([], hard_filters.get("education_level", [])),
+            "occupations": self._merge_unique_values([], hard_filters.get("occupation", [])),
+            "industries": self._merge_unique_values([], hard_filters.get("industry", [])),
+        }
+
+    def _merge_unique_values(self, primary: list[str], secondary: list[str], *, title_case: bool = False) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for raw in [*(primary or []), *(secondary or [])]:
+            text = str(raw).strip()
+            if not text:
+                continue
+            value = text.replace("_", " ")
+            if title_case:
+                value = value.title()
+            slug = value.lower()
+            if slug in seen:
+                continue
+            seen.add(slug)
+            merged.append(value)
+        return merged
+
+    def _age_bounds_for_cohort(self, cohort: str) -> tuple[int, int] | None:
+        normalized = str(cohort).strip().lower()
+        if normalized == "youth":
+            return (18, 24)
+        if normalized == "adult":
+            return (25, 59)
+        if normalized == "senior":
+            return (60, 100)
+        return None

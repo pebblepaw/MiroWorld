@@ -31,6 +31,9 @@ class PersonaSampler:
     def _local_parquet_glob(self) -> str:
         base_dir = Path(self.cache_dir or ".cache/nemotron")
         base_dir.mkdir(parents=True, exist_ok=True)
+        local_parquet_files = sorted((base_dir / "data").glob("train-*"))
+        if local_parquet_files:
+            return str(base_dir / "data" / "train-*")
         snapshot_path = Path(
             snapshot_download(
                 repo_id=self.dataset_name,
@@ -44,6 +47,60 @@ class PersonaSampler:
         if not parquet_files:
             raise FileNotFoundError(f"No parquet files downloaded for {self.dataset_name}")
         return str(snapshot_path / "data" / "train-*")
+
+    def query_candidates(
+        self,
+        *,
+        limit: int,
+        seed: int,
+        min_age: int | None = None,
+        max_age: int | None = None,
+        planning_areas: list[str] | None = None,
+        sexes: list[str] | None = None,
+        marital_statuses: list[str] | None = None,
+        education_levels: list[str] | None = None,
+        occupations: list[str] | None = None,
+        industries: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        parquet_glob = self._local_parquet_glob()
+        where_clauses: list[str] = []
+
+        if min_age is not None:
+            where_clauses.append(f"age >= {min_age}")
+        if max_age is not None:
+            where_clauses.append(f"age <= {max_age}")
+        if planning_areas:
+            where_clauses.append(f"planning_area IN ({', '.join(_sql_quote(v) for v in planning_areas)})")
+        if sexes:
+            where_clauses.append(f"sex IN ({', '.join(_sql_quote(v) for v in sexes)})")
+        if marital_statuses:
+            where_clauses.append(f"marital_status IN ({', '.join(_sql_quote(v) for v in marital_statuses)})")
+        if education_levels:
+            where_clauses.append(f"education_level IN ({', '.join(_sql_quote(v) for v in education_levels)})")
+        if occupations:
+            where_clauses.append(f"occupation IN ({', '.join(_sql_quote(v) for v in occupations)})")
+        if industries:
+            where_clauses.append(f"industry IN ({', '.join(_sql_quote(v) for v in industries)})")
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        order_expr = f"hash(coalesce(uuid, persona, occupation, planning_area, '') || '{seed}')"
+        query = f"""
+            SELECT *
+            FROM read_parquet('{parquet_glob}')
+            {where_sql}
+            ORDER BY {order_expr}
+            LIMIT {limit}
+        """
+
+        conn = duckdb.connect()
+        try:
+            rows = conn.execute(query).fetch_df().to_dict(orient="records")
+            return cast(list[dict[str, Any]], rows)
+        finally:
+            conn.close()
 
     def _sample_stream(self, req: PersonaFilterRequest) -> list[dict[str, Any]]:
         ds = load_dataset(self.dataset_name, split=self.split, streaming=True)

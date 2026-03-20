@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from mckainsey.main import app
+from mckainsey.config import Settings
 from mckainsey.services.console_service import ConsoleService
 
 
@@ -91,10 +92,22 @@ def test_console_session_creation_and_knowledge_processing(monkeypatch, tmp_path
 
 def test_console_population_preview_route(monkeypatch):
     def fake_preview_population(self, session_id, request):
+        assert request.sample_mode == "affected_groups"
+        assert request.seed == 17
+        assert request.sampling_instructions == "Bias toward younger teachers and parents in the north-east"
         return {
             "session_id": session_id,
             "candidate_count": 12,
             "sample_count": 4,
+            "sample_mode": "affected_groups",
+            "sample_seed": 17,
+            "parsed_sampling_instructions": {
+                "hard_filters": {"occupation": ["teacher"]},
+                "soft_boosts": {"age_cohort": ["youth"], "planning_area": ["Sengkang", "Punggol"]},
+                "exclusions": {},
+                "distribution_targets": {},
+                "notes_for_ui": ["Bias toward younger teachers and parents in the north-east"],
+            },
             "coverage": {
                 "planning_areas": ["Woodlands", "Yishun"],
                 "age_buckets": {"25-34": 2, "35-44": 2},
@@ -105,6 +118,11 @@ def test_console_population_preview_route(monkeypatch):
                     "persona": {"planning_area": "Woodlands", "income_bracket": "$3,000-$5,999", "age": 32},
                     "selection_reason": {
                         "score": 0.78,
+                        "matched_facets": ["planning_area:woodlands"],
+                        "matched_document_entities": ["transport affordability"],
+                        "instruction_matches": ["teacher"],
+                        "bm25_terms": ["teacher", "young", "north-east"],
+                        "semantic_summary": "Matched education and parent-facing policy concerns.",
                         "semantic_relevance": 0.8,
                         "geographic_relevance": 0.9,
                         "socioeconomic_relevance": 0.7,
@@ -114,23 +132,53 @@ def test_console_population_preview_route(monkeypatch):
                 }
             ],
             "agent_graph": {
-                "nodes": [{"id": "agent-0001", "label": "agent-0001", "planning_area": "Woodlands"}],
+                "nodes": [{"id": "agent-0001", "label": "agent-0001", "planning_area": "Woodlands", "node_type": "planning_area_cluster"}],
                 "links": [],
             },
             "representativeness": {"status": "balanced"},
+            "selection_diagnostics": {
+                "shortlist_count": 8,
+                "structured_filter_count": 6,
+                "bm25_shortlist_count": 4,
+                "semantic_rerank_count": 3,
+            },
         }
 
     monkeypatch.setattr(ConsoleService, "preview_population", fake_preview_population)
 
     response = client.post(
         "/api/v2/console/session/session-a/sampling/preview",
-        json={"agent_count": 4, "planning_areas": ["Woodlands", "Yishun"]},
+        json={
+            "agent_count": 4,
+            "planning_areas": ["Woodlands", "Yishun"],
+            "sample_mode": "affected_groups",
+            "seed": 17,
+            "sampling_instructions": "Bias toward younger teachers and parents in the north-east",
+        },
     )
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["candidate_count"] == 12
+    assert body["sample_mode"] == "affected_groups"
+    assert body["sample_seed"] == 17
+    assert body["parsed_sampling_instructions"]["hard_filters"]["occupation"] == ["teacher"]
     assert body["sampled_personas"][0]["selection_reason"]["score"] == 0.78
+    assert body["sampled_personas"][0]["selection_reason"]["bm25_terms"] == ["teacher", "young", "north-east"]
+    assert body["selection_diagnostics"]["bm25_shortlist_count"] == 4
     assert body["representativeness"]["status"] == "balanced"
+
+
+def test_console_population_preview_route_rejects_unknown_fields():
+    response = client.post(
+        "/api/v2/console/session/session-a/sampling/preview",
+        json={
+            "agent_count": 4,
+            "sample_mode": "affected_groups",
+            "income_brackets": ["$3,000-$5,999"],
+        },
+    )
+
+    assert response.status_code == 422, response.text
 
 
 def test_console_knowledge_upload_route_parses_pdf(monkeypatch):
@@ -238,3 +286,46 @@ def test_console_interaction_hub_chat_routes(monkeypatch):
     assert agent_body["memory_used"] is True
     assert agent_body["zep_context_used"] is True
     assert agent_body["agent_id"] == "agent-001"
+
+
+def test_console_service_caps_stage2_candidate_pool_for_live_preview(monkeypatch, tmp_path):
+    settings = Settings(simulation_db_path=str(tmp_path / "sim.db"))
+    service = ConsoleService(settings)
+
+    monkeypatch.setattr(service.store, "get_knowledge_artifact", lambda session_id: {"summary": "Education support", "entity_nodes": [], "relationship_edges": []})
+    monkeypatch.setattr(service.relevance, "parse_sampling_instructions", lambda instructions, knowledge_artifact=None: {"hard_filters": {}, "soft_boosts": {}, "exclusions": {}, "distribution_targets": {}, "notes_for_ui": [], "source": "test"})
+
+    captured: dict[str, object] = {}
+
+    def fake_query_candidates(**kwargs):
+        captured.update(kwargs)
+        return [{"planning_area": "Sengkang", "industry": "Education", "age": 28, "occupation": "Teacher"}]
+
+    monkeypatch.setattr(service.sampler, "query_candidates", fake_query_candidates)
+    monkeypatch.setattr(service.relevance, "build_population_artifact", lambda *args, **kwargs: {"session_id": "session-a", "candidate_count": 1, "sample_count": 1, "sample_mode": "affected_groups", "sample_seed": kwargs["seed"], "parsed_sampling_instructions": kwargs["parsed_sampling_instructions"], "coverage": {}, "sampled_personas": [], "agent_graph": {"nodes": [], "links": []}, "representativeness": {"status": "narrow"}, "selection_diagnostics": {}})
+
+    class Req:
+        agent_count = 500
+        sample_mode = "affected_groups"
+        sampling_instructions = "Bias toward younger teachers."
+        seed = 17
+        min_age = None
+        max_age = None
+        planning_areas = []
+        income_brackets = []
+
+        def model_dump(self):
+            return {
+                "agent_count": self.agent_count,
+                "sample_mode": self.sample_mode,
+                "sampling_instructions": self.sampling_instructions,
+                "seed": self.seed,
+                "min_age": self.min_age,
+                "max_age": self.max_age,
+                "planning_areas": self.planning_areas,
+                "income_brackets": self.income_brackets,
+            }
+
+    service.preview_population("session-a", Req())
+
+    assert captured["limit"] == 1000
