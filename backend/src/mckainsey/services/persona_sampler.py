@@ -57,7 +57,8 @@ class PersonaSampler:
                 return False
             if req.planning_areas and row.get("planning_area") not in set(req.planning_areas):
                 return False
-            if req.income_brackets and row.get("income_bracket") not in set(req.income_brackets):
+            row_income = row.get("income_bracket")
+            if req.income_brackets and row_income not in {None, ""} and row_income not in set(req.income_brackets):
                 return False
             return True
 
@@ -108,7 +109,24 @@ class PersonaSampler:
 
         conn = duckdb.connect()
         try:
-            rows = conn.execute(query).fetch_df().to_dict(orient="records")
+            try:
+                rows = conn.execute(query).fetch_df().to_dict(orient="records")
+            except Exception as exc:
+                if req.income_brackets and "income_bracket" in str(exc).lower():
+                    retry_clauses = [clause for clause in where_clauses if "income_bracket" not in clause]
+                    retry_where_sql = ""
+                    if retry_clauses:
+                        retry_where_sql = "WHERE " + " AND ".join(retry_clauses)
+                    retry_query = f"""
+                        SELECT *
+                        FROM '{parquet_glob}'
+                        {retry_where_sql}
+                        ORDER BY RANDOM()
+                        LIMIT {req.limit}
+                    """
+                    rows = conn.execute(retry_query).fetch_df().to_dict(orient="records")
+                else:
+                    raise
             return cast(list[dict[str, Any]], rows)
         finally:
             conn.close()

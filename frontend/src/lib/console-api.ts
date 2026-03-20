@@ -6,6 +6,12 @@ export interface KnowledgeNode {
   type: string;
   description?: string | null;
   weight?: number | null;
+  families?: string[] | null;
+  facet_kind?: string | null;
+  canonical_key?: string | null;
+  canonical_value?: string | null;
+  source_ids?: string[] | null;
+  file_paths?: string[] | null;
 }
 
 export interface KnowledgeEdge {
@@ -13,6 +19,10 @@ export interface KnowledgeEdge {
   target: string;
   type: string;
   label?: string | null;
+  normalized_type?: string | null;
+  raw_relation_text?: string | null;
+  source_ids?: string[] | null;
+  file_paths?: string[] | null;
 }
 
 export interface KnowledgeArtifact {

@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 
+from lightrag.types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
+
 from mckainsey.config import Settings
-from mckainsey.services.lightrag_service import _build_graph_from_text
+from mckainsey.services.lightrag_service import LightRAGService, _adapt_native_lightrag_graph, _build_graph_from_text
 
 
 def test_lightrag_extraction_returns_multiple_normalized_relation_labels(monkeypatch, tmp_path):
@@ -100,3 +102,171 @@ def test_lightrag_extraction_returns_multiple_normalized_relation_labels(monkeyp
     assert node_by_id["policy:transport_subsidy"]["weight"] == 0.93
     assert node_by_id["area:woodlands"]["type"] == "location"
     assert all("label" in edge for edge in result_edges)
+
+
+def test_native_lightrag_graph_adapter_adds_facet_metadata_and_preserves_relation_labels():
+    native_graph = KnowledgeGraph(
+        nodes=[
+            KnowledgeGraphNode(
+                id="Budget 2026",
+                labels=["Budget 2026"],
+                properties={
+                    "entity_id": "Budget 2026",
+                    "entity_type": "policy",
+                    "description": "Budget 2026 support measures.",
+                    "source_id": "chunk-1<SEP>chunk-2",
+                    "file_path": "budget.md",
+                },
+            ),
+            KnowledgeGraphNode(
+                id="Woodlands",
+                labels=["Woodlands"],
+                properties={
+                    "entity_id": "Woodlands",
+                    "entity_type": "location",
+                    "description": "Planning area in Singapore.",
+                    "source_id": "chunk-2",
+                    "file_path": "budget.md",
+                },
+            ),
+            KnowledgeGraphNode(
+                id="Seniors",
+                labels=["Seniors"],
+                properties={
+                    "entity_id": "Seniors",
+                    "entity_type": "population",
+                    "description": "Older residents affected by the plan.",
+                    "source_id": "chunk-3",
+                    "file_path": "budget.md",
+                },
+            ),
+            KnowledgeGraphNode(
+                id="Gardening",
+                labels=["Gardening"],
+                properties={
+                    "entity_id": "Gardening",
+                    "entity_type": "concept",
+                    "description": "A common hobby among some residents.",
+                    "source_id": "chunk-4",
+                    "file_path": "budget.md",
+                },
+            ),
+        ],
+        edges=[
+            KnowledgeGraphEdge(
+                id="Budget 2026->Seniors",
+                type=None,
+                source="Budget 2026",
+                target="Seniors",
+                properties={
+                    "keywords": "transport support, targeted assistance",
+                    "description": "Budget 2026 targets seniors with transport support.",
+                    "source_id": "chunk-3",
+                    "file_path": "budget.md",
+                },
+            ),
+            KnowledgeGraphEdge(
+                id="Budget 2026->Woodlands",
+                type=None,
+                source="Budget 2026",
+                target="Woodlands",
+                properties={
+                    "keywords": "pilot area",
+                    "description": "The measures are piloted in Woodlands.",
+                    "source_id": "chunk-2",
+                    "file_path": "budget.md",
+                },
+            ),
+        ],
+    )
+
+    graph = _adapt_native_lightrag_graph(native_graph)
+    node_by_id = {node["id"]: node for node in graph["entity_nodes"]}
+    edge_by_id = {(edge["source"], edge["target"]): edge for edge in graph["relationship_edges"]}
+
+    assert node_by_id["Woodlands"]["facet_kind"] == "planning_area"
+    assert "facet" in node_by_id["Woodlands"]["families"]
+    assert node_by_id["Woodlands"]["canonical_key"] == "planning_area:woodlands"
+
+    assert node_by_id["Seniors"]["facet_kind"] == "age_cohort"
+    assert node_by_id["Seniors"]["canonical_key"] == "age_cohort:senior"
+    assert "document" in node_by_id["Seniors"]["families"]
+
+    assert node_by_id["Gardening"]["facet_kind"] == "hobby"
+    assert node_by_id["Gardening"]["canonical_key"] == "hobby:gardening"
+
+    transport_edge = edge_by_id[("Budget 2026", "Seniors")]
+    assert transport_edge["label"] == "transport support, targeted assistance"
+    assert transport_edge["normalized_type"] == "targets"
+    assert transport_edge["raw_relation_text"] == "transport support, targeted assistance"
+
+    woodlands_edge = edge_by_id[("Budget 2026", "Woodlands")]
+    assert woodlands_edge["label"] == "pilot area"
+    assert woodlands_edge["normalized_type"] == "located_in"
+
+
+def test_process_document_prefers_native_lightrag_graph(monkeypatch, tmp_path):
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "simulation.db"),
+        lightrag_workdir=str(tmp_path / "lightrag"),
+        gemini_api_key="test-key",
+    )
+    service = LightRAGService(settings)
+
+    class FakeRag:
+        async def ainsert(self, *args, **kwargs):
+            return None
+
+        async def aquery(self, *args, **kwargs):
+            return "Native LightRAG summary."
+
+    async def fake_ensure_ready():
+        return None
+
+    async def fake_load_document_native_graph(rag, document_id):
+        assert document_id.startswith("doc-")
+        return KnowledgeGraph(
+            nodes=[
+                KnowledgeGraphNode(
+                    id="Budget 2026",
+                    labels=["Budget 2026"],
+                    properties={"entity_id": "Budget 2026", "entity_type": "policy", "source_id": "chunk-1"},
+                ),
+                KnowledgeGraphNode(
+                    id="Woodlands",
+                    labels=["Woodlands"],
+                    properties={"entity_id": "Woodlands", "entity_type": "location", "source_id": "chunk-2"},
+                ),
+            ],
+            edges=[
+                KnowledgeGraphEdge(
+                    id="Budget 2026->Woodlands",
+                    type=None,
+                    source="Budget 2026",
+                    target="Woodlands",
+                    properties={"keywords": "pilot area", "description": "The measures are piloted in Woodlands."},
+                )
+            ],
+        )
+
+    async def fail_fallback(*args, **kwargs):
+        raise AssertionError("Fallback graph extraction should not run when native LightRAG graph is available")
+
+    service._rag = FakeRag()
+    monkeypatch.setattr(service, "ensure_ready", fake_ensure_ready)
+    monkeypatch.setattr("mckainsey.services.lightrag_service._load_document_native_graph", fake_load_document_native_graph)
+    monkeypatch.setattr("mckainsey.services.lightrag_service._build_graph_from_text", fail_fallback)
+
+    payload = asyncio.run(
+        service.process_document(
+            simulation_id="session-native",
+            document_text="Budget 2026 pilots transport support in Woodlands.",
+            source_path=str(tmp_path / "budget.md"),
+            guiding_prompt="Focus on place-based transport support.",
+        )
+    )
+
+    assert payload["graph_origin"] == "lightrag_native"
+    assert payload["summary"] == "Native LightRAG summary."
+    assert payload["relationship_edges"][0]["label"] == "pilot area"
+    assert payload["entity_nodes"][1]["canonical_key"] == "planning_area:woodlands"

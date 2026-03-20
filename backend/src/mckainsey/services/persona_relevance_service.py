@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import math
 import re
 from collections import Counter, defaultdict
@@ -7,6 +8,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from mckainsey.config import Settings
+from mckainsey.services.lightrag_service import (
+    AGE_COHORT_ALIASES,
+    EDUCATION_LEVEL_ALIASES,
+    HOBBY_SLUGS,
+    INDUSTRY_SLUGS,
+    MARITAL_STATUS_ALIASES,
+    OCCUPATION_SLUGS,
+    PLANNING_AREA_SLUGS,
+    SEX_ALIASES,
+    SKILL_SLUGS,
+)
 
 
 TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9\-_]+")
@@ -79,7 +91,7 @@ class PersonaRelevanceService:
             persona = row["persona"]
             key = (
                 str(persona.get("planning_area", "Unknown")),
-                str(persona.get("income_bracket", "Unknown")),
+                str(persona.get("occupation", "Unknown")),
                 self._age_bucket(persona.get("age")),
             )
             strata[key].append(row)
@@ -174,22 +186,54 @@ class PersonaRelevanceService:
         }
 
     def _build_issue_profile(self, artifact: dict[str, Any]) -> str:
-        labels = " ".join(str(node.get("label", "")) for node in artifact.get("entity_nodes", []))
-        return " ".join(
+        labels: list[str] = []
+        relation_labels: list[str] = []
+        facets: dict[str, set[str]] = defaultdict(set)
+
+        for node in artifact.get("entity_nodes", []):
+            label = str(node.get("label", "")).strip()
+            if label:
+                labels.append(label)
+            facet_kind, canonical_value = self._node_facet(node)
+            if facet_kind and canonical_value:
+                facets[facet_kind].add(canonical_value)
+
+        for edge in artifact.get("relationship_edges", []):
+            label = str(edge.get("label") or edge.get("raw_relation_text") or edge.get("type") or "").strip()
+            if label:
+                relation_labels.append(label)
+
+        combined_text = " ".join(
             part
             for part in [
                 str(artifact.get("summary", "")),
-                labels,
+                " ".join(labels),
+                " ".join(relation_labels),
                 str(artifact.get("demographic_focus_summary", "")),
             ]
             if part
-        )
+        ).strip()
+
+        return {
+            "text": combined_text,
+            "text_lower": combined_text.lower(),
+            "tokens": self._tokens(combined_text),
+            "facets": {kind: values for kind, values in facets.items() if values},
+        }
 
     def _persona_text(self, persona: dict[str, Any]) -> str:
-        return " ".join(str(value) for value in persona.values() if value is not None)
+        parts: list[str] = []
+        for key, value in persona.items():
+            if value is None:
+                continue
+            if key in {"hobbies_and_interests_list", "skills_and_expertise_list"}:
+                parts.extend(self._parse_list_field(value))
+            else:
+                parts.append(str(value))
+        return " ".join(parts)
 
-    def _semantic_relevance(self, issue_profile: str, persona: dict[str, Any]) -> float:
-        issue_tokens = self._tokens(issue_profile)
+    def _semantic_relevance(self, issue_profile: dict[str, Any], persona: dict[str, Any]) -> float:
+        issue_tokens = issue_profile["tokens"]
         persona_tokens = self._tokens(self._persona_text(persona))
         if not issue_tokens or not persona_tokens:
             return 0.0
@@ -197,28 +241,54 @@ class PersonaRelevanceService:
         union = len(issue_tokens | persona_tokens)
         return round(intersection / union, 4) if union else 0.0
 
-    def _geographic_relevance(self, issue_profile: str, persona: dict[str, Any]) -> float:
+    def _geographic_relevance(self, issue_profile: dict[str, Any], persona: dict[str, Any]) -> float:
         area = str(persona.get("planning_area", "")).strip().lower()
         if not area:
             return 0.0
-        return 1.0 if area and area in issue_profile.lower() else 0.2
+        planning_areas = issue_profile["facets"].get("planning_area", set())
+        if planning_areas:
+            return 1.0 if self._slug(area) in planning_areas else 0.05
+        return 1.0 if area and area in issue_profile["text_lower"] else 0.2
 
-    def _socioeconomic_relevance(self, issue_profile: str, persona: dict[str, Any]) -> float:
-        score = 0.2
+    def _socioeconomic_relevance(self, issue_profile: dict[str, Any], persona: dict[str, Any]) -> float:
+        facets = issue_profile["facets"]
+        text_lower = issue_profile["text_lower"]
+        score = 0.15
         age = persona.get("age")
-        if isinstance(age, (int, float)) and age >= 60 and "senior" in issue_profile.lower():
-            score += 0.4
-        income = str(persona.get("income_bracket", "")).lower()
-        if "transport" in issue_profile.lower() and ("$3,000" in income or "$2,000" in income):
-            score += 0.2
+        if isinstance(age, (int, float)):
+            age_cohort = self._persona_age_cohort(age)
+            if age_cohort and age_cohort in facets.get("age_cohort", set()):
+                score += 0.3
+            elif age >= 60 and "senior" in text_lower:
+                score += 0.2
+
         occupation = str(persona.get("occupation", "")).lower()
-        if occupation and occupation in issue_profile.lower():
+        if occupation and self._slug(occupation) in facets.get("occupation", set()):
             score += 0.2
+        elif occupation and occupation in text_lower:
+            score += 0.1
+
+        industry = str(persona.get("industry", "")).lower()
+        if industry and self._slug(industry) in facets.get("industry", set()):
+            score += 0.2
+
+        education_level = str(persona.get("education_level", "")).lower()
+        if education_level and self._slug(education_level) in facets.get("education_level", set()):
+            score += 0.15
+
+        marital_status = str(persona.get("marital_status", "")).lower()
+        if marital_status and self._slug(marital_status) in facets.get("marital_status", set()):
+            score += 0.1
+
+        sex = str(persona.get("sex", "")).lower()
+        if sex and self._slug(sex) in facets.get("sex", set()):
+            score += 0.2
+
         return min(1.0, round(score, 4))
 
-    def _digital_behavior_relevance(self, issue_profile: str, persona: dict[str, Any]) -> float:
+    def _digital_behavior_relevance(self, issue_profile: dict[str, Any], persona: dict[str, Any]) -> float:
         text = self._persona_text(persona).lower()
-        if "online" in issue_profile.lower() or "digital" in issue_profile.lower():
+        if "online" in issue_profile["text_lower"] or "digital" in issue_profile["text_lower"]:
             if "high" in text or "social" in text or "digital" in text:
                 return 0.9
         return 0.4
@@ -229,7 +299,7 @@ class PersonaRelevanceService:
         if planning_areas and persona.get("planning_area") not in planning_areas:
             score -= 0.5
         income_brackets = filters.get("income_brackets") or []
-        if income_brackets and persona.get("income_bracket") not in income_brackets:
+        if income_brackets and persona.get("income_bracket") not in {None, ""} and persona.get("income_bracket") not in income_brackets:
             score -= 0.3
         min_age = filters.get("min_age")
         max_age = filters.get("max_age")
@@ -269,6 +339,75 @@ class PersonaRelevanceService:
 
     def _tokens(self, text: str) -> set[str]:
         return {token for token in TOKEN_RE.findall(text.lower()) if token not in STOPWORDS}
+
+    def _node_facet(self, node: dict[str, Any]) -> tuple[str | None, str | None]:
+        canonical_key = str(node.get("canonical_key", "")).strip()
+        if ":" in canonical_key:
+            kind, value = canonical_key.split(":", 1)
+            return kind, value
+
+        label = str(node.get("label", "")).strip()
+        normalized = self._slug(label).replace("_", " ")
+        combined = " ".join(part for part in [label.lower(), str(node.get("description", "")).lower()] if part)
+
+        if planning_area := self._match_from_catalog(normalized, PLANNING_AREA_SLUGS):
+            return "planning_area", planning_area
+        if age_cohort := AGE_COHORT_ALIASES.get(normalized) or self._phrase_match(combined, AGE_COHORT_ALIASES):
+            return "age_cohort", self._slug(age_cohort)
+        if sex := SEX_ALIASES.get(normalized):
+            return "sex", self._slug(sex)
+        if education := EDUCATION_LEVEL_ALIASES.get(normalized):
+            return "education_level", self._slug(education)
+        if marital_status := MARITAL_STATUS_ALIASES.get(normalized):
+            return "marital_status", self._slug(marital_status)
+        if occupation := self._match_from_catalog(normalized, OCCUPATION_SLUGS):
+            return "occupation", occupation
+        if industry := self._match_from_catalog(normalized, INDUSTRY_SLUGS):
+            return "industry", industry
+        if hobby := self._match_from_catalog(normalized, HOBBY_SLUGS):
+            return "hobby", hobby
+        if skill := self._match_from_catalog(normalized, SKILL_SLUGS):
+            return "skill", skill
+        return None, None
+
+    def _match_from_catalog(self, normalized_label: str, catalog: dict[str, str]) -> str | None:
+        slug = normalized_label.replace(" ", "_")
+        canonical = catalog.get(slug)
+        return self._slug(canonical) if canonical else None
+
+    def _phrase_match(self, text: str, aliases: dict[str, str]) -> str | None:
+        for phrase, canonical in aliases.items():
+            if phrase in text:
+                return canonical
+        return None
+
+    def _parse_list_field(self, value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        if not isinstance(value, str):
+            return [str(value)]
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+        return [part.strip() for part in value.split(",") if part.strip()]
+
+    def _persona_age_cohort(self, age: Any) -> str | None:
+        if not isinstance(age, (int, float)):
+            return None
+        age_value = int(age)
+        if age_value <= 14:
+            return "child"
+        if age_value <= 24:
+            return "youth"
+        if age_value >= 60:
+            return "senior"
+        return "adult"
+
+    def _slug(self, value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_")
 
     def _age_bucket(self, age: Any) -> str:
         if not isinstance(age, (int, float)):

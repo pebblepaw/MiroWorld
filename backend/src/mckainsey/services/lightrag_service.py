@@ -5,6 +5,7 @@ import json
 import mimetypes
 import re
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -12,24 +13,68 @@ import numpy as np
 from lightrag import LightRAG, QueryParam
 from lightrag.kg.shared_storage import initialize_pipeline_status
 from lightrag.llm.openai import openai_complete_if_cache, openai_embed
+from lightrag.types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
 from lightrag.utils import EmbeddingFunc
 
 from mckainsey.config import Settings
 
 
-PLANNING_AREAS = {
-    "woodlands",
-    "yishun",
-    "tampines",
-    "bishan",
-    "jurong",
-    "punggol",
-    "sengkang",
-    "orchard",
-    "bedok",
-    "toa payoh",
-    "ang mo kio",
-}
+def _constant_slugify(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "_", value.lower()).strip("_")
+
+
+PLANNING_AREA_NAMES = (
+    "Ang Mo Kio",
+    "Bedok",
+    "Bishan",
+    "Boon Lay",
+    "Bukit Batok",
+    "Bukit Merah",
+    "Bukit Panjang",
+    "Bukit Timah",
+    "Changi",
+    "Choa Chu Kang",
+    "Clementi",
+    "Downtown Core",
+    "Geylang",
+    "Hougang",
+    "Jurong East",
+    "Jurong West",
+    "Kallang",
+    "Lim Chu Kang",
+    "Mandai",
+    "Marine Parade",
+    "Museum",
+    "Newton",
+    "North-Eastern Islands",
+    "Novena",
+    "Orchard",
+    "Outram",
+    "Pasir Ris",
+    "Paya Lebar",
+    "Pioneer",
+    "Punggol",
+    "Queenstown",
+    "River Valley",
+    "Rochor",
+    "Seletar",
+    "Sembawang",
+    "Sengkang",
+    "Serangoon",
+    "Singapore River",
+    "Southern Islands",
+    "Sungei Kadut",
+    "Tampines",
+    "Tanglin",
+    "Tengah",
+    "Toa Payoh",
+    "Tuas",
+    "Western Water Catchment",
+    "Woodlands",
+    "Yishun",
+)
+PLANNING_AREAS = {name.lower() for name in PLANNING_AREA_NAMES}
+PLANNING_AREA_SLUGS = {_constant_slugify(name): name for name in PLANNING_AREA_NAMES}
 DEMOGRAPHIC_TERMS = {
     "seniors",
     "elderly",
@@ -56,6 +101,117 @@ POLICY_TERMS = {
     "inflation",
     "digital",
 }
+SEP_TOKEN = "<SEP>"
+DOCUMENT_FAMILY = "document"
+FACET_FAMILY = "facet"
+SEX_ALIASES = {
+    "female": "female",
+    "women": "female",
+    "woman": "female",
+    "male": "male",
+    "men": "male",
+    "man": "male",
+}
+AGE_COHORT_ALIASES = {
+    "child": "child",
+    "children": "child",
+    "kid": "child",
+    "kids": "child",
+    "youth": "youth",
+    "young adults": "young_adult",
+    "young adult": "young_adult",
+    "working adults": "adult",
+    "workers": "adult",
+    "adults": "adult",
+    "adult": "adult",
+    "mid career workers": "mid_career",
+    "mid-career workers": "mid_career",
+    "senior workers": "senior",
+    "senior": "senior",
+    "seniors": "senior",
+    "elderly": "senior",
+    "older residents": "senior",
+    "older adults": "senior",
+    "retirees": "senior",
+}
+EDUCATION_LEVEL_ALIASES = {
+    "lower secondary": "lower_secondary",
+    "no qualification": "no_qualification",
+    "other diploma": "other_diploma",
+    "polytechnic": "polytechnic",
+    "post secondary non tertiary": "post_secondary_non_tertiary",
+    "post-secondary non-tertiary": "post_secondary_non_tertiary",
+    "primary": "primary",
+    "secondary": "secondary",
+    "university": "university",
+}
+MARITAL_STATUS_ALIASES = {
+    "divorced separated": "divorced_separated",
+    "divorced/separated": "divorced_separated",
+    "married": "married",
+    "single": "single",
+    "widowed": "widowed",
+}
+OCCUPATION_NAMES = (
+    "Agricultural or Fishery Worker",
+    "Associate Professional or Technician",
+    "Cleaner, Labourer or Related Worker",
+    "Clerical Worker",
+    "Homemaker",
+    "National Service",
+    "Plant or Machine Operator or Assembler",
+    "Production Craftsman or Related Worker",
+    "Professional",
+    "Retired",
+    "Senior Official or Manager",
+    "Service or Sales Worker",
+    "Student",
+    "Unemployed",
+)
+INDUSTRY_NAMES = (
+    "Accommodation & Food Services",
+    "Administrative & Support Services",
+    "Arts, Entertainment & Recreation",
+    "Community, Social & Personal Services",
+    "Construction",
+    "Financial & Insurance Services",
+    "Health & Social Services",
+    "Information & Communications",
+    "Manufacturing",
+    "Professional Services",
+    "Public Administration & Education Services",
+    "Real Estate Services",
+    "Transportation & Storage",
+    "Wholesale & Retail Trade",
+)
+OCCUPATION_SLUGS = {_constant_slugify(name): name for name in OCCUPATION_NAMES}
+INDUSTRY_SLUGS = {_constant_slugify(name): name for name in INDUSTRY_NAMES}
+COMMON_HOBBIES = {
+    "badminton",
+    "calligraphy",
+    "gardening",
+    "jogging",
+    "karaoke",
+    "mahjong",
+    "meditation",
+    "photography",
+    "yoga",
+}
+COMMON_SKILLS = {
+    "budget management",
+    "community volunteering",
+    "customer service",
+    "data analysis",
+    "event coordination",
+    "inventory management",
+    "negotiation",
+    "project management",
+    "public speaking",
+    "team leadership",
+    "time management",
+}
+HOBBY_SLUGS = {_constant_slugify(name): name for name in COMMON_HOBBIES}
+SKILL_SLUGS = {_constant_slugify(name): name for name in COMMON_SKILLS}
 GRAPH_EXTRACTION_SYSTEM_PROMPT = (
     "Extract a policy knowledge graph from the document. Return valid JSON only, "
     "with keys nodes and edges. Nodes should include id, label, type, and optional "
@@ -197,8 +353,11 @@ class LightRAGService:
 
         await self._rag.ainsert([document_text], ids=[document_id], file_paths=file_paths)
 
+        summary_prompt = "Summarize this policy document with key entities and relationships."
+        if guiding_prompt:
+            summary_prompt = f"{summary_prompt} Focus especially on: {guiding_prompt}"
         summary = await self._rag.aquery(
-            "Summarize this policy document with key entities and relationships.",
+            summary_prompt,
             param=QueryParam(mode="mix"),
         )
 
@@ -209,15 +368,28 @@ class LightRAGService:
                 param=QueryParam(mode="hybrid"),
             )
 
-        entity_nodes, relationship_edges = await _build_graph_from_text(
-            document_text=document_text,
-            guiding_prompt=guiding_prompt,
-            settings=self._settings,
-        )
-        entity_type_counts: dict[str, int] = {}
-        for node in entity_nodes:
-            node_type = str(node.get("type", "unknown"))
-            entity_type_counts[node_type] = entity_type_counts.get(node_type, 0) + 1
+        graph_origin = "lightrag_native"
+        processing_logs = [f"Inserted document {document_id} into LightRAG"]
+        native_graph = await _load_document_native_graph(self._rag, document_id)
+        if native_graph and (native_graph.nodes or native_graph.edges):
+            graph_payload = _adapt_native_lightrag_graph(native_graph)
+            entity_nodes = graph_payload["entity_nodes"]
+            relationship_edges = graph_payload["relationship_edges"]
+            processing_logs.append(
+                f"Adapted LightRAG entity graph ({len(entity_nodes)} nodes, {len(relationship_edges)} edges)"
+            )
+        else:
+            graph_origin = "fallback_gemini_extract"
+            entity_nodes, relationship_edges = await _build_graph_from_text(
+                document_text=document_text,
+                guiding_prompt=guiding_prompt,
+                settings=self._settings,
+            )
+            processing_logs.append(
+                f"Native LightRAG graph unavailable, used fallback extraction ({len(entity_nodes)} nodes, {len(relationship_edges)} edges)"
+            )
+
+        entity_type_counts = dict(Counter(str(node.get("type", "unknown")) for node in entity_nodes))
 
         return {
             "simulation_id": simulation_id,
@@ -235,12 +407,128 @@ class LightRAGService:
             "entity_nodes": entity_nodes,
             "relationship_edges": relationship_edges,
             "entity_type_counts": entity_type_counts,
-            "processing_logs": [
-                f"Inserted document {document_id}",
-                f"Extracted graph with Gemini ({len(entity_nodes)} nodes, {len(relationship_edges)} edges)",
-            ],
+            "graph_origin": graph_origin,
+            "processing_logs": processing_logs,
             "demographic_focus_summary": demographic_context or demographic_focus,
         }
+
+
+async def _load_document_native_graph(rag: LightRAG, document_id: str) -> KnowledgeGraph | None:
+    entities_record = await rag.full_entities.get_by_id(document_id)
+    relations_record = await rag.full_relations.get_by_id(document_id)
+
+    entity_names = [name for name in (entities_record or {}).get("entity_names", []) if _coerce_text(name)]
+    relation_pairs = [
+        (_coerce_text(pair[0]), _coerce_text(pair[1]))
+        for pair in (relations_record or {}).get("relation_pairs", [])
+        if isinstance(pair, (list, tuple)) and len(pair) >= 2 and _coerce_text(pair[0]) and _coerce_text(pair[1])
+    ]
+
+    if not entity_names and not relation_pairs:
+        return None
+
+    ordered_names: list[str] = []
+    seen_names: set[str] = set()
+    for name in entity_names + [value for pair in relation_pairs for value in pair]:
+        normalized = _coerce_text(name)
+        if not normalized or normalized in seen_names:
+            continue
+        seen_names.add(normalized)
+        ordered_names.append(normalized)
+
+    nodes: list[KnowledgeGraphNode] = []
+    for name in ordered_names:
+        entity_info = await _safe_get_entity_info(rag, name)
+        graph_data = dict(entity_info.get("graph_data") or {})
+        graph_data.setdefault("entity_id", entity_info.get("entity_name") or name)
+        graph_data.setdefault("source_id", entity_info.get("source_id"))
+        nodes.append(
+            KnowledgeGraphNode(
+                id=name,
+                labels=[graph_data.get("entity_id") or name],
+                properties=graph_data,
+            )
+        )
+
+    edges: list[KnowledgeGraphEdge] = []
+    for source, target in relation_pairs:
+        relation_info = await _safe_get_relation_info(rag, source, target)
+        graph_data = dict(relation_info.get("graph_data") or {})
+        graph_data.setdefault("source_id", relation_info.get("source_id"))
+        edges.append(
+            KnowledgeGraphEdge(
+                id=f"{source}->{target}",
+                type=None,
+                source=source,
+                target=target,
+                properties=graph_data,
+            )
+        )
+
+    return KnowledgeGraph(nodes=nodes, edges=edges)
+
+
+async def _safe_get_entity_info(rag: LightRAG, entity_name: str) -> dict[str, Any]:
+    try:
+        info = await rag.get_entity_info(entity_name)
+    except Exception:
+        info = {}
+    return info if isinstance(info, dict) else {}
+
+
+async def _safe_get_relation_info(rag: LightRAG, source: str, target: str) -> dict[str, Any]:
+    try:
+        info = await rag.get_relation_info(source, target)
+    except Exception:
+        info = {}
+    return info if isinstance(info, dict) else {}
+
+
+def _adapt_native_lightrag_graph(native_graph: KnowledgeGraph) -> dict[str, Any]:
+    merged_nodes: dict[str, dict[str, Any]] = {}
+    merge_key_to_id: dict[str, str] = {}
+    alias_to_id: dict[str, str] = {}
+
+    for raw_node in native_graph.nodes:
+        node = _normalize_native_graph_node(raw_node)
+        merge_key = str(node.get("canonical_key") or _slugify(str(node.get("label", ""))) or str(node.get("id")))
+        existing_id = merge_key_to_id.get(merge_key)
+        if existing_id:
+            merged_nodes[existing_id] = _merge_graph_nodes(merged_nodes[existing_id], node)
+            node_id = existing_id
+        else:
+            node_id = str(node["id"])
+            merged_nodes[node_id] = node
+            merge_key_to_id[merge_key] = node_id
+
+        for candidate in {
+            str(raw_node.id),
+            _coerce_text(raw_node.id),
+            str(node["id"]),
+            _coerce_text(node.get("label")),
+            _slugify(_coerce_text(node.get("label"))),
+        }:
+            if candidate:
+                alias_to_id[candidate] = node_id
+
+    relationship_edges: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, str, str]] = set()
+    for raw_edge in native_graph.edges:
+        source_id = _resolve_native_alias(raw_edge.source, alias_to_id)
+        target_id = _resolve_native_alias(raw_edge.target, alias_to_id)
+        if not source_id or not target_id or source_id == target_id:
+            continue
+        edge = _normalize_native_graph_edge(raw_edge, source_id, target_id, merged_nodes)
+        edge_key = (edge["source"], edge["target"], edge["type"], edge["label"])
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        relationship_edges.append(edge)
+
+    return {
+        "entity_nodes": list(merged_nodes.values()),
+        "relationship_edges": relationship_edges,
+    }
 
 
 async def _build_graph_from_text(
@@ -263,6 +551,225 @@ async def _build_graph_from_text(
         pass
 
     return _fallback_graph_from_text(document_text, guiding_prompt)
+
+
+def _normalize_native_graph_node(raw_node: KnowledgeGraphNode) -> dict[str, Any]:
+    properties = dict(raw_node.properties or {})
+    label = (
+        _coerce_text(properties.get("entity_id"))
+        or _coerce_text(properties.get("entity_name"))
+        or _coerce_text(raw_node.labels[0] if raw_node.labels else "")
+        or _coerce_text(raw_node.id)
+    )
+    node_type = _normalize_node_type(properties.get("entity_type"), label)
+    description = _coerce_text(properties.get("description"))
+    source_ids = _split_sep(properties.get("source_id"))
+    file_paths = _split_sep(properties.get("file_path"))
+    facet_meta = _infer_facet_metadata(label, node_type=node_type, description=description)
+    families = [DOCUMENT_FAMILY]
+    if facet_meta:
+        families.append(FACET_FAMILY)
+
+    node: dict[str, Any] = {
+        "id": _coerce_text(raw_node.id) or label,
+        "label": label,
+        "type": node_type,
+        "families": families,
+        "source_ids": source_ids,
+        "file_paths": file_paths,
+        "provenance": {
+            "source_ids": source_ids,
+            "file_paths": file_paths,
+        },
+    }
+    if description:
+        node["description"] = description
+
+    weight = _coerce_weight(properties.get("weight"))
+    if weight is None and source_ids:
+        weight = round(min(1.0, 0.25 + (0.12 * len(source_ids))), 3)
+    if weight is not None:
+        node["weight"] = weight
+
+    if facet_meta:
+        node.update(facet_meta)
+
+    return node
+
+
+def _merge_graph_nodes(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(existing)
+    merged["families"] = sorted(set(existing.get("families", [])) | set(incoming.get("families", [])))
+    merged["source_ids"] = _merge_unique_list(existing.get("source_ids"), incoming.get("source_ids"))
+    merged["file_paths"] = _merge_unique_list(existing.get("file_paths"), incoming.get("file_paths"))
+    merged["provenance"] = {
+        "source_ids": merged["source_ids"],
+        "file_paths": merged["file_paths"],
+    }
+
+    incoming_description = _coerce_text(incoming.get("description"))
+    existing_description = _coerce_text(existing.get("description"))
+    if incoming_description and incoming_description not in existing_description:
+        merged["description"] = " | ".join(part for part in [existing_description, incoming_description] if part)
+
+    incoming_weight = _coerce_weight(incoming.get("weight"))
+    existing_weight = _coerce_weight(existing.get("weight")) or 0.0
+    if incoming_weight is not None:
+        merged["weight"] = max(existing_weight, incoming_weight)
+
+    if existing.get("type") in {"entity", "other"} and incoming.get("type") not in {None, "entity", "other"}:
+        merged["type"] = incoming["type"]
+
+    for key in ("facet_kind", "canonical_key", "canonical_value"):
+        if key not in merged and incoming.get(key):
+            merged[key] = incoming[key]
+    return merged
+
+
+def _normalize_native_graph_edge(
+    raw_edge: KnowledgeGraphEdge,
+    source_id: str,
+    target_id: str,
+    node_lookup: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    properties = dict(raw_edge.properties or {})
+    description = _coerce_text(properties.get("description"))
+    raw_relation_text = _coerce_text(
+        properties.get("keywords") or properties.get("label") or properties.get("relationship") or raw_edge.type
+    )
+    if not raw_relation_text:
+        raw_relation_text = _derive_relation_text_from_description(description)
+    normalized_type = _normalize_native_relation_type(
+        raw_relation_text=raw_relation_text,
+        description=description,
+        source_node=node_lookup.get(source_id, {}),
+        target_node=node_lookup.get(target_id, {}),
+    )
+    source_ids = _split_sep(properties.get("source_id"))
+    file_paths = _split_sep(properties.get("file_path"))
+    edge: dict[str, Any] = {
+        "source": source_id,
+        "target": target_id,
+        "type": normalized_type,
+        "normalized_type": normalized_type,
+        "label": raw_relation_text,
+        "raw_relation_text": raw_relation_text,
+        "source_ids": source_ids,
+        "file_paths": file_paths,
+        "provenance": {
+            "source_ids": source_ids,
+            "file_paths": file_paths,
+        },
+    }
+    if description:
+        edge["description"] = description
+    return edge
+
+
+def _resolve_native_alias(value: Any, alias_to_id: dict[str, str]) -> str | None:
+    text = _coerce_text(value)
+    if not text:
+        return None
+    for candidate in (text, _slugify(text)):
+        if candidate in alias_to_id:
+            return alias_to_id[candidate]
+    return None
+
+
+def _infer_facet_metadata(label: str, *, node_type: str, description: str) -> dict[str, str] | None:
+    del node_type  # Node type is useful contextually but the matching is label-driven for transparency.
+    label_text = _coerce_text(label)
+    normalized = _slugify(label_text).replace("_", " ")
+    combined = " ".join(part for part in [label_text.lower(), description.lower()] if part)
+
+    if planning_area := _match_canonical_value(normalized, PLANNING_AREA_SLUGS):
+        return _facet_payload("planning_area", planning_area)
+
+    if age_cohort := AGE_COHORT_ALIASES.get(normalized) or _find_phrase_match(combined, AGE_COHORT_ALIASES):
+        return _facet_payload("age_cohort", age_cohort)
+
+    if sex := SEX_ALIASES.get(normalized):
+        return _facet_payload("sex", sex)
+
+    if education_level := EDUCATION_LEVEL_ALIASES.get(normalized):
+        return _facet_payload("education_level", education_level)
+
+    if marital_status := MARITAL_STATUS_ALIASES.get(normalized):
+        return _facet_payload("marital_status", marital_status)
+
+    if occupation := _match_canonical_value(normalized, OCCUPATION_SLUGS):
+        return _facet_payload("occupation", occupation)
+
+    if industry := _match_canonical_value(normalized, INDUSTRY_SLUGS):
+        return _facet_payload("industry", industry)
+
+    if hobby := _match_canonical_value(normalized, HOBBY_SLUGS):
+        return _facet_payload("hobby", hobby)
+
+    if skill := _match_canonical_value(normalized, SKILL_SLUGS):
+        return _facet_payload("skill", skill)
+
+    return None
+
+
+def _match_canonical_value(normalized_label: str, canonical_map: dict[str, str]) -> str | None:
+    slug = normalized_label.replace(" ", "_")
+    canonical = canonical_map.get(slug)
+    if not canonical:
+        return None
+    return _slugify(canonical)
+
+
+def _find_phrase_match(text: str, aliases: dict[str, str]) -> str | None:
+    for phrase, canonical in aliases.items():
+        if phrase in text:
+            return canonical
+    return None
+
+
+def _facet_payload(kind: str, canonical_value: str) -> dict[str, str]:
+    value = _slugify(canonical_value)
+    return {
+        "facet_kind": kind,
+        "canonical_value": value,
+        "canonical_key": f"{kind}:{value}",
+    }
+
+
+def _normalize_native_relation_type(
+    *,
+    raw_relation_text: str,
+    description: str,
+    source_node: dict[str, Any],
+    target_node: dict[str, Any],
+) -> str:
+    text = " ".join(
+        part for part in [raw_relation_text.lower(), description.lower(), str(target_node.get("label", "")).lower()] if part
+    )
+    target_facet_kind = str(target_node.get("facet_kind", ""))
+    target_type = str(target_node.get("type", ""))
+
+    if target_facet_kind == "planning_area" or target_type == "location":
+        if any(token in text for token in ("pilot area", "area", "district", "region", "town", "located", "within", "in ")):
+            return "located_in"
+    if any(token in text for token in ("target", "targeted", "beneficiar", "eligible", "for seniors", "for families", "support for", "focused on")):
+        return "targets"
+    if any(token in text for token in ("fund", "grant", "rebate", "subsid", "top-up", "budget allocation", "investment", "financ")):
+        return "funds"
+    if any(token in text for token in ("implemented", "administered", "managed by", "delivered by", "run by", "led by")):
+        return "implemented_by"
+    if any(token in text for token in ("regulat", "mandate", "permit", "quota", "tax", "compliance", "oversight")):
+        return "regulates"
+    if any(token in text for token in ("affect", "impact", "influence", "address", "improve", "reduce", "increase", "pressure", "concern")):
+        return "affects"
+    return "related_to"
+
+
+def _derive_relation_text_from_description(description: str) -> str:
+    if not description:
+        return "related to"
+    trimmed = description.strip().split(".")[0]
+    return trimmed or "related to"
 
 
 async def _extract_graph_payload(
@@ -475,6 +982,27 @@ def _coerce_weight(value: Any) -> float | None:
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.lower()).strip("_")
     return slug
+
+
+def _split_sep(value: Any) -> list[str]:
+    text = _coerce_text(value)
+    if not text:
+        return []
+    parts = [part.strip() for part in text.split(SEP_TOKEN) if part.strip()]
+    return list(dict.fromkeys(parts))
+
+
+def _merge_unique_list(left: Any, right: Any) -> list[str]:
+    values = list(left or []) + list(right or [])
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _coerce_text(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        merged.append(text)
+    return merged
 
 
 def _extract_keywords(text: str) -> list[str]:

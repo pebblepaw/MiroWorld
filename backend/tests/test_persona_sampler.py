@@ -71,3 +71,52 @@ def test_local_sampler_uses_downloaded_parquet(monkeypatch, tmp_path):
 
     assert len(rows) == 2
     assert rows[0]["planning_area"] == "Yishun"
+
+
+def test_local_sampler_retries_without_income_bracket_when_column_missing(monkeypatch, tmp_path):
+    parquet_dir = tmp_path / "data"
+    parquet_dir.mkdir(parents=True)
+    parquet_path = parquet_dir / "train-00000-of-00001.parquet"
+    parquet_path.write_text("placeholder", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "mckainsey.services.persona_sampler.snapshot_download",
+        lambda **kwargs: str(tmp_path),
+    )
+
+    class FakeCursor:
+        def fetch_df(self):
+            class FakeDf:
+                def to_dict(self, orient):
+                    return [{"planning_area": "Woodlands", "age": 52}]
+
+            return FakeDf()
+
+    class FakeConn:
+        def __init__(self):
+            self.calls = 0
+
+        def execute(self, query):
+            self.calls += 1
+            if self.calls == 1:
+                assert "income_bracket IN" in query
+                raise RuntimeError('Binder Error: Referenced column "income_bracket" not found in FROM clause')
+            assert "income_bracket IN" not in query
+            return FakeCursor()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("mckainsey.services.persona_sampler.duckdb.connect", lambda: FakeConn())
+
+    sampler = PersonaSampler("demo", "train", cache_dir=str(tmp_path))
+    rows = sampler.sample(
+        PersonaFilterRequest(
+            limit=1,
+            planning_areas=["Woodlands"],
+            income_brackets=["$3,000-$5,999"],
+            mode="local",
+        )
+    )
+
+    assert rows == [{"planning_area": "Woodlands", "age": 52}]

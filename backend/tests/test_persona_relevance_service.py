@@ -93,3 +93,57 @@ def test_persona_relevance_service_balanced_sampling_handles_more_strata_than_ag
 
     assert len(sampled) == 3
     assert sampled[0]["score"] >= sampled[-1]["score"]
+
+
+def test_persona_relevance_service_uses_graph_facet_metadata_for_matching(tmp_path):
+    settings = Settings(simulation_db_path=str(tmp_path / "sim.db"))
+    service = PersonaRelevanceService(settings)
+
+    knowledge = {
+        "summary": "",
+        "entity_nodes": [
+            {
+                "id": "facet:woodlands",
+                "label": "Northern neighborhood focus",
+                "type": "location",
+                "families": ["facet"],
+                "facet_kind": "planning_area",
+                "canonical_key": "planning_area:woodlands",
+            },
+            {
+                "id": "facet:gardening",
+                "label": "Outdoor lifestyle cluster",
+                "type": "concept",
+                "families": ["facet"],
+                "facet_kind": "hobby",
+                "canonical_key": "hobby:gardening",
+            },
+        ],
+        "demographic_focus_summary": "",
+    }
+
+    personas = [
+        {
+            "planning_area": "Woodlands",
+            "age": 62,
+            "occupation": "Retired",
+            "hobbies_and_interests_list": "['Gardening', 'Photography']",
+            "skills_and_expertise_list": "['Community volunteering']",
+        },
+        {
+            "planning_area": "Bukit Timah",
+            "age": 29,
+            "occupation": "Trader",
+            "hobbies_and_interests_list": "['Photography', 'Travel planning']",
+            "skills_and_expertise_list": "['Data analysis']",
+        },
+    ]
+
+    scored = service.score_personas(
+        personas,
+        knowledge_artifact=knowledge,
+        filters={"planning_areas": ["Woodlands", "Bukit Timah"]},
+    )
+
+    assert scored[0]["persona"]["planning_area"] == "Woodlands"
+    assert scored[0]["score"] > scored[1]["score"]
