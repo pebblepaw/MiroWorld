@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { forwardRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -150,6 +150,23 @@ describe("PolicyUpload", () => {
             support_count: 1,
             degree_count: 0,
             importance_score: 0.18,
+            low_value_orphan: true,
+            ui_default_hidden: true,
+          },
+          {
+            id: "concept:placeholder",
+            label: "Concept",
+            type: "entity",
+            description: "Generic placeholder text.",
+            summary: "Generic placeholder text.",
+            weight: 0.99,
+            families: ["document"],
+            display_bucket: "other",
+            support_count: 1,
+            degree_count: 8,
+            importance_score: 0.96,
+            generic_placeholder: true,
+            ui_default_hidden: true,
           },
         ],
         relationship_edges: [
@@ -195,15 +212,21 @@ describe("PolicyUpload", () => {
     expect(formData.get("guiding_prompt")).toBe("Extract institutions, policies, and who they target.");
     expect(formData.get("file")).toBeInstanceOf(File);
 
-    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("8"));
+    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("7"));
     expect(screen.getByText("Paragraph Count")).toBeInTheDocument();
-    expect(screen.getByText("9")).toBeInTheDocument();
+    expect(screen.getAllByText("9").length).toBeGreaterThan(0);
     expect(screen.getByText("Top 3 Entities")).toBeInTheDocument();
     expect(screen.getAllByText("Transport Subsidy").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Seniors").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Transport Authority").length).toBeGreaterThan(0);
-    expect(screen.getByTestId("graph-node-count")).toHaveTextContent("8");
+    expect(screen.getByTestId("graph-node-count")).toHaveTextContent("7");
     expect(screen.getByTestId("graph-link-count")).toHaveTextContent("5");
+
+    const topEntitiesCard = screen.getByText("Top 3 Entities").closest(".p-4");
+    expect(topEntitiesCard).not.toBeNull();
+    expect(within(topEntitiesCard as HTMLElement).getByText("Transport Subsidy")).toBeInTheDocument();
+    expect(within(topEntitiesCard as HTMLElement).getByText("Seniors")).toBeInTheDocument();
+    expect(within(topEntitiesCard as HTMLElement).getByText("Transport Authority")).toBeInTheDocument();
   });
 
   it("renders the new segmented family control, requested display-bucket filters, and hides relationship labels by default", async () => {
@@ -222,12 +245,12 @@ describe("PolicyUpload", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /extract knowledge graph/i }));
 
-    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("8"));
+    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("7"));
 
     const forceGraphProps = forceGraphSpy.mock.calls.at(-1)?.[0];
     expect(forceGraphProps.nodeRelSize).toBe(1);
     expect(forceGraphProps.nodeCanvasObjectMode({})).toBe("replace");
-    expect(forceGraphProps.linkCanvasObjectMode).toBeUndefined();
+    expect(forceGraphProps.linkCanvasObjectMode({})).toBe("after");
     expect(typeof forceGraphProps.linkCanvasObject).toBe("function");
 
     expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
@@ -243,7 +266,7 @@ describe("PolicyUpload", () => {
     expect(screen.getByRole("button", { name: "Event" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Concept" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Industry" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Other" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Other" })).not.toBeInTheDocument();
 
     expect(screen.getByRole("button", { name: /relationship labels off/i })).toBeInTheDocument();
 
@@ -298,9 +321,10 @@ describe("PolicyUpload", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /extract knowledge graph/i }));
 
-    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("8"));
-    expect(screen.getByTestId("graph-node-count")).toHaveTextContent("8");
+    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("7"));
+    expect(screen.getByTestId("graph-node-count")).toHaveTextContent("7");
     expect(forceGraphSpy.mock.calls.at(-1)?.[0].graphData.nodes.find((node: { name: string }) => node.name === "Transport Subsidy")?.val).toBe(0.93);
+    expect(forceGraphSpy.mock.calls.at(-1)?.[0].graphData.nodes.find((node: { name: string }) => node.name === "Concept")).toBeUndefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Nemotron Entities" }));
     expect(screen.getByTestId("graph-node-count")).toHaveTextContent("3");
@@ -309,8 +333,57 @@ describe("PolicyUpload", () => {
     expect(screen.getByTestId("graph-node-count")).toHaveTextContent("1");
     expect(screen.getByText("Woodlands")).toBeInTheDocument();
 
+    const initialProps = forceGraphSpy.mock.calls.at(-1)?.[0];
+    const quietCtx = {
+      save: vi.fn(),
+      restore: vi.fn(),
+      fillRect: vi.fn(),
+      fillText: vi.fn(),
+      measureText: vi.fn(() => ({ width: 40 })),
+      font: "",
+      textAlign: "",
+      textBaseline: "",
+      fillStyle: "",
+    } as any;
+    initialProps.linkCanvasObject(
+      {
+        label: "targets",
+        type: "targets",
+        source: { x: 0, y: 0 },
+        target: { x: 100, y: 0 },
+      },
+      quietCtx,
+      1,
+    );
+    expect(quietCtx.fillText).not.toHaveBeenCalled();
+
     fireEvent.click(screen.getByRole("button", { name: /relationship labels off/i }));
     expect(screen.getByRole("button", { name: /relationship labels on/i })).toBeInTheDocument();
+
+    const labeledProps = forceGraphSpy.mock.calls.at(-1)?.[0];
+    expect(labeledProps.linkCanvasObjectMode({})).toBe("after");
+    const labelCtx = {
+      save: vi.fn(),
+      restore: vi.fn(),
+      fillRect: vi.fn(),
+      fillText: vi.fn(),
+      measureText: vi.fn(() => ({ width: 40 })),
+      font: "",
+      textAlign: "",
+      textBaseline: "",
+      fillStyle: "",
+    } as any;
+    labeledProps.linkCanvasObject(
+      {
+        label: "targets",
+        type: "targets",
+        source: { x: 0, y: 0 },
+        target: { x: 100, y: 0 },
+      },
+      labelCtx,
+      1,
+    );
+    expect(labelCtx.fillText).toHaveBeenCalled();
   });
 
   it("shows an inline error when upload extraction fails", async () => {

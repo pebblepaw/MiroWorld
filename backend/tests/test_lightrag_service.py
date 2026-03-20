@@ -352,6 +352,98 @@ def test_native_lightrag_graph_adapter_dedupes_descriptions_and_applies_display_
     assert node_by_id["TFR"]["provenance"]["source_ids"] == ["chunk-3"]
 
 
+def test_native_lightrag_graph_adapter_broadens_demographic_facets_and_flags_hidden_placeholder_nodes():
+    native_graph = KnowledgeGraph(
+        nodes=[
+            KnowledgeGraphNode(
+                id="Elderly People",
+                labels=["Elderly People"],
+                properties={
+                    "entity_id": "Elderly People",
+                    "entity_type": "population",
+                    "description": "Older Singaporeans facing high living costs.",
+                    "source_id": "chunk-1<SEP>chunk-2",
+                    "file_path": "article.docx",
+                },
+            ),
+            KnowledgeGraphNode(
+                id="Japan",
+                labels=["Japan"],
+                properties={
+                    "entity_id": "Japan",
+                    "entity_type": "location",
+                    "description": "Japan has an ageing population.",
+                    "source_id": "chunk-3",
+                    "file_path": "article.docx",
+                },
+            ),
+            KnowledgeGraphNode(
+                id="Concept",
+                labels=["Concept"],
+                properties={
+                    "entity_id": "Concept",
+                    "entity_type": "entity",
+                    "description": "Generic placeholder text.",
+                    "source_id": "chunk-4",
+                    "file_path": "article.docx",
+                },
+            ),
+        ],
+        edges=[
+            KnowledgeGraphEdge(
+                id="Japan->Elderly People",
+                type=None,
+                source="Japan",
+                target="Elderly People",
+                properties={
+                    "keywords": "comparison",
+                    "description": "Japan is used as a comparison point for elderly people.",
+                    "source_id": "chunk-3",
+                    "file_path": "article.docx",
+                },
+            ),
+        ],
+    )
+
+    graph = _adapt_native_lightrag_graph(native_graph)
+    node_by_id = {node["id"]: node for node in graph["entity_nodes"]}
+
+    assert node_by_id["Elderly People"]["facet_kind"] == "age_cohort"
+    assert node_by_id["Elderly People"]["canonical_key"] == "age_cohort:senior"
+    assert node_by_id["Japan"].get("facet_kind") != "age_cohort"
+
+    assert node_by_id["Concept"]["generic_placeholder"] is True
+    assert node_by_id["Concept"]["low_value_orphan"] is True
+    assert node_by_id["Concept"]["ui_default_hidden"] is True
+    assert node_by_id["Concept"]["source_ids"] == ["chunk-4"]
+
+
+def test_native_lightrag_graph_adapter_keeps_isolated_facet_nodes_visible():
+    native_graph = KnowledgeGraph(
+        nodes=[
+            KnowledgeGraphNode(
+                id="Elderly People",
+                labels=["Elderly People"],
+                properties={
+                    "entity_id": "Elderly People",
+                    "entity_type": "population",
+                    "description": "Older people affected by the policy.",
+                    "source_id": "chunk-1",
+                    "file_path": "article.docx",
+                },
+            ),
+        ],
+        edges=[],
+    )
+
+    graph = _adapt_native_lightrag_graph(native_graph)
+    elderly = graph["entity_nodes"][0]
+
+    assert elderly["facet_kind"] == "age_cohort"
+    assert elderly["low_value_orphan"] is True
+    assert elderly["ui_default_hidden"] is False
+
+
 def test_process_document_prefers_native_lightrag_graph(monkeypatch, tmp_path):
     settings = Settings(
         simulation_db_path=str(tmp_path / "simulation.db"),

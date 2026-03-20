@@ -96,7 +96,9 @@ export default function PolicyUpload() {
   }, [showRelationshipLabels]);
 
   const familyScopedNodes = graphReady
-    ? knowledgeArtifact.entity_nodes.filter((node) => matchesFamilyFilter(node.facet_kind, familyFilter))
+    ? knowledgeArtifact.entity_nodes.filter(
+        (node) => !node.ui_default_hidden && matchesFamilyFilter(node.facet_kind, familyFilter),
+      )
     : [];
 
   const availableBuckets = graphReady
@@ -249,6 +251,7 @@ export default function PolicyUpload() {
 
   const topEntities = graphReady
     ? [...knowledgeArtifact.entity_nodes]
+      .filter((node) => !node.ui_default_hidden)
       .sort((left, right) => {
         const rightImportance = normalizeImportance(right.importance_score, right.weight);
         const leftImportance = normalizeImportance(left.importance_score, left.weight);
@@ -477,8 +480,11 @@ export default function PolicyUpload() {
                 ctx.fillText(label, labelX, labelY);
                 ctx.restore();
               }}
-              linkCanvasObjectMode={showRelationshipLabels ? (() => 'after') : undefined}
+              linkCanvasObjectMode={() => 'after'}
               linkCanvasObject={(link: GraphLinkDatum, ctx, globalScale) => {
+                if (!showRelationshipLabels) {
+                  return;
+                }
                 const label = (link.label || link.type || '').trim();
                 const source = typeof link.source === 'string' ? undefined : link.source;
                 const target = typeof link.target === 'string' ? undefined : link.target;

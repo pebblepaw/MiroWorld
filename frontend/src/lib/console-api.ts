@@ -17,6 +17,9 @@ export interface KnowledgeNode {
   importance_score?: number | null;
   source_ids?: string[] | null;
   file_paths?: string[] | null;
+  generic_placeholder?: boolean | null;
+  low_value_orphan?: boolean | null;
+  ui_default_hidden?: boolean | null;
 }
 
 export interface KnowledgeEdge {

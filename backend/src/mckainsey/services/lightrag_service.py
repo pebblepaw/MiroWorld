@@ -219,6 +219,58 @@ COMMON_SKILLS = {
 }
 HOBBY_SLUGS = {_constant_slugify(name): name for name in COMMON_HOBBIES}
 SKILL_SLUGS = {_constant_slugify(name): name for name in COMMON_SKILLS}
+GENERIC_PLACEHOLDER_LABELS = {
+    "company",
+    "concept",
+    "country",
+    "data",
+    "entity",
+    "event",
+    "group",
+    "institution",
+    "location",
+    "organization",
+    "people",
+    "person",
+    "policy",
+    "program",
+    "service",
+}
+PERSON_LIKE_TERMS = {
+    "adults",
+    "caregivers",
+    "children",
+    "citizens",
+    "commuters",
+    "elderly people",
+    "families",
+    "family",
+    "households",
+    "parents",
+    "people",
+    "person",
+    "persons",
+    "residents",
+    "retirees",
+    "seniors",
+    "singaporeans",
+    "students",
+    "workers",
+    "youth",
+}
+NAME_TITLE_PREFIXES = {
+    "assoc",
+    "associate",
+    "dr",
+    "madam",
+    "miss",
+    "mr",
+    "mrs",
+    "ms",
+    "prof",
+    "professor",
+    "sir",
+}
 GRAPH_EXTRACTION_SYSTEM_PROMPT = (
     "Extract a policy knowledge graph from the document. Return valid JSON only, "
     "with keys nodes and edges. Nodes should include id, label, type, and optional "
@@ -713,41 +765,95 @@ def _resolve_native_alias(value: Any, alias_to_id: dict[str, str]) -> str | None
 
 
 def _infer_facet_metadata(label: str, *, node_type: str, description: str) -> dict[str, str] | None:
-    del description  # Age cohorts are intentionally inferred from explicit labels only.
-    label_text = _coerce_text(label)
-    normalized = _slugify(label_text).replace("_", " ")
-    if node_type in DEMOGRAPHIC_NODE_TYPES:
-        if age_cohort := AGE_COHORT_ALIASES.get(normalized):
-            return _facet_payload("age_cohort", age_cohort)
+    if _looks_like_named_person_or_credit(label):
+        return None
 
-    if planning_area := _match_canonical_value(normalized, PLANNING_AREA_SLUGS):
+    normalized_label = _normalized_alias_text(label)
+    normalized_description = _normalized_alias_text(description)
+    demographic_candidate = _is_demographic_candidate(
+        node_type=node_type,
+        normalized_label=normalized_label,
+        normalized_description=normalized_description,
+    )
+
+    if planning_area := _match_canonical_value(normalized_label, PLANNING_AREA_SLUGS):
         return _facet_payload("planning_area", planning_area)
 
-    if age_cohort := AGE_COHORT_ALIASES.get(normalized):
-        return _facet_payload("age_cohort", age_cohort)
+    if demographic_candidate:
+        if age_cohort := _match_phrase_alias(normalized_label, AGE_COHORT_ALIASES):
+            return _facet_payload("age_cohort", age_cohort)
 
-    if sex := SEX_ALIASES.get(normalized):
-        return _facet_payload("sex", sex)
+        if sex := _match_phrase_alias(normalized_label, SEX_ALIASES):
+            return _facet_payload("sex", sex)
 
-    if education_level := EDUCATION_LEVEL_ALIASES.get(normalized):
-        return _facet_payload("education_level", education_level)
+        if education_level := _match_phrase_alias(normalized_label, EDUCATION_LEVEL_ALIASES):
+            return _facet_payload("education_level", education_level)
 
-    if marital_status := MARITAL_STATUS_ALIASES.get(normalized):
-        return _facet_payload("marital_status", marital_status)
+        if marital_status := _match_phrase_alias(normalized_label, MARITAL_STATUS_ALIASES):
+            return _facet_payload("marital_status", marital_status)
 
-    if occupation := _match_canonical_value(normalized, OCCUPATION_SLUGS):
-        return _facet_payload("occupation", occupation)
+        if occupation := _match_canonical_value(normalized_label, OCCUPATION_SLUGS) or _match_canonical_value_in_text(normalized_label, OCCUPATION_SLUGS):
+            return _facet_payload("occupation", occupation)
 
-    if industry := _match_canonical_value(normalized, INDUSTRY_SLUGS):
-        return _facet_payload("industry", industry)
+    if _allows_semantic_facet_inference(node_type):
+        if industry := _match_canonical_value(normalized_label, INDUSTRY_SLUGS) or _match_canonical_value_in_text(normalized_label, INDUSTRY_SLUGS):
+            return _facet_payload("industry", industry)
 
-    if hobby := _match_canonical_value(normalized, HOBBY_SLUGS):
-        return _facet_payload("hobby", hobby)
+        if hobby := _match_canonical_value(normalized_label, HOBBY_SLUGS) or _match_canonical_value_in_text(normalized_label, HOBBY_SLUGS):
+            return _facet_payload("hobby", hobby)
 
-    if skill := _match_canonical_value(normalized, SKILL_SLUGS):
-        return _facet_payload("skill", skill)
+        if skill := _match_canonical_value(normalized_label, SKILL_SLUGS) or _match_canonical_value_in_text(normalized_label, SKILL_SLUGS):
+            return _facet_payload("skill", skill)
 
     return None
+
+
+def _is_demographic_candidate(*, node_type: str, normalized_label: str, normalized_description: str) -> bool:
+    del normalized_description
+    normalized_type = _slugify(node_type)
+    if normalized_type in DEMOGRAPHIC_NODE_TYPES:
+        return True
+    return any(_contains_alias_phrase(normalized_label, term) for term in PERSON_LIKE_TERMS)
+
+
+def _allows_semantic_facet_inference(node_type: str) -> bool:
+    return _slugify(node_type) not in {"event", "location", "metric"}
+
+
+def _looks_like_named_person_or_credit(label: str) -> bool:
+    raw_label = _coerce_text(label)
+    normalized_label = _normalized_alias_text(raw_label)
+    if not raw_label or not normalized_label:
+        return False
+
+    protected_phrase_sets = [
+        PERSON_LIKE_TERMS,
+        set(AGE_COHORT_ALIASES),
+        set(SEX_ALIASES),
+        set(EDUCATION_LEVEL_ALIASES),
+        set(MARITAL_STATUS_ALIASES),
+    ]
+    for phrases in protected_phrase_sets:
+        if any(_contains_alias_phrase(normalized_label, phrase) for phrase in phrases):
+            return False
+
+    canonical_maps = [OCCUPATION_SLUGS, INDUSTRY_SLUGS, HOBBY_SLUGS, SKILL_SLUGS, PLANNING_AREA_SLUGS]
+    if any(_match_canonical_value(normalized_label, canonical_map) for canonical_map in canonical_maps):
+        return False
+
+    if "/" in raw_label:
+        return True
+
+    tokens = re.findall(r"[A-Za-z][A-Za-z'.-]*", raw_label)
+    if len(tokens) < 2 or len(tokens) > 5:
+        return False
+
+    lower_tokens = [token.lower() for token in tokens]
+    if lower_tokens[0] in NAME_TITLE_PREFIXES:
+        return True
+
+    capitalized_count = sum(1 for token in tokens if token[0].isupper())
+    return capitalized_count == len(tokens)
 
 
 def _display_bucket_for_node(*, type: str, facet_kind: str | None, label: str) -> str:
@@ -784,11 +890,34 @@ def _match_canonical_value(normalized_label: str, canonical_map: dict[str, str])
     return _slugify(canonical)
 
 
+def _match_canonical_value_in_text(text: str, canonical_map: dict[str, str]) -> str | None:
+    for phrase, canonical in sorted(canonical_map.items(), key=lambda item: len(item[0]), reverse=True):
+        if _contains_alias_phrase(text, phrase.replace("_", " ")):
+            return _slugify(canonical)
+    return None
+
+
 def _find_phrase_match(text: str, aliases: dict[str, str]) -> str | None:
-    for phrase, canonical in aliases.items():
-        if phrase in text:
+    return _match_phrase_alias(text, aliases)
+
+
+def _match_phrase_alias(text: str, aliases: dict[str, str]) -> str | None:
+    for phrase, canonical in sorted(aliases.items(), key=lambda item: len(item[0]), reverse=True):
+        if _contains_alias_phrase(text, phrase):
             return canonical
     return None
+
+
+def _contains_alias_phrase(text: str, phrase: str) -> bool:
+    if not text or not phrase:
+        return False
+    haystack = f" {text} "
+    needle = f" {_normalized_alias_text(phrase)} "
+    return needle.strip() != "" and needle in haystack
+
+
+def _normalized_alias_text(value: Any) -> str:
+    return _slugify(_coerce_text(value)).replace("_", " ").strip()
 
 
 def _facet_payload(kind: str, canonical_value: str) -> dict[str, str]:
@@ -1100,6 +1229,20 @@ def _merge_unique_list(left: Any, right: Any) -> list[str]:
     return merged
 
 
+def _is_generic_placeholder_label(label: str) -> bool:
+    return _slugify(label) in GENERIC_PLACEHOLDER_LABELS
+
+
+def _node_quality_flags(*, label: str, support_count: int, degree_count: int, facet_kind: str | None) -> dict[str, bool]:
+    generic_placeholder = _is_generic_placeholder_label(label)
+    low_value_orphan = degree_count == 0 and support_count <= 1
+    return {
+        "generic_placeholder": generic_placeholder,
+        "low_value_orphan": low_value_orphan,
+        "ui_default_hidden": generic_placeholder or (low_value_orphan and not _coerce_text(facet_kind)),
+    }
+
+
 def _finalize_graph_payload(
     nodes: list[dict[str, Any]],
     edges: list[dict[str, Any]],
@@ -1147,6 +1290,14 @@ def _finalize_graph_payload(
             type=str(node.get("type", "")),
             facet_kind=str(node.get("facet_kind", "")) or None,
             label=str(node.get("label", "")),
+        )
+        node.update(
+            _node_quality_flags(
+                label=str(node.get("label", "")),
+                support_count=support_count,
+                degree_count=degree_count,
+                facet_kind=str(node.get("facet_kind", "")) or None,
+            )
         )
 
     return nodes, edges
