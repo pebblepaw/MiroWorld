@@ -87,6 +87,13 @@ DEMOGRAPHIC_TERMS = {
     "parents",
     "residents",
 }
+DEMOGRAPHIC_NODE_TYPES = {
+    "demographic",
+    "group",
+    "people",
+    "person",
+    "population",
+}
 POLICY_TERMS = {
     "transport",
     "budget",
@@ -400,6 +407,9 @@ class LightRAGService:
                 "file_name": Path(source_path).name if source_path else None,
                 "file_type": mimetypes.guess_type(source_path)[0] if source_path else None,
                 "text_length": len(document_text),
+                "paragraph_count": len(
+                    [paragraph for paragraph in re.split(r"\n\s*\n+", document_text.strip()) if paragraph.strip()]
+                ),
             },
             "summary": summary,
             "guiding_prompt": guiding_prompt,
@@ -525,8 +535,9 @@ def _adapt_native_lightrag_graph(native_graph: KnowledgeGraph) -> dict[str, Any]
         seen_edges.add(edge_key)
         relationship_edges.append(edge)
 
+    entity_nodes, relationship_edges = _finalize_graph_payload(list(merged_nodes.values()), relationship_edges)
     return {
-        "entity_nodes": list(merged_nodes.values()),
+        "entity_nodes": entity_nodes,
         "relationship_edges": relationship_edges,
     }
 
@@ -546,7 +557,7 @@ async def _build_graph_from_text(
         nodes, node_lookup = _normalize_graph_nodes(raw_payload.get("nodes", []))
         edges = _normalize_graph_edges(raw_payload.get("edges", []), node_lookup)
         if nodes or edges:
-            return nodes, edges
+            return _finalize_graph_payload(nodes, edges)
     except Exception:
         pass
 
@@ -562,7 +573,10 @@ def _normalize_native_graph_node(raw_node: KnowledgeGraphNode) -> dict[str, Any]
         or _coerce_text(raw_node.id)
     )
     node_type = _normalize_node_type(properties.get("entity_type"), label)
-    description = _coerce_text(properties.get("description"))
+    raw_description = _coerce_text(properties.get("description"))
+    raw_summary = _coerce_text(properties.get("summary"))
+    description = _dedupe_native_text(raw_description) or _dedupe_native_text(raw_summary)
+    summary = _dedupe_native_text(raw_summary) or description
     source_ids = _split_sep(properties.get("source_id"))
     file_paths = _split_sep(properties.get("file_path"))
     facet_meta = _infer_facet_metadata(label, node_type=node_type, description=description)
@@ -575,8 +589,16 @@ def _normalize_native_graph_node(raw_node: KnowledgeGraphNode) -> dict[str, Any]
         "label": label,
         "type": node_type,
         "families": families,
+        "display_bucket": _display_bucket_for_node(
+            type=node_type,
+            facet_kind=(facet_meta or {}).get("facet_kind"),
+            label=label,
+        ),
         "source_ids": source_ids,
         "file_paths": file_paths,
+        "summary": summary or description,
+        "raw_description": raw_description,
+        "raw_summary": raw_summary,
         "provenance": {
             "source_ids": source_ids,
             "file_paths": file_paths,
@@ -602,15 +624,18 @@ def _merge_graph_nodes(existing: dict[str, Any], incoming: dict[str, Any]) -> di
     merged["families"] = sorted(set(existing.get("families", [])) | set(incoming.get("families", [])))
     merged["source_ids"] = _merge_unique_list(existing.get("source_ids"), incoming.get("source_ids"))
     merged["file_paths"] = _merge_unique_list(existing.get("file_paths"), incoming.get("file_paths"))
+    merged["raw_description"] = _dedupe_native_text(existing.get("raw_description"), incoming.get("raw_description"))
+    merged["raw_summary"] = _dedupe_native_text(existing.get("raw_summary"), incoming.get("raw_summary"))
+    merged_description = _dedupe_native_text(existing.get("description"), incoming.get("description"))
+    merged_summary = _dedupe_native_text(existing.get("summary"), incoming.get("summary"), merged_description)
+    if merged_description:
+        merged["description"] = merged_description
+    if merged_summary:
+        merged["summary"] = merged_summary
     merged["provenance"] = {
         "source_ids": merged["source_ids"],
         "file_paths": merged["file_paths"],
     }
-
-    incoming_description = _coerce_text(incoming.get("description"))
-    existing_description = _coerce_text(existing.get("description"))
-    if incoming_description and incoming_description not in existing_description:
-        merged["description"] = " | ".join(part for part in [existing_description, incoming_description] if part)
 
     incoming_weight = _coerce_weight(incoming.get("weight"))
     existing_weight = _coerce_weight(existing.get("weight")) or 0.0
@@ -623,6 +648,11 @@ def _merge_graph_nodes(existing: dict[str, Any], incoming: dict[str, Any]) -> di
     for key in ("facet_kind", "canonical_key", "canonical_value"):
         if key not in merged and incoming.get(key):
             merged[key] = incoming[key]
+    merged["display_bucket"] = _display_bucket_for_node(
+        type=str(merged.get("type", "")),
+        facet_kind=str(merged.get("facet_kind", "")) or None,
+        label=str(merged.get("label", "")),
+    )
     return merged
 
 
@@ -633,7 +663,10 @@ def _normalize_native_graph_edge(
     node_lookup: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     properties = dict(raw_edge.properties or {})
-    description = _coerce_text(properties.get("description"))
+    raw_description = _coerce_text(properties.get("description"))
+    raw_summary = _coerce_text(properties.get("summary"))
+    description = _dedupe_native_text(raw_description) or _dedupe_native_text(raw_summary)
+    summary = _dedupe_native_text(raw_summary) or description
     raw_relation_text = _coerce_text(
         properties.get("keywords") or properties.get("label") or properties.get("relationship") or raw_edge.type
     )
@@ -656,6 +689,9 @@ def _normalize_native_graph_edge(
         "raw_relation_text": raw_relation_text,
         "source_ids": source_ids,
         "file_paths": file_paths,
+        "summary": summary or description,
+        "raw_description": raw_description,
+        "raw_summary": raw_summary,
         "provenance": {
             "source_ids": source_ids,
             "file_paths": file_paths,
@@ -677,15 +713,17 @@ def _resolve_native_alias(value: Any, alias_to_id: dict[str, str]) -> str | None
 
 
 def _infer_facet_metadata(label: str, *, node_type: str, description: str) -> dict[str, str] | None:
-    del node_type  # Node type is useful contextually but the matching is label-driven for transparency.
+    del description  # Age cohorts are intentionally inferred from explicit labels only.
     label_text = _coerce_text(label)
     normalized = _slugify(label_text).replace("_", " ")
-    combined = " ".join(part for part in [label_text.lower(), description.lower()] if part)
+    if node_type in DEMOGRAPHIC_NODE_TYPES:
+        if age_cohort := AGE_COHORT_ALIASES.get(normalized):
+            return _facet_payload("age_cohort", age_cohort)
 
     if planning_area := _match_canonical_value(normalized, PLANNING_AREA_SLUGS):
         return _facet_payload("planning_area", planning_area)
 
-    if age_cohort := AGE_COHORT_ALIASES.get(normalized) or _find_phrase_match(combined, AGE_COHORT_ALIASES):
+    if age_cohort := AGE_COHORT_ALIASES.get(normalized):
         return _facet_payload("age_cohort", age_cohort)
 
     if sex := SEX_ALIASES.get(normalized):
@@ -710,6 +748,32 @@ def _infer_facet_metadata(label: str, *, node_type: str, description: str) -> di
         return _facet_payload("skill", skill)
 
     return None
+
+
+def _display_bucket_for_node(*, type: str, facet_kind: str | None, label: str) -> str:
+    normalized_type = _slugify(type)
+    normalized_facet = _slugify(facet_kind or "")
+    normalized_label = _slugify(label)
+
+    if normalized_facet in {"age_cohort", "age_group"} or normalized_type in {"age_cohort", "age_group"}:
+        return "age_group"
+    if normalized_facet == "planning_area" or normalized_type == "location":
+        return "location"
+    if normalized_facet == "industry" or normalized_type == "industry" or normalized_label in INDUSTRY_SLUGS:
+        return "industry"
+    if normalized_type in {"organization", "agency", "department", "institution", "ministry"}:
+        return "organization"
+    if normalized_type in {"person", "people", "demographic", "group", "stakeholder"}:
+        return "persons"
+    if normalized_type == "population":
+        return "persons"
+    if normalized_type == "event":
+        return "event"
+    if normalized_facet == "concept" or normalized_type in {"concept", "topic"}:
+        return "concept"
+    if normalized_type in {"policy", "program", "service", "funding", "law"}:
+        return "concept"
+    return "other"
 
 
 def _match_canonical_value(normalized_label: str, canonical_map: dict[str, str]) -> str | None:
@@ -960,7 +1024,7 @@ def _fallback_graph_from_text(document_text: str, guiding_prompt: str | None) ->
         for target in cohorts:
             edges.append({"source": source["id"], "target": target["id"], "type": "affects", "label": "Affects"})
 
-    return nodes, edges
+    return _finalize_graph_payload(nodes, edges)
 
 
 def _coerce_text(value: Any) -> str:
@@ -992,6 +1056,37 @@ def _split_sep(value: Any) -> list[str]:
     return list(dict.fromkeys(parts))
 
 
+def _dedupe_native_text(*values: Any) -> str:
+    pieces: list[str] = []
+    seen: set[str] = set()
+
+    for value in values:
+        text = _coerce_text(value)
+        if not text:
+            continue
+        for part in text.split(SEP_TOKEN):
+            normalized = _normalize_text_piece(part)
+            if not normalized:
+                continue
+            key = _dedupe_text_key(normalized)
+            if key in seen:
+                continue
+            seen.add(key)
+            pieces.append(normalized)
+
+    return " ".join(pieces)
+
+
+def _normalize_text_piece(value: str) -> str:
+    text = re.sub(r"\s+", " ", value).strip()
+    text = text.strip(" \t\r\n\"'“”‘’`()[]{}<>")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _dedupe_text_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
 def _merge_unique_list(left: Any, right: Any) -> list[str]:
     values = list(left or []) + list(right or [])
     merged: list[str] = []
@@ -1003,6 +1098,58 @@ def _merge_unique_list(left: Any, right: Any) -> list[str]:
         seen.add(text)
         merged.append(text)
     return merged
+
+
+def _finalize_graph_payload(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    node_lookup = {str(node.get("id")): node for node in nodes if node.get("id")}
+    neighbors: dict[str, set[str]] = {node_id: set() for node_id in node_lookup}
+
+    for edge in edges:
+        source = str(edge.get("source", ""))
+        target = str(edge.get("target", ""))
+        if not source or not target or source == target:
+            continue
+        neighbors.setdefault(source, set()).add(target)
+        neighbors.setdefault(target, set()).add(source)
+
+    support_counts = {
+        node_id: len(
+            {
+                _coerce_text(source_id)
+                for source_id in (node_lookup[node_id].get("source_ids") or [])
+                if _coerce_text(source_id)
+            }
+        )
+        for node_id in node_lookup
+    }
+    degree_counts = {node_id: len(neighbor_ids) for node_id, neighbor_ids in neighbors.items()}
+    max_support = max(support_counts.values(), default=0)
+    max_degree = max(degree_counts.values(), default=0)
+
+    for node_id, node in node_lookup.items():
+        support_count = support_counts.get(node_id, 0)
+        degree_count = degree_counts.get(node_id, 0)
+        node["support_count"] = support_count
+        node["degree_count"] = degree_count
+        if max_support and max_degree:
+            importance_score = (0.7 * (support_count / max_support)) + (0.3 * (degree_count / max_degree))
+        elif max_support:
+            importance_score = support_count / max_support
+        elif max_degree:
+            importance_score = degree_count / max_degree
+        else:
+            importance_score = 0.0
+        node["importance_score"] = round(importance_score, 4)
+        node["display_bucket"] = _display_bucket_for_node(
+            type=str(node.get("type", "")),
+            facet_kind=str(node.get("facet_kind", "")) or None,
+            label=str(node.get("label", "")),
+        )
+
+    return nodes, edges
 
 
 def _extract_keywords(text: str) -> list[str]:

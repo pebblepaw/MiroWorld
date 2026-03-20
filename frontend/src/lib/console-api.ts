@@ -5,11 +5,16 @@ export interface KnowledgeNode {
   label: string;
   type: string;
   description?: string | null;
+  summary?: string | null;
   weight?: number | null;
   families?: string[] | null;
   facet_kind?: string | null;
   canonical_key?: string | null;
   canonical_value?: string | null;
+  display_bucket?: string | null;
+  support_count?: number | null;
+  degree_count?: number | null;
+  importance_score?: number | null;
   source_ids?: string[] | null;
   file_paths?: string[] | null;
 }
@@ -19,6 +24,7 @@ export interface KnowledgeEdge {
   target: string;
   type: string;
   label?: string | null;
+  summary?: string | null;
   normalized_type?: string | null;
   raw_relation_text?: string | null;
   source_ids?: string[] | null;
@@ -33,6 +39,7 @@ export interface KnowledgeArtifact {
     file_name?: string | null;
     file_type?: string | null;
     text_length?: number | null;
+    paragraph_count?: number | null;
   };
   summary: string;
   guiding_prompt?: string | null;
