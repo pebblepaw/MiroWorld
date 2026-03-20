@@ -2,7 +2,7 @@
 
 ## Global Status
 **Project:** McKAInsey — AI-Powered Population Simulation Consulting Service
-**Status:** Phase A-H completed locally. Screen 1 is live and graph-hardened on the Frontend V2 shell. Phase I implementation is now complete locally for Screen 2 live sampling, cohort generation, parsed instruction summaries, and the Frontend V2 agent graph, pending operator review.
+**Status:** Phase A-J completed locally. Screen 3 live Reddit-mode simulation and Screen 4A structured reports are now implemented on the Frontend V2 shell and verified end to end in live mode, pending operator review.
 
 ## Current Operator Status
 - `./quick_start.sh --mode demo` remains the supported demo launcher path.
@@ -44,7 +44,12 @@
   - always-visible edges
   - optional edge-label toggle
   - legend from live graph categories
-- Stage 3 runs native OASIS and streams live events into the console.
+- Screen 3 now runs native OASIS in Reddit mode and streams live posts, comments, reactions, and metrics into the console over SSE.
+- Screen 3 now measures all sampled agents at the start and end of the run through baseline / final checkpoints.
+- Screen 3 completion now waits for the final checkpoint instead of ending immediately after the public rounds.
+- Screen 4A `Reports & Insights` is now live against structured Gemini output and async background generation.
+- Screen 4B and Screen 4C remain visible mock tabs in this phase.
+- `quick_start.sh --mode live --real-oasis` now validates and pins the dedicated Python 3.11 OASIS runtime before launching live mode.
 - Stage 5 report chat and agent chat now make real Gemini and Zep Cloud API calls. No placeholder UI handlers remain.
 
 ## Recently Completed Console Rebuild
@@ -70,6 +75,16 @@
   - read-only parsed instruction summary
   - Screen 1-style agent graph and cohort diagnostics
   - live browser validation from Screen 1 upload into Screen 2 cohort generation
+- Completed the Screen 3 + Screen 4A Frontend V2 implementation pass:
+  - live `/simulation/start`, `/simulation/state`, and `/simulation/stream` wiring
+  - MiroFish-style append-only Reddit feed cards with auto-scroll
+  - live counters, ETA, hottest-thread tile, and checkpoint status
+  - graph-aware OASIS persona context routing from Screen 1 + Screen 2
+  - all-agent baseline and final stance checkpoints
+  - async `POST /report/generate` + `GET /report/full` Screen 4A flow
+  - fixed report schema rendering for executive summary, insights, themes, demographic breakdown, influential content, recommendations, and risks
+  - dedicated OASIS Python 3.11 runtime validation and pinned dependency file
+  - real live validation from Screen 1 upload through Screen 4A report completion
 
 ## Phase Checklist
 - [x] Phase A — Data Pipeline & LightRAG Integration — [progress/phaseA.md](progress/phaseA.md)
@@ -80,7 +95,8 @@
 - [x] Phase F — Integration Testing & Evaluation — [progress/phaseF.md](progress/phaseF.md)
 - [x] Phase G — McKAInsey Console Rebuild & Real-Time Validation — [progress/phaseG.md](progress/phaseG.md)
 - [x] Phase H — Screen 1 Frontend V2 Adoption & Graph Hardening — [progress/phaseH.md](progress/phaseH.md)
-- [ ] Phase I — Screen 2 Sampling Logic & Agent Graph — [progress/phaseI.md](progress/phaseI.md)
+- [x] Phase I — Screen 2 Sampling Logic & Agent Graph — [progress/phaseI.md](progress/phaseI.md)
+- [ ] Phase J — Screen 3 Live Simulation & Screen 4A Reports — [progress/phaseJ.md](progress/phaseJ.md)
 
 ## Feature and Subtask Checklists
 
@@ -178,3 +194,15 @@
 - [x] I5 Implement the live agent count selector and repeatable re-sampling
 - [x] I6 Implement Screen 2 backend retrieval/scoring
 - [x] I7 Implement Screen 2 agent graph styling and live integration
+
+### Phase J — Screen 3 Live Simulation & Screen 4A Reports
+- [x] J1 Replace Screen 3 mock UI with live SSE-driven Reddit feed
+- [x] J2 Persist and stream richer OASIS round events incrementally
+- [x] J3 Build graph-aware simulation context bundles from Screen 1 + Screen 2
+- [x] J4 Add all-agent baseline and final opinion checkpoints
+- [x] J5 Make Screen 3 completion wait for final checkpoint completion
+- [x] J6 Implement Screen 4A async report generation with fixed structured schema
+- [x] J7 Keep Screen 4B / 4C navigable on mock data without blocking Screen 4A
+- [x] J8 Add Frontend V2 Screen 3 / 4A automated tests
+- [x] J9 Harden the native OASIS sidecar runtime with validation + pinned requirements
+- [x] J10 Verify live Screen 1 → Screen 2 → Screen 3 → Screen 4A end to end

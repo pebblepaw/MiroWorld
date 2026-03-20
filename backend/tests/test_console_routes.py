@@ -288,6 +288,99 @@ def test_console_interaction_hub_chat_routes(monkeypatch):
     assert agent_body["agent_id"] == "agent-001"
 
 
+def test_console_simulation_start_route_returns_extended_live_state(monkeypatch):
+    def fake_start_simulation(self, session_id, *, policy_summary, rounds, mode=None):
+        assert session_id == "session-a"
+        assert rounds == 4
+        assert mode == "live"
+        return {
+            "session_id": session_id,
+            "status": "running",
+            "event_count": 2,
+            "last_round": 0,
+            "platform": "reddit",
+            "planned_rounds": 4,
+            "current_round": 0,
+            "elapsed_seconds": 5,
+            "estimated_total_seconds": 55,
+            "estimated_remaining_seconds": 50,
+            "counters": {"posts": 0, "comments": 0, "reactions": 0, "active_authors": 0},
+            "checkpoint_status": {"baseline": {"status": "running", "completed_agents": 0, "total_agents": 100}},
+            "top_threads": [],
+            "discussion_momentum": {"approval_delta": 0.0, "dominant_stance": "mixed"},
+            "latest_metrics": {},
+            "recent_events": [],
+        }
+
+    monkeypatch.setattr(ConsoleService, "start_simulation", fake_start_simulation)
+
+    response = client.post(
+        "/api/v2/console/session/session-a/simulation/start",
+        json={
+            "policy_summary": "Sports grants for active youths.",
+            "rounds": 4,
+            "mode": "live",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["platform"] == "reddit"
+    assert body["planned_rounds"] == 4
+    assert body["elapsed_seconds"] == 5
+    assert body["estimated_remaining_seconds"] == 50
+    assert body["checkpoint_status"]["baseline"]["status"] == "running"
+    assert body["discussion_momentum"]["dominant_stance"] == "mixed"
+
+
+def test_console_report_generation_routes(monkeypatch):
+    def fake_generate_report(self, session_id):
+        assert session_id == "session-a"
+        return {
+            "session_id": session_id,
+            "status": "running",
+            "generated_at": None,
+            "executive_summary": None,
+            "insight_cards": [],
+            "support_themes": [],
+            "dissent_themes": [],
+            "demographic_breakdown": [],
+            "influential_content": [],
+            "recommendations": [],
+            "risks": [],
+        }
+
+    def fake_get_report_full(self, session_id):
+        assert session_id == "session-a"
+        return {
+            "session_id": session_id,
+            "status": "completed",
+            "generated_at": "2026-03-21T09:00:00Z",
+            "executive_summary": "Support strengthened after discussion.",
+            "insight_cards": [{"title": "Woodlands leads support", "summary": "Targeted framing helped.", "severity": "high"}],
+            "support_themes": [],
+            "dissent_themes": [],
+            "demographic_breakdown": [{"segment": "Woodlands youth", "approval_rate": 0.73, "dissent_rate": 0.12, "sample_size": 18}],
+            "influential_content": [],
+            "recommendations": [{"title": "Lead with affordability", "rationale": "Most persuasive theme.", "priority": "high"}],
+            "risks": [{"title": "Quiet cohorts underheard", "summary": "Participation was uneven.", "severity": "medium"}],
+        }
+
+    monkeypatch.setattr(ConsoleService, "generate_report", fake_generate_report)
+    monkeypatch.setattr(ConsoleService, "get_report_full", fake_get_report_full)
+
+    generate = client.post("/api/v2/console/session/session-a/report/generate")
+    assert generate.status_code == 200, generate.text
+    assert generate.json()["status"] == "running"
+
+    report = client.get("/api/v2/console/session/session-a/report/full")
+    assert report.status_code == 200, report.text
+    body = report.json()
+    assert body["status"] == "completed"
+    assert body["executive_summary"] == "Support strengthened after discussion."
+    assert body["demographic_breakdown"][0]["segment"] == "Woodlands youth"
+    assert body["recommendations"][0]["priority"] == "high"
+
+
 def test_console_service_caps_stage2_candidate_pool_for_live_preview(monkeypatch, tmp_path):
     settings = Settings(simulation_db_path=str(tmp_path / "sim.db"))
     service = ConsoleService(settings)

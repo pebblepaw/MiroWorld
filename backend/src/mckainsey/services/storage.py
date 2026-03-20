@@ -108,6 +108,21 @@ class SimulationStore:
                     content TEXT NOT NULL,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS simulation_checkpoints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    checkpoint_kind TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    stance_json TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS report_runs (
+                    session_id TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
             # Backward-compatible migration for existing local DB files.
@@ -370,6 +385,33 @@ class SimulationStore:
         with self._connect() as conn:
             conn.execute("DELETE FROM report_cache WHERE simulation_id = ?", (simulation_id,))
 
+    def save_report_state(self, session_id: str, state: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO report_runs(session_id, state_json)
+                VALUES(?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    state_json = excluded.state_json,
+                    created_at = CURRENT_TIMESTAMP
+                """,
+                (session_id, json.dumps(state, ensure_ascii=False)),
+            )
+
+    def get_report_state(self, session_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT state_json FROM report_runs WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["state_json"])
+
+    def clear_report_state(self, session_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM report_runs WHERE session_id = ?", (session_id,))
+
     def get_memory_sync_state(self, simulation_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -438,3 +480,58 @@ class SimulationStore:
     def clear_interaction_transcripts(self, session_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM interaction_transcripts WHERE session_id = ?", (session_id,))
+
+    def replace_checkpoint_records(
+        self,
+        session_id: str,
+        checkpoint_kind: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM simulation_checkpoints WHERE session_id = ? AND checkpoint_kind = ?",
+                (session_id, checkpoint_kind),
+            )
+            conn.executemany(
+                """
+                INSERT INTO simulation_checkpoints(session_id, checkpoint_kind, agent_id, stance_json)
+                VALUES(?, ?, ?, ?)
+                """,
+                [
+                    (
+                        session_id,
+                        checkpoint_kind,
+                        str(record.get("agent_id")),
+                        json.dumps(record, ensure_ascii=False),
+                    )
+                    for record in records
+                ],
+            )
+
+    def list_checkpoint_records(
+        self,
+        session_id: str,
+        checkpoint_kind: str | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT checkpoint_kind, stance_json
+            FROM simulation_checkpoints
+            WHERE session_id = ?
+        """
+        params: list[Any] = [session_id]
+        if checkpoint_kind is not None:
+            sql += " AND checkpoint_kind = ?"
+            params.append(checkpoint_kind)
+        sql += " ORDER BY checkpoint_kind, id"
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        records: list[dict[str, Any]] = []
+        for row in rows:
+            record = json.loads(row["stance_json"])
+            record.setdefault("checkpoint_kind", row["checkpoint_kind"])
+            records.append(record)
+        return records
+
+    def clear_checkpoint_records(self, session_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM simulation_checkpoints WHERE session_id = ?", (session_id,))

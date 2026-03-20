@@ -1,94 +1,124 @@
 # Latest Handoff
 
 **Date:** 2026-03-21
-**Session:** Screen 2 Frontend V2 implementation complete, verified locally, awaiting operator review
+**Session:** Screen 3 live simulation + Screen 4A report implementation complete, verified locally and end to end in live mode, awaiting operator review
 
 ## What Changed
-- Implemented Screen 2 live cohort generation on the Frontend V2 shell.
-- Wired [frontend/src/pages/AgentConfig.tsx](../../frontend/src/pages/AgentConfig.tsx) to the live backend route:
-  - `POST /api/v2/console/session/{id}/sampling/preview`
-- Extended the Screen 2 state in [frontend/src/contexts/AppContext.tsx](../../frontend/src/contexts/AppContext.tsx):
-  - `sampleMode`
-  - `samplingInstructions`
-  - `sampleSeed`
-  - `populationArtifact`
-  - `populationLoading`
-  - `populationError`
-- Added the Stage 2 API contract in [frontend/src/lib/console-api.ts](../../frontend/src/lib/console-api.ts).
-- Extended the backend Screen 2 request/response models in [backend/src/mckainsey/models/console.py](../../backend/src/mckainsey/models/console.py).
-- Implemented live candidate retrieval and preview flow in [backend/src/mckainsey/services/console_service.py](../../backend/src/mckainsey/services/console_service.py).
-- Expanded [backend/src/mckainsey/services/persona_sampler.py](../../backend/src/mckainsey/services/persona_sampler.py) so Screen 2 uses the local Singapore parquet through deterministic structured candidate retrieval.
-- Expanded [backend/src/mckainsey/services/persona_relevance_service.py](../../backend/src/mckainsey/services/persona_relevance_service.py):
-  - issue-profile building from Screen 1 graph artifacts
-  - BM25 shortlist
-  - bounded semantic rerank
-  - two sampling modes
-  - parsed-instruction handling
-  - agent graph payload generation
-  - parser fallback when Gemini returns notes-only / non-actionable output
-  - filtering of hidden Screen 1 nodes from Stage 2 issue-profile matching
-  - active use of `soft_penalties`, `exclusions`, and `distribution_targets`
-  - correct hobby/skill matching against Nemotron list fields
-- Added/updated Stage 2 tests:
-  - [backend/tests/test_persona_relevance_service.py](../../backend/tests/test_persona_relevance_service.py)
+- Implemented Screen 3 live simulation on the Frontend V2 shell.
+- Replaced the Screen 3 mock page with [frontend/src/pages/Simulation.tsx](../../frontend/src/pages/Simulation.tsx):
+  - live `/simulation/start` call
+  - live SSE consumption from `/simulation/stream`
+  - quick round picks `3 / 4 / 5`
+  - advanced slider `1-8`
+  - live Reddit feed cards
+  - checkpoint status
+  - ETA / elapsed / hottest-thread summary tiles
+- Implemented Screen 4A `Reports & Insights` in [frontend/src/pages/Analysis.tsx](../../frontend/src/pages/Analysis.tsx):
+  - async `POST /report/generate`
+  - polling `GET /report/full`
+  - fixed structured report rendering
+  - Screen 4B / 4C left as mock tabs, but navigation preserved
+- Extended the frontend API contract in [frontend/src/lib/console-api.ts](../../frontend/src/lib/console-api.ts):
+  - richer `SimulationState`
+  - structured Screen 4A report state
+  - `generateReport`
+  - `getStructuredReport`
+  - `buildSimulationStreamUrl`
+- Expanded the live backend orchestration in [backend/src/mckainsey/services/console_service.py](../../backend/src/mckainsey/services/console_service.py):
+  - baseline checkpoint start/completion events
+  - final checkpoint start/completion events
+  - metrics snapshots before and after simulation
+  - `run_completed` only after final checkpoint completion
+  - async Screen 4A report-generation thread
+- Expanded [backend/src/mckainsey/services/simulation_service.py](../../backend/src/mckainsey/services/simulation_service.py):
+  - graph-aware `SimulationContextBundle`
+  - checkpoint prompt generation
+  - checkpoint normalization
+  - OASIS runner payload extension for ETA offsets
+- Expanded [backend/scripts/oasis_reddit_runner.py](../../backend/scripts/oasis_reddit_runner.py):
+  - richer `post_created`, `comment_created`, `reaction_added` payloads
+  - actor names / subtitles
+  - top-thread computation
+  - round-by-round `metrics_updated`
+  - OASIS profile enrichment from Screen 1/2 context
+  - relevance-first early salience for seeded discussion
+- Expanded [backend/src/mckainsey/services/simulation_stream_service.py](../../backend/src/mckainsey/services/simulation_stream_service.py):
+  - incremental NDJSON ingestion
+  - richer persisted simulation state
+  - checkpoint status tracking
+  - top threads / momentum / ETA state projection
+- Expanded [backend/src/mckainsey/services/report_service.py](../../backend/src/mckainsey/services/report_service.py):
+  - fixed structured Screen 4A report prompt
+  - explicit failure when Gemini does not return valid JSON
+- Added OASIS runtime hardening artifacts:
+  - [backend/scripts/check_oasis_runtime.py](../../backend/scripts/check_oasis_runtime.py)
+  - [backend/requirements-oasis-runtime.txt](../../backend/requirements-oasis-runtime.txt)
+  - launcher validation/install path in [quick_start.sh](../../quick_start.sh)
+- Added/updated Screen 3 / 4 tests:
+  - [backend/tests/test_simulation_stream_service.py](../../backend/tests/test_simulation_stream_service.py)
+  - [backend/tests/test_simulation_service.py](../../backend/tests/test_simulation_service.py)
+  - [backend/tests/test_report_service.py](../../backend/tests/test_report_service.py)
   - [backend/tests/test_console_routes.py](../../backend/tests/test_console_routes.py)
-  - [backend/tests/test_llm_client.py](../../backend/tests/test_llm_client.py)
-  - [frontend/src/pages/AgentConfig.test.tsx](../../frontend/src/pages/AgentConfig.test.tsx)
+  - [frontend/src/pages/Simulation.test.tsx](../../frontend/src/pages/Simulation.test.tsx)
+  - [frontend/src/pages/Analysis.test.tsx](../../frontend/src/pages/Analysis.test.tsx)
 
-## Screen 2 Product Shape Now Implemented
+## Screen 3 / Screen 4A Product Shape Now Implemented
 
-### Modes
-- `Affected Groups`
-- `Population Baseline`
+### Screen 3
+- platform locked to `Reddit`
+- quick round controls `3 / 4 / 5`
+- advanced slider `1-8`
+- live feed of:
+  - posts
+  - comments
+  - reactions
+- live summary of:
+  - visible events
+  - elapsed time
+  - ETA
+  - hottest thread
+  - checkpoint status
+  - discussion momentum
 
-### Controls
-- live agent-count selector
-- live sampling-mode toggle
-- live `Sampling Instructions` textbox
-- live `Generate Agents`
-- live `Re-sample`
-- visible `Sample Seed`
+### Screen 4A
+- async report generation
+- fixed report sections:
+  - executive summary
+  - actionable insights
+  - support themes
+  - dissent themes
+  - demographic breakdown
+  - influential content
+  - recommendations
+  - risks
 
-### Retrieval Stack
-- structured candidate filtering first
-- BM25 shortlist second
-- semantic rerank third
-
-### Parsed Instructions
-- UI now renders a read-only parsed summary for:
-  - `Hard Filters`
-  - `Soft Boosts`
-  - `Exclusions`
-  - `Distribution Targets`
-- Backend parser behavior:
-  - Gemini first
-  - deterministic fallback when Gemini is unavailable, errors, or returns notes-only output
-
-### Agent Graph
-- Screen 2 graph now matches the Screen 1 visual language:
-  - small nodes
-  - external labels
-  - always-visible edges
-  - optional relationship-label toggle
-  - legend derived from live graph categories
+### Runtime Policy
+- all sampled agents remain in the simulation
+- all sampled agents receive baseline + final checkpoint measurement
+- relevance-matched agents receive stronger early issue salience through their OASIS profile briefing
+- Screen 3 only reaches `completed` after final checkpoint completion
 
 ## What Is Stable
-- The local Singapore parquet is the Screen 2 source of truth.
-- Screen 2 no longer relies on mock agent generation.
-- The Screen 2 slider no longer advertises unsupported sizes above the backend contract.
-- `Generate Agents` and `Re-sample` both use the live backend and return real seeds.
-- The Screen 2 cohort response is explainable:
-  - parsed instructions
-  - selection rationale
-  - cohort diagnostics
-  - agent graph
-- Screen 2 preview requests now reject unknown extra fields instead of silently accepting them.
+- Screen 3 no longer relies on mock posts or static snapshots.
+- Screen 3 feed is backed by persisted live events from native OASIS.
+- The Screen 3 state snapshot now carries:
+  - platform
+  - planned rounds
+  - current round
+  - elapsed time
+  - ETA
+  - counters
+  - checkpoint status
+  - top threads
+  - discussion momentum
+- Screen 4A no longer builds lazily on the first `GET`; generation is explicitly started and tracked.
+- The OASIS sidecar now has a dedicated pinned dependency file and validation script.
 
 ## What Was Verified
 - Backend targeted suite:
-  - `16 passed`
+  - `14 passed`
 - Frontend test suite:
-  - `8 passed`
+  - `10 passed`
 - Frontend app typecheck:
   - passed
 - Frontend build:
@@ -97,45 +127,47 @@
   - `./quick_start.sh --mode live --real-oasis`
   - backend health passed
   - frontend served on `http://127.0.0.1:5173`
-- Live browser flow:
+  - OASIS sidecar validation passed after pinning `pyarrow`
+- Live end-to-end API validation completed:
   1. upload real `CNA SHrinking Birth Rate.docx`
-  2. complete Screen 1 extraction
-  3. proceed to Screen 2
-  4. generate a live 500-agent cohort
-- Live Screen 2 browser verification confirmed:
-  - `Candidate Pool`
-  - `Sample Size`
-  - `Sample Seed`
-  - parsed instruction summary rendered in the page
-  - live selection-rationale cards
-  - live agent graph
+  2. generate a real Stage 2 cohort (`sample_count = 4`)
+  3. start a real 3-round native OASIS run
+  4. confirm live state transitions through baseline / rounds / final checkpoint
+  5. confirm `34` live events persisted
+  6. generate Screen 4A report asynchronously
+  7. confirm completed Screen 4A report with `3` insight cards
 
 ## Current Known Limits
-- Screen 2 is now functional and operator-reviewable, but some documents can still leak broad document-native entities into rationale text if those entities survive Screen 1 as visible non-facet nodes.
-- The deterministic Stage 2 parser intentionally stays conservative; it does not attempt broad free-form demographic inference.
-- Stage 3, Stage 4, and Stage 5 remain as previously implemented; this session only changed Screen 2 and its supporting backend logic.
+- Screen 4B and Screen 4C remain mock in this phase.
+- The dedicated OASIS sidecar still emits a `RequestsDependencyWarning`, but the required import contract now passes and the live OASIS run succeeded with the pinned runtime.
+- The Vite production bundle now emits a large-chunk warning; this is a later optimization task rather than a functional blocker.
 
 ## Recommended Next Work
-1. Operator review of Screen 2 in live mode.
-2. If approved, start Screen 3 using the same Frontend V2 shell.
-3. Reuse Screen 2 cohort/state contract as the input surface for Screen 3 live simulation startup.
+1. Operator review of Screen 3 and Screen 4A in live mode.
+2. If approved, implement Screen 4B and Screen 4C on real data.
+3. After Screen 4 is locked, move to Screen 5 interaction polishing on top of the new Screen 4A report artifacts.
 
 ## Runbook
 1. Live mode
    - ensure `.env` contains valid Gemini and Zep credentials
-   - ensure `backend/.venv311/bin/python` exists with native OASIS dependencies
    - run `./quick_start.sh --mode live --real-oasis`
+   - the launcher now validates / repairs the pinned OASIS Python 3.11 sidecar automatically
    - upload a document in Screen 1
-   - proceed to Screen 2
-   - generate agents and re-sample as needed
+   - generate agents in Screen 2
+   - start the live simulation in Screen 3
+   - generate the report in Screen 4A
 2. Demo mode
    - `./quick_start.sh --mode demo`
 
 ## File Links
 - [Progress.md](../../Progress.md)
 - [progress/index.md](../../progress/index.md)
-- [progress/phaseH.md](../../progress/phaseH.md)
 - [progress/phaseI.md](../../progress/phaseI.md)
-- [frontend/src/pages/AgentConfig.tsx](../../frontend/src/pages/AgentConfig.tsx)
-- [backend/src/mckainsey/services/persona_relevance_service.py](../../backend/src/mckainsey/services/persona_relevance_service.py)
+- [progress/phaseJ.md](../../progress/phaseJ.md)
+- [frontend/src/pages/Simulation.tsx](../../frontend/src/pages/Simulation.tsx)
+- [frontend/src/pages/Analysis.tsx](../../frontend/src/pages/Analysis.tsx)
+- [backend/src/mckainsey/services/console_service.py](../../backend/src/mckainsey/services/console_service.py)
+- [backend/src/mckainsey/services/simulation_service.py](../../backend/src/mckainsey/services/simulation_service.py)
+- [backend/scripts/oasis_reddit_runner.py](../../backend/scripts/oasis_reddit_runner.py)
+- [backend/scripts/check_oasis_runtime.py](../../backend/scripts/check_oasis_runtime.py)
 - [quick_start.sh](../../quick_start.sh)

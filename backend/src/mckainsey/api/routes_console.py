@@ -121,6 +121,14 @@ def report_full(
     return ReportFullResponse(**ConsoleService(settings).get_report_full(session_id))
 
 
+@router.post("/session/{session_id}/report/generate", response_model=ReportFullResponse)
+def report_generate(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+) -> ReportFullResponse:
+    return ReportFullResponse(**ConsoleService(settings).generate_report(session_id))
+
+
 @router.get("/session/{session_id}/report/opinions", response_model=ReportOpinionsResponse)
 def report_opinions(
     session_id: str,

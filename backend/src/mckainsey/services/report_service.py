@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime
 import json
 from typing import Any
 
@@ -16,6 +17,48 @@ class ReportService:
         self.store = SimulationStore(settings.simulation_db_path)
         self.llm = GeminiChatClient(settings)
         self.memory = MemoryService(settings)
+
+    def generate_structured_report(self, simulation_id: str) -> dict[str, Any]:
+        existing = self.store.get_report_state(simulation_id)
+        if existing and existing.get("status") == "completed":
+            return existing
+
+        agents = self.store.get_agents(simulation_id)
+        interactions = self.store.get_interactions(simulation_id)
+        if not agents:
+            raise ValueError(f"Simulation not found: {simulation_id}")
+
+        knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
+        population = self.store.get_population_artifact(simulation_id) or {}
+        baseline = self.store.list_checkpoint_records(simulation_id, checkpoint_kind="baseline")
+        final = self.store.list_checkpoint_records(simulation_id, checkpoint_kind="final")
+        events = self.store.list_simulation_events(simulation_id)
+
+        prompt = self._build_structured_report_prompt(
+            simulation_id=simulation_id,
+            knowledge=knowledge,
+            population=population,
+            agents=agents,
+            interactions=interactions,
+            baseline=baseline,
+            final=final,
+            events=events,
+        )
+        raw = self.llm.complete_required(
+            prompt,
+            system_prompt=(
+                "You are McKAInsey ReportAgent. Return valid JSON only using the requested schema. "
+                "Every claim must be grounded in provided evidence."
+            ),
+        )
+        try:
+            payload = _parse_json_object(raw)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("Gemini must return valid structured report JSON.") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("Gemini must return valid structured report JSON.")
+
+        return self._normalize_structured_report_payload(simulation_id, payload)
 
     def build_report(self, simulation_id: str) -> dict[str, Any]:
         cached = self.store.get_cached_report(simulation_id)
@@ -360,6 +403,70 @@ class ReportService:
 
         return recommendations[:6]
 
+    def _build_structured_report_prompt(
+        self,
+        *,
+        simulation_id: str,
+        knowledge: dict[str, Any],
+        population: dict[str, Any],
+        agents: list[dict[str, Any]],
+        interactions: list[dict[str, Any]],
+        baseline: list[dict[str, Any]],
+        final: list[dict[str, Any]],
+        events: list[dict[str, Any]],
+    ) -> str:
+        influential_posts = [
+            {
+                "agent_id": row.get("actor_agent_id"),
+                "content": row.get("content"),
+                "delta": row.get("delta"),
+            }
+            for row in interactions
+            if row.get("action_type") == "create_post"
+        ][:12]
+        checkpoints = {
+            "baseline": baseline[:50],
+            "final": final[:50],
+        }
+        return (
+            "Generate a fixed-format policy simulation report in JSON.\n"
+            "Return an object with exactly these top-level keys:\n"
+            "{\"generated_at\": str, \"executive_summary\": str, "
+            "\"insight_cards\": [{\"title\": str, \"summary\": str, \"severity\": \"high|medium|low\"}], "
+            "\"support_themes\": [{\"theme\": str, \"summary\": str, \"evidence\": [str]}], "
+            "\"dissent_themes\": [{\"theme\": str, \"summary\": str, \"evidence\": [str]}], "
+            "\"demographic_breakdown\": [{\"segment\": str, \"approval_rate\": number, \"dissent_rate\": number, \"sample_size\": number}], "
+            "\"influential_content\": [{\"content_type\": str, \"author_agent_id\": str, \"summary\": str, \"engagement_score\": number}], "
+            "\"recommendations\": [{\"title\": str, \"rationale\": str, \"priority\": \"high|medium|low\"}], "
+            "\"risks\": [{\"title\": str, \"summary\": str, \"severity\": \"high|medium|low\"}]}\n\n"
+            f"Simulation ID: {simulation_id}\n"
+            f"Knowledge summary: {knowledge.get('summary', '')}\n"
+            f"Population artifact: {json.dumps(population, ensure_ascii=False)[:6000]}\n"
+            f"Checkpoint records: {json.dumps(checkpoints, ensure_ascii=False)[:12000]}\n"
+            f"Influential posts: {json.dumps(influential_posts, ensure_ascii=False)[:6000]}\n"
+            f"Recent simulation events: {json.dumps(events[-80:], ensure_ascii=False)[:12000]}\n"
+            f"Agent records: {json.dumps(agents[:80], ensure_ascii=False)[:12000]}\n"
+        )
+
+    def _normalize_structured_report_payload(self, simulation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        generated_at = str(payload.get("generated_at") or datetime.now(UTC).isoformat())
+        normalized = {
+            "session_id": simulation_id,
+            "status": "completed",
+            "generated_at": generated_at,
+            "executive_summary": str(payload.get("executive_summary", "")).strip(),
+            "insight_cards": _normalize_dict_list(payload.get("insight_cards"), required_keys=("title", "summary", "severity")),
+            "support_themes": _normalize_dict_list(payload.get("support_themes"), required_keys=("theme", "summary", "evidence")),
+            "dissent_themes": _normalize_dict_list(payload.get("dissent_themes"), required_keys=("theme", "summary", "evidence")),
+            "demographic_breakdown": _normalize_dict_list(payload.get("demographic_breakdown"), required_keys=("segment", "approval_rate", "dissent_rate", "sample_size")),
+            "influential_content": _normalize_dict_list(payload.get("influential_content"), required_keys=("content_type", "author_agent_id", "summary", "engagement_score")),
+            "recommendations": _normalize_dict_list(payload.get("recommendations"), required_keys=("title", "rationale", "priority")),
+            "risks": _normalize_dict_list(payload.get("risks"), required_keys=("title", "summary", "severity")),
+        }
+        if not normalized["executive_summary"]:
+            raise RuntimeError("Gemini must return valid structured report JSON.")
+        return normalized
+
 
 def _approval(scores: list[float]) -> float:
     if not scores:
@@ -371,3 +478,23 @@ def _mean(scores: list[float]) -> float:
     if not scores:
         return 0.0
     return sum(scores) / len(scores)
+
+
+def _parse_json_object(raw: str) -> Any:
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    return json.loads(cleaned)
+
+
+def _normalize_dict_list(value: Any, *, required_keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        normalized.append({key: item.get(key) for key in required_keys})
+    return normalized

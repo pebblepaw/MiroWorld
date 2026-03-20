@@ -131,6 +131,15 @@ if [[ "$REAL_OASIS" == "true" ]]; then
     echo "Requested --real-oasis but OASIS_PY_BIN was not found: $OASIS_PY_BIN"
     exit 1
   fi
+  if ! "$OASIS_PY_BIN" "$BACKEND_DIR/scripts/check_oasis_runtime.py" >/tmp/mckainsey_oasis_runtime_check.log 2>&1; then
+    echo "[oasis] Runtime validation failed. Installing pinned OASIS dependencies..."
+    "$OASIS_PY_BIN" -m pip install -r "$BACKEND_DIR/requirements-oasis-runtime.txt"
+    "$OASIS_PY_BIN" "$BACKEND_DIR/scripts/check_oasis_runtime.py" >/tmp/mckainsey_oasis_runtime_check.log 2>&1 || {
+      echo "OASIS runtime is still invalid after installing pinned dependencies."
+      cat /tmp/mckainsey_oasis_runtime_check.log
+      exit 1
+    }
+  fi
   BACKEND_ENV+=("ENABLE_REAL_OASIS=true")
   BACKEND_ENV+=("OASIS_PYTHON_BIN=$OASIS_PY_BIN")
   BACKEND_ENV+=("OASIS_RUNNER_SCRIPT=$BACKEND_DIR/scripts/oasis_reddit_runner.py")

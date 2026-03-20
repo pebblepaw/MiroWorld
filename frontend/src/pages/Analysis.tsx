@@ -1,228 +1,377 @@
-import { useState } from 'react';
-import { Map as MapIcon, FileText, TrendingUp, ThumbsUp, MessageSquare } from 'lucide-react';
-import { useApp } from '@/contexts/AppContext';
-import { GlassCard } from '@/components/GlassCard';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { mockReport, planningAreaApproval } from '@/data/mockData';
-import { ArrowRight } from 'lucide-react';
-import { MapContainer, TileLayer, CircleMarker, Tooltip } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, FileText, Loader2, MessagesSquare, Radar, RefreshCw } from "lucide-react";
 
-const planningAreaCoordinates: Record<string, [number, number]> = {
-  'Ang Mo Kio': [1.3691, 103.8454],
-  'Bedok': [1.3236, 103.9273],
-  'Bishan': [1.3526, 103.8352],
-  'Bukit Batok': [1.3590, 103.7637],
-  'Bukit Merah': [1.2819, 103.8239],
-  'Bukit Panjang': [1.3774, 103.7719],
-  'Bukit Timah': [1.3294, 103.8021],
-  'Clementi': [1.3162, 103.7649],
-  'Geylang': [1.3201, 103.8918],
-  'Hougang': [1.3713, 103.8925],
-  'Jurong East': [1.3329, 103.7436],
-  'Jurong West': [1.3404, 103.7090],
-  'Kallang': [1.3115, 103.8750],
-  'Marine Parade': [1.3020, 103.9046],
-  'Pasir Ris': [1.3721, 103.9474],
-  'Punggol': [1.3984, 103.9072],
-  'Queenstown': [1.2942, 103.8060],
-  'Sembawang': [1.4491, 103.8185],
-  'Sengkang': [1.3868, 103.8914],
-  'Serangoon': [1.3554, 103.8679],
-  'Tampines': [1.3496, 103.9568],
-  'Toa Payoh': [1.3343, 103.8563],
-  'Woodlands': [1.4360, 103.7861],
-  'Yishun': [1.4304, 103.8354],
-  'Tengah': [1.3625, 103.7290],
-  'Choa Chu Kang': [1.3840, 103.7470],
+import { GlassCard } from "@/components/GlassCard";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useApp } from "@/contexts/AppContext";
+import { StructuredReportState, generateReport, getStructuredReport } from "@/lib/console-api";
+
+const POLL_INTERVAL_MS = 1500;
+
+const EMPTY_REPORT: StructuredReportState = {
+  session_id: "",
+  status: "idle",
+  generated_at: null,
+  executive_summary: null,
+  insight_cards: [],
+  support_themes: [],
+  dissent_themes: [],
+  demographic_breakdown: [],
+  influential_content: [],
+  recommendations: [],
+  risks: [],
+  error: null,
 };
 
 export default function Analysis() {
-  const { completeStep, setCurrentStep, simPosts } = useApp();
+  const { sessionId, simulationComplete } = useApp();
+  const [activeTab, setActiveTab] = useState("report");
+  const [reportState, setReportState] = useState<StructuredReportState>(EMPTY_REPORT);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const startedRef = useRef<string | null>(null);
 
-  const handleProceed = () => { completeStep(4); setCurrentStep(5); };
+  const beginReportGeneration = useCallback(async () => {
+    if (!sessionId) {
+      setReportError("Start a simulation before generating a report.");
+      return;
+    }
+    startedRef.current = sessionId;
+    setLoading(true);
+    setReportError(null);
+    try {
+      const [nextState, polled] = await Promise.all([
+        generateReport(sessionId),
+        getStructuredReport(sessionId),
+      ]);
+      setReportState(nextState);
+      setReportState(polled);
+    } catch (error) {
+      startedRef.current = null;
+      setReportError(error instanceof Error ? error.message : "Unable to generate report.");
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId]);
+
+  useLayoutEffect(() => {
+    if (!simulationComplete || !sessionId || activeTab !== "report") {
+      return;
+    }
+    if (startedRef.current === sessionId) {
+      return;
+    }
+    void beginReportGeneration();
+  }, [activeTab, beginReportGeneration, sessionId, simulationComplete]);
+
+  useEffect(() => {
+    if (!sessionId || activeTab !== "report" || reportState.status !== "running") {
+      return;
+    }
+
+    const timer = window.setInterval(async () => {
+      try {
+        const nextState = await getStructuredReport(sessionId);
+        setReportState(nextState);
+      } catch (error) {
+        setReportError(error instanceof Error ? error.message : "Unable to refresh report.");
+      }
+    }, POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(timer);
+  }, [activeTab, reportState.status, sessionId]);
+
+  const hasCompletedReport = reportState.status === "completed";
+  const insightCards = reportState.insight_cards ?? [];
+  const supportThemes = reportState.support_themes ?? [];
+  const dissentThemes = reportState.dissent_themes ?? [];
+  const demographicBreakdown = reportState.demographic_breakdown ?? [];
+  const influentialContent = reportState.influential_content ?? [];
+  const recommendations = reportState.recommendations ?? [];
+  const risks = reportState.risks ?? [];
+
+  const statusTone = useMemo(() => {
+    if (reportState.status === "completed") return "text-success";
+    if (reportState.status === "failed") return "text-destructive";
+    return "text-primary";
+  }, [reportState.status]);
 
   return (
-    <div className="flex flex-col h-full p-6 gap-4 overflow-hidden">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-6 h-full p-6 overflow-y-auto scrollbar-thin">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-foreground">Analysis Dashboard</h2>
-          <p className="text-sm text-muted-foreground">Comprehensive analysis of simulation results</p>
+          <h2 className="text-xl font-bold text-foreground">Analysis</h2>
+          <p className="text-sm text-muted-foreground">
+            Structured report generation from the live McKAInsey simulation, with Screen 4A active and the other views held on mock data for now.
+          </p>
         </div>
-        <Button onClick={handleProceed} variant="outline" className="border-success/30 text-success hover:bg-success/10">
-          <ArrowRight className="w-4 h-4" /> Chat with Agents
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className={`text-xs uppercase tracking-[0.22em] font-mono ${statusTone}`}>
+            {reportState.status === "idle" ? "Awaiting Report" : reportState.status}
+          </div>
+          <Button
+            onClick={() => {
+              startedRef.current = null;
+              void beginReportGeneration();
+            }}
+            disabled={!sessionId || loading}
+            variant="outline"
+            className="border-white/12 text-foreground hover:bg-white/6"
+          >
+            {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</> : <><RefreshCw className="w-4 h-4" /> Rebuild Report</>}
+          </Button>
+        </div>
       </div>
 
-      <Tabs defaultValue="map" className="flex-1 flex flex-col overflow-hidden">
-        <TabsList className="bg-muted/30 border border-border self-start">
-          <TabsTrigger value="map" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary gap-1.5"><MapIcon className="w-3.5 h-3.5" /> Planning Area Map</TabsTrigger>
-          <TabsTrigger value="report" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary gap-1.5"><FileText className="w-3.5 h-3.5" /> Report & Insights</TabsTrigger>
-          <TabsTrigger value="posts" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary gap-1.5"><TrendingUp className="w-3.5 h-3.5" /> Influential Posts</TabsTrigger>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col gap-4">
+        <TabsList className="w-fit bg-white/[0.04] border border-white/10">
+          <TabsTrigger value="report">Reports &amp; Insights</TabsTrigger>
+          <TabsTrigger value="opinions">Opinions Feed</TabsTrigger>
+          <TabsTrigger value="friction">Friction Map</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="map" className="flex-1 overflow-y-auto scrollbar-thin mt-4">
-          <PlanningAreaMap />
+        <TabsContent value="report" className="mt-0 flex-1">
+          {!simulationComplete && (
+            <GlassCard className="p-8 text-center">
+              <div className="text-lg font-semibold text-foreground">Run Screen 3 first</div>
+              <p className="text-sm text-muted-foreground mt-2">
+                The report agent needs a completed live simulation before it can assemble the fixed Screen 4A report.
+              </p>
+            </GlassCard>
+          )}
+
+          {simulationComplete && (
+            <div className="space-y-4">
+              {(loading || reportState.status === "running") && (
+                <GlassCard className="p-5 border border-primary/25">
+                  <div className="flex items-center gap-3 text-primary">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm font-semibold">Generating report</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    The report agent is consolidating checkpoint shifts, influential posts, and demographic approval patterns.
+                  </p>
+                </GlassCard>
+              )}
+
+              {(reportError || reportState.error || reportState.status === "failed") && (
+                <GlassCard className="p-5 border border-destructive/30">
+                  <div className="flex items-center gap-3 text-destructive">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span className="text-sm font-semibold">Report generation failed</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-2">{reportError ?? reportState.error ?? "Gemini did not return a valid structured report."}</p>
+                </GlassCard>
+              )}
+
+              {hasCompletedReport && (
+                <>
+                  <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-4">
+                    <GlassCard className="p-5">
+                      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-muted-foreground mb-3">
+                        <FileText className="w-4 h-4 text-primary" />
+                        Executive Summary
+                      </div>
+                      <p className="text-base leading-relaxed text-foreground">
+                        {reportState.executive_summary}
+                      </p>
+                      <div className="text-[11px] font-mono text-muted-foreground mt-4">
+                        Generated {formatTimestamp(reportState.generated_at)}
+                      </div>
+                    </GlassCard>
+
+                    <GlassCard className="p-5">
+                      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-muted-foreground mb-3">
+                        <CheckCircle2 className="w-4 h-4 text-primary" />
+                        Key Actionable Insights
+                      </div>
+                      <div className="space-y-3">
+                        {insightCards.map((card, index) => (
+                          <div key={`${card.title ?? index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-sm font-semibold text-foreground">{stringValue(card.title, "Untitled insight")}</div>
+                              <span className="text-[10px] uppercase tracking-[0.18em] text-primary">{stringValue(card.severity, "info")}</span>
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-2">{stringValue(card.summary, "")}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </GlassCard>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <ThemeColumn
+                      title="Strongest Supporting Views"
+                      icon={<CheckCircle2 className="w-4 h-4 text-success" />}
+                      items={supportThemes}
+                    />
+                    <ThemeColumn
+                      title="Strongest Dissenting Views"
+                      icon={<AlertTriangle className="w-4 h-4 text-destructive" />}
+                      items={dissentThemes}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_1.05fr] gap-4">
+                    <GlassCard className="p-5">
+                      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-muted-foreground mb-3">
+                        <Radar className="w-4 h-4 text-primary" />
+                        Approval / Dissent Breakdown
+                      </div>
+                      <div className="space-y-3">
+                        {demographicBreakdown.map((entry, index) => (
+                          <div key={`${entry.segment ?? index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-sm font-semibold text-foreground">{stringValue(entry.segment, "Unknown segment")}</div>
+                              <span className="text-xs font-mono text-muted-foreground">n={numberValue(entry.sample_size)}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 mt-3">
+                              <RateCard label="Approval" value={formatRate(entry.approval_rate)} tone="text-success" />
+                              <RateCard label="Dissent" value={formatRate(entry.dissent_rate)} tone="text-destructive" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </GlassCard>
+
+                    <GlassCard className="p-5">
+                      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-muted-foreground mb-3">
+                        <MessagesSquare className="w-4 h-4 text-primary" />
+                        Influential Posts &amp; Agents
+                      </div>
+                      <div className="space-y-3">
+                        {influentialContent.map((entry, index) => (
+                          <div key={`${entry.summary ?? index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-sm font-semibold text-foreground">{stringValue(entry.content_type, "content")}</div>
+                              <span className="text-xs font-mono text-primary">{numberValue(entry.engagement_score)}</span>
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-2">{stringValue(entry.summary, "")}</p>
+                            {entry.author_agent_id ? (
+                              <div className="text-[11px] text-muted-foreground font-mono mt-3">
+                                Author {stringValue(entry.author_agent_id, "")}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </GlassCard>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <RecommendationColumn title="Recommendations" items={recommendations} />
+                    <RecommendationColumn title="Risks / Minority View Watchouts" items={risks} />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </TabsContent>
-        <TabsContent value="report" className="flex-1 overflow-y-auto scrollbar-thin mt-4">
-          <ReportView />
+
+        <TabsContent value="opinions" className="mt-0">
+          <MockStageCard
+            title="Opinions Feed"
+            description="Screen 4B remains on mock data in this phase. Navigation stays live, but the real opinion feed will be implemented after Reports & Insights is locked."
+          />
         </TabsContent>
-        <TabsContent value="posts" className="flex-1 overflow-y-auto scrollbar-thin mt-4">
-          <InfluentialPosts posts={simPosts} />
+
+        <TabsContent value="friction" className="mt-0">
+          <MockStageCard
+            title="Friction Map"
+            description="Screen 4C remains on mock data in this phase. The live Singapore friction map will be wired after Screen 4A is approved."
+          />
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function PlanningAreaMap() {
-  const [selected, setSelected] = useState<string | null>(null);
-  const areas = Object.entries(planningAreaApproval);
-  const overall = Math.round(areas.reduce((s, [, v]) => s + v.approval, 0) / areas.length);
-
-  const getMarkerColor = (approval: number) => {
-    if (approval >= 60) return '#10b981'; // success
-    if (approval >= 45) return '#f59e0b'; // secondary/warning
-    return '#ef4444'; // destructive
-  };
-
+function ThemeColumn({ title, icon, items }: { title: string; icon: JSX.Element; items: Array<Record<string, unknown>> }) {
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[600px]">
-      <div className="lg:col-span-2 h-full">
-        <GlassCard glow="primary" className="p-6 h-full flex flex-col">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-foreground">Singapore Planning Areas — Sentiment Heatmap</h3>
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-              <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-destructive" />Low</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-secondary" />Mid</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-success" />High</span>
-            </div>
-          </div>
-          <div className="flex-1 rounded-xl overflow-hidden border border-border relative z-0">
-            <MapContainer center={[1.3521, 103.8198]} zoom={11} className="w-full h-full" zoomControl={false}>
-              <TileLayer
-                attribution='<img src="https://www.onemap.gov.sg/web-assets/images/logo/om_logo.png" style="height:20px;width:20px;"/>&nbsp;<a href="https://www.sla.gov.sg/" target="_blank" rel="noopener noreferrer">Singapore Land Authority</a>'
-                url="https://maps-{s}.onemap.sg/v3/Night/{z}/{x}/{y}.png"
-              />
-              {areas.map(([name, data]) => {
-                const coords = planningAreaCoordinates[name];
-                if (!coords) return null;
-                const isSelected = selected === name;
-                return (
-                  <CircleMarker
-                    key={name}
-                    center={coords}
-                    radius={isSelected ? 12 : 8}
-                    pathOptions={{
-                      color: isSelected ? '#ffffff' : getMarkerColor(data.approval),
-                      fillColor: getMarkerColor(data.approval),
-                      fillOpacity: 0.8,
-                      weight: isSelected ? 3 : 1
-                    }}
-                    eventHandlers={{
-                      click: () => setSelected(selected === name ? null : name)
-                    }}
-                  >
-                    <Tooltip direction="top" offset={[0, -10]} opacity={1}>
-                      <div className="text-center font-sans">
-                        <div className="font-bold text-xs">{name}</div>
-                        <div className="text-sm">{data.approval}%</div>
-                      </div>
-                    </Tooltip>
-                  </CircleMarker>
-                );
-              })}
-            </MapContainer>
-          </div>
-        </GlassCard>
-      </div>
-      <div className="space-y-4">
-        <GlassCard className="p-5 text-center">
-          <div className="text-3xl font-mono font-bold text-primary glow-text">{overall}%</div>
-          <div className="text-xs text-muted-foreground mt-1">Overall Approval</div>
-        </GlassCard>
-        {selected && (
-          <GlassCard glow="secondary" className="p-4 animate-slide-up">
-            <h4 className="text-sm font-semibold text-foreground mb-2">{selected}</h4>
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between"><span className="text-muted-foreground">Approval</span><span className="text-foreground font-mono">{planningAreaApproval[selected].approval}%</span></div>
-              <Progress value={planningAreaApproval[selected].approval} className="h-2" />
-              <div className="flex justify-between"><span className="text-muted-foreground">Agents</span><span className="text-foreground font-mono">{planningAreaApproval[selected].agentCount}</span></div>
-            </div>
-          </GlassCard>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ReportView() {
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-2">
-        <GlassCard className="p-6">
-          <h3 className="text-lg font-bold text-foreground mb-1">{mockReport.title}</h3>
-          <p className="text-xs text-muted-foreground mb-6">{mockReport.date}</p>
-          <div className="space-y-6">
-            {mockReport.sections.map((s, i) => (
-              <div key={i}>
-                <h4 className="text-sm font-bold text-primary mb-2">{s.heading}</h4>
-                <div className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">{s.content}</div>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
+    <GlassCard className="p-5">
+      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-muted-foreground mb-3">
+        {icon}
+        {title}
       </div>
       <div className="space-y-3">
-        <h4 className="text-xs uppercase tracking-wider text-muted-foreground">Key Insights</h4>
-        {mockReport.keyInsights.map((insight, i) => (
-          <GlassCard key={i} glow={i === 0 ? 'primary' : 'none'} className="p-4">
-            <div className="flex items-start gap-3">
-              <span className="text-2xl">{insight.icon}</span>
-              <div>
-                <h5 className="text-sm font-semibold text-foreground">{insight.headline}</h5>
-                <p className="text-xs text-muted-foreground mt-1">{insight.description}</p>
+        {items.map((item, index) => (
+          <div key={`${item.theme ?? item.title ?? index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="text-sm font-semibold text-foreground">{stringValue(item.theme ?? item.title, "Untitled theme")}</div>
+            <p className="text-sm text-muted-foreground mt-2">{stringValue(item.summary, "")}</p>
+            {Array.isArray(item.evidence) && item.evidence.length > 0 ? (
+              <div className="mt-3 text-xs text-muted-foreground">
+                “{stringValue(item.evidence[0], "")}”
               </div>
-            </div>
-          </GlassCard>
+            ) : null}
+          </div>
         ))}
       </div>
+    </GlassCard>
+  );
+}
+
+function RecommendationColumn({ title, items }: { title: string; items: Array<Record<string, unknown>> }) {
+  return (
+    <GlassCard className="p-5">
+      <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground mb-3">{title}</div>
+      <div className="space-y-3">
+        {items.map((item, index) => (
+          <div key={`${item.title ?? index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-foreground">{stringValue(item.title, "Untitled item")}</div>
+              {item.priority || item.severity ? (
+                <span className="text-[10px] uppercase tracking-[0.18em] text-primary">{stringValue(item.priority ?? item.severity, "")}</span>
+              ) : null}
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">{stringValue(item.rationale ?? item.summary, "")}</p>
+          </div>
+        ))}
+      </div>
+    </GlassCard>
+  );
+}
+
+function RateCard({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className={`text-lg font-mono font-semibold mt-1 ${tone}`}>{value}</div>
     </div>
   );
 }
 
-function InfluentialPosts({ posts }: { posts: { id: string; title: string; content: string; agentName: string; agentOccupation: string; upvotes: number; commentCount: number }[] }) {
-  const sorted = [...posts].sort((a, b) => b.upvotes - a.upvotes).slice(0, 10);
-
-  if (sorted.length === 0) {
-    return <div className="text-center text-muted-foreground py-12">Run the simulation first to see influential posts</div>;
-  }
-
+function MockStageCard({ title, description }: { title: string; description: string }) {
   return (
-    <div className="space-y-3">
-      {sorted.map((post, i) => (
-        <GlassCard key={post.id} className="p-4">
-          <div className="flex items-start gap-4">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 font-mono font-bold text-sm ${i < 3 ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'}`}>
-              #{i + 1}
-            </div>
-            <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-semibold text-foreground">{post.title}</h4>
-              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{post.content}</p>
-              <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                <span>{post.agentName} · {post.agentOccupation}</span>
-                <span className="flex items-center gap-1"><ThumbsUp className="w-3 h-3" />{post.upvotes}</span>
-                <span className="flex items-center gap-1"><MessageSquare className="w-3 h-3" />{post.commentCount}</span>
-              </div>
-              <div className="mt-2">
-                <Progress value={Math.min(100, (post.upvotes / 500) * 100)} className="h-1.5" />
-              </div>
-            </div>
-          </div>
-        </GlassCard>
-      ))}
-    </div>
+    <GlassCard className="p-8 text-center">
+      <div className="text-lg font-semibold text-foreground">{title}</div>
+      <p className="text-sm text-muted-foreground mt-2 max-w-2xl mx-auto">{description}</p>
+    </GlassCard>
   );
+}
+
+function stringValue(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return fallback;
+}
+
+function numberValue(value: unknown): string {
+  const number = Number(value ?? 0);
+  if (!Number.isFinite(number)) return "0";
+  return String(number);
+}
+
+function formatRate(value: unknown): string {
+  const number = Number(value ?? 0);
+  if (!Number.isFinite(number)) return "0%";
+  return `${Math.round(number * 100)}%`;
+}
+
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) return "just now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }

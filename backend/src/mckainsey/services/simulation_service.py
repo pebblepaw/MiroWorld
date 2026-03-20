@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from mckainsey.config import Settings
 from mckainsey.models.phase_a import PersonaFilterRequest
@@ -97,6 +98,9 @@ class SimulationService:
         personas: list[dict[str, Any]],
         events_path: Path | None = None,
         force_live: bool = False,
+        on_progress: Callable[[Path, int], None] | None = None,
+        elapsed_offset_seconds: int = 0,
+        tail_checkpoint_estimate_seconds: int = 0,
     ) -> dict[str, Any]:
         if force_live or self.settings.enable_real_oasis:
             result = self._run_oasis_with_inputs(
@@ -105,6 +109,9 @@ class SimulationService:
                 rounds=rounds,
                 personas=personas,
                 events_path=events_path,
+                on_progress=on_progress,
+                elapsed_offset_seconds=elapsed_offset_seconds,
+                tail_checkpoint_estimate_seconds=tail_checkpoint_estimate_seconds,
             )
             agents = result["agents"]
             interactions = result["interactions"]
@@ -112,6 +119,8 @@ class SimulationService:
             stage3a_approval_rate = float(result["stage3a_approval_rate"])
             stage3b_approval_rate = float(result["stage3b_approval_rate"])
             net_opinion_shift = float(result["net_opinion_shift"])
+            elapsed_seconds = int(result.get("elapsed_seconds", 0) or 0)
+            counters = dict(result.get("counters") or {})
         else:
             agents = self._build_agents(personas)
             interactions = []
@@ -125,6 +134,8 @@ class SimulationService:
             stage3b_approval_rate = _approval_rate(post)
             net_opinion_shift = (sum(post) / len(post)) - (sum(pre) / len(pre))
             runtime = "heuristic"
+            elapsed_seconds = 0
+            counters = {"posts": 0, "comments": 0, "reactions": 0, "active_authors": 0}
 
         self.store.upsert_simulation(simulation_id, policy_summary, rounds, len(agents), runtime=runtime)
         self.store.replace_agents(simulation_id, agents)
@@ -139,7 +150,141 @@ class SimulationService:
             "net_opinion_shift": net_opinion_shift,
             "sqlite_path": self.settings.simulation_db_path,
             "runtime": runtime,
+            "elapsed_seconds": elapsed_seconds,
+            "counters": counters,
         }
+
+    def build_context_bundles(
+        self,
+        *,
+        simulation_id: str,
+        policy_summary: str,
+        knowledge_artifact: dict[str, Any],
+        sampled_personas: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        node_lookup = {str(node.get("id")): node for node in knowledge_artifact.get("entity_nodes", [])}
+        canonical_lookup = {
+            str(node.get("canonical_key")): str(node.get("id"))
+            for node in knowledge_artifact.get("entity_nodes", [])
+            if node.get("canonical_key")
+        }
+        adjacency: dict[str, set[str]] = {}
+        for edge in knowledge_artifact.get("relationship_edges", []):
+            source = str(edge.get("source"))
+            target = str(edge.get("target"))
+            if source and target:
+                adjacency.setdefault(source, set()).add(target)
+                adjacency.setdefault(target, set()).add(source)
+
+        bundles: dict[str, dict[str, Any]] = {}
+        knowledge_summary = str(knowledge_artifact.get("summary", "")).strip()
+        for row in sampled_personas:
+            agent_id = str(row.get("agent_id"))
+            persona = dict(row.get("persona") or {})
+            reason = dict(row.get("selection_reason") or {})
+            matched_context_nodes: list[str] = []
+            graph_node_ids: list[str] = []
+
+            for facet_key in reason.get("matched_facets", []) or []:
+                facet_key = str(facet_key).strip()
+                if not facet_key:
+                    continue
+                matched_context_nodes.append(facet_key)
+                node_id = canonical_lookup.get(facet_key)
+                if node_id:
+                    graph_node_ids.append(node_id)
+
+            lowered_entities = {str(value).strip().lower() for value in (reason.get("matched_document_entities") or []) if str(value).strip()}
+            for node in knowledge_artifact.get("entity_nodes", []):
+                label = str(node.get("label", "")).strip()
+                if label and label.lower() in lowered_entities:
+                    graph_node_ids.append(str(node.get("id")))
+
+            expanded_ids = list(dict.fromkeys(graph_node_ids))
+            for node_id in list(expanded_ids):
+                for adjacent in sorted(adjacency.get(node_id, set())):
+                    if adjacent not in expanded_ids:
+                        expanded_ids.append(adjacent)
+
+            source_ids: list[str] = []
+            file_paths: list[str] = []
+            context_labels: list[str] = []
+            for node_id in expanded_ids:
+                node = node_lookup.get(node_id, {})
+                label = str(node.get("label", "")).strip()
+                if label:
+                    context_labels.append(label)
+                for source_id in node.get("source_ids", []) or []:
+                    text = str(source_id).strip()
+                    if text and text not in source_ids:
+                        source_ids.append(text)
+                for file_path in node.get("file_paths", []) or []:
+                    text = str(file_path).strip()
+                    if text and text not in file_paths:
+                        file_paths.append(text)
+
+            salient_labels = ", ".join(context_labels[:4]) or "general policy context"
+            brief = (
+                f"Simulation {simulation_id} policy summary: {policy_summary.strip()} "
+                f"Document context: {knowledge_summary} "
+                f"Relevant nodes: {salient_labels}. "
+                f"Persona profile: {json.dumps(persona, ensure_ascii=False)}."
+            ).strip()
+            bundles[agent_id] = {
+                "agent_id": agent_id,
+                "persona": persona,
+                "brief": brief,
+                "matched_context_nodes": matched_context_nodes,
+                "graph_node_ids": expanded_ids,
+                "provenance": {
+                    "source_ids": sorted(source_ids),
+                    "file_paths": sorted(file_paths),
+                },
+            }
+
+        return bundles
+
+    def run_opinion_checkpoint(
+        self,
+        *,
+        simulation_id: str,
+        checkpoint_kind: str,
+        policy_summary: str,
+        agent_context_bundles: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not agent_context_bundles:
+            return []
+        batch_size = 25
+        records: list[dict[str, Any]] = []
+        agent_ids = list(agent_context_bundles.keys())
+        for start in range(0, len(agent_ids), batch_size):
+            chunk_ids = agent_ids[start : start + batch_size]
+            bundle_chunk = [agent_context_bundles[agent_id] for agent_id in chunk_ids]
+            prompt = self._build_checkpoint_prompt(
+                simulation_id=simulation_id,
+                checkpoint_kind=checkpoint_kind,
+                policy_summary=policy_summary,
+                bundle_chunk=bundle_chunk,
+            )
+            raw = self.llm.complete_required(
+                prompt,
+                system_prompt=(
+                    "You classify the opinions of simulated Singapore residents about a policy. "
+                    "Return valid JSON only."
+                ),
+            )
+            parsed = _parse_json_payload(raw)
+            if not isinstance(parsed, list):
+                raise RuntimeError("Gemini must return a JSON array for opinion checkpoints.")
+            chunk_records = self._normalize_checkpoint_records(
+                simulation_id=simulation_id,
+                checkpoint_kind=checkpoint_kind,
+                parsed_records=parsed,
+                bundle_chunk=bundle_chunk,
+            )
+            records.extend(chunk_records)
+
+        return records
 
     def _run_oasis(self, req: SimulationRunRequest, personas: list[dict[str, Any]]) -> dict[str, Any]:
         return self._run_oasis_with_inputs(
@@ -158,6 +303,9 @@ class SimulationService:
         rounds: int,
         personas: list[dict[str, Any]],
         events_path: Path | None,
+        on_progress: Callable[[Path, int], None] | None = None,
+        elapsed_offset_seconds: int = 0,
+        tail_checkpoint_estimate_seconds: int = 0,
     ) -> dict[str, Any]:
         runner = Path(self.settings.oasis_runner_script)
         if not runner.is_absolute():
@@ -200,6 +348,8 @@ class SimulationService:
             "openai_base_url": self.settings.gemini_openai_base_url,
             "oasis_db_path": str(oasis_db),
             "events_path": str(events_path) if events_path else None,
+            "elapsed_offset_seconds": elapsed_offset_seconds,
+            "tail_checkpoint_estimate_seconds": tail_checkpoint_estimate_seconds,
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -256,12 +406,82 @@ class SimulationService:
                     if elapsed % heartbeat_every == 0:
                         log_file.write(f"heartbeat elapsed_seconds={elapsed}\n")
                         log_file.flush()
+                    if on_progress is not None and events_path is not None:
+                        on_progress(events_path, elapsed)
                     time.sleep(1)
 
             if not output_path.exists():
                 raise RuntimeError("OASIS runner completed but no output payload was produced.")
 
             return json.loads(output_path.read_text(encoding="utf-8"))
+
+    def _build_checkpoint_prompt(
+        self,
+        *,
+        simulation_id: str,
+        checkpoint_kind: str,
+        policy_summary: str,
+        bundle_chunk: list[dict[str, Any]],
+    ) -> str:
+        payload = [
+            {
+                "agent_id": bundle["agent_id"],
+                "brief": bundle["brief"],
+                "matched_context_nodes": bundle.get("matched_context_nodes", []),
+            }
+            for bundle in bundle_chunk
+        ]
+        return (
+            f"Simulation: {simulation_id}\n"
+            f"Checkpoint kind: {checkpoint_kind}\n"
+            f"Policy summary: {policy_summary}\n\n"
+            "For each agent, assess their stance on the policy and return JSON only using this schema:\n"
+            "[{\"agent_id\": str, \"stance_score\": number, \"stance_class\": \"approve|neutral|dissent\", "
+            "\"confidence\": number, \"primary_driver\": str, \"matched_context_nodes\": [str]}]\n\n"
+            f"Agents:\n{json.dumps(payload, ensure_ascii=False)}"
+        )
+
+    def _normalize_checkpoint_records(
+        self,
+        *,
+        simulation_id: str,
+        checkpoint_kind: str,
+        parsed_records: list[dict[str, Any]],
+        bundle_chunk: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        bundle_lookup = {bundle["agent_id"]: bundle for bundle in bundle_chunk}
+        normalized: list[dict[str, Any]] = []
+        for item in parsed_records:
+            if not isinstance(item, dict):
+                continue
+            agent_id = str(item.get("agent_id", "")).strip()
+            if not agent_id or agent_id not in bundle_lookup:
+                continue
+            score = float(item.get("stance_score", 0) or 0)
+            confidence = float(item.get("confidence", 0) or 0)
+            stance_class = str(item.get("stance_class", "")).strip().lower() or _stance_class_from_score(score)
+            matched_nodes = [
+                str(value).strip()
+                for value in (item.get("matched_context_nodes") or bundle_lookup[agent_id].get("matched_context_nodes") or [])
+                if str(value).strip()
+            ]
+            normalized.append(
+                {
+                    "simulation_id": simulation_id,
+                    "checkpoint_kind": checkpoint_kind,
+                    "agent_id": agent_id,
+                    "stance_score": round(max(0.0, min(1.0, score)), 4),
+                    "stance_class": stance_class,
+                    "confidence": round(max(0.0, min(1.0, confidence)), 4),
+                    "primary_driver": str(item.get("primary_driver", "")).strip() or "unspecified",
+                    "matched_context_nodes": matched_nodes,
+                }
+            )
+
+        missing = [bundle["agent_id"] for bundle in bundle_chunk if bundle["agent_id"] not in {record["agent_id"] for record in normalized}]
+        if missing:
+            raise RuntimeError(f"Opinion checkpoint response omitted agents: {', '.join(missing[:5])}")
+        return normalized
 
     def snapshot(self, simulation_id: str) -> dict[str, Any]:
         simulation = self.store.get_simulation(simulation_id)
@@ -384,3 +604,24 @@ def _approval_rate(scores: list[float]) -> float:
         return 0.0
     approved = [s for s in scores if s >= 7.0]
     return round(len(approved) / len(scores), 4)
+
+
+def _parse_json_payload(raw: str) -> Any:
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    if not cleaned.startswith("{") and not cleaned.startswith("["):
+        match = re.search(r"(\{.*\}|\[.*\])", cleaned, flags=re.DOTALL)
+        if match:
+            cleaned = match.group(1)
+    return json.loads(cleaned)
+
+
+def _stance_class_from_score(score: float) -> str:
+    if score >= 0.67:
+        return "approve"
+    if score <= 0.33:
+        return "dissent"
+    return "neutral"

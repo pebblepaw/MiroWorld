@@ -71,13 +71,33 @@ class SimulationStateResponse(BaseModel):
     status: str
     event_count: int
     last_round: int
+    platform: str | None = None
+    planned_rounds: int | None = None
+    current_round: int | None = None
+    elapsed_seconds: int | None = None
+    estimated_total_seconds: int | None = None
+    estimated_remaining_seconds: int | None = None
+    counters: dict[str, Any] = Field(default_factory=dict)
+    checkpoint_status: dict[str, Any] = Field(default_factory=dict)
+    top_threads: list[dict[str, Any]] = Field(default_factory=list)
+    discussion_momentum: dict[str, Any] = Field(default_factory=dict)
     latest_metrics: dict[str, Any] = Field(default_factory=dict)
     recent_events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ReportFullResponse(BaseModel):
     session_id: str
-    report: dict[str, Any]
+    status: str
+    generated_at: str | None = None
+    executive_summary: str | None = None
+    insight_cards: list[dict[str, Any]] = Field(default_factory=list)
+    support_themes: list[dict[str, Any]] = Field(default_factory=list)
+    dissent_themes: list[dict[str, Any]] = Field(default_factory=list)
+    demographic_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    influential_content: list[dict[str, Any]] = Field(default_factory=list)
+    recommendations: list[dict[str, Any]] = Field(default_factory=list)
+    risks: list[dict[str, Any]] = Field(default_factory=list)
+    error: str | None = None
 
 
 class ReportOpinionsResponse(BaseModel):

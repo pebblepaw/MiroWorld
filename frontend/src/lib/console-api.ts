@@ -140,6 +140,53 @@ export interface PopulationArtifact {
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 const DEFAULT_MODE: ConsoleMode = import.meta.env.VITE_BOOT_MODE === "live" ? "live" : "demo";
 
+export interface SimulationCounters {
+  posts: number;
+  comments: number;
+  reactions: number;
+  active_authors: number;
+}
+
+export interface SimulationCheckpointStatus {
+  status: string;
+  completed_agents: number;
+  total_agents: number;
+}
+
+export interface SimulationState {
+  session_id: string;
+  status: string;
+  event_count: number;
+  last_round: number;
+  platform?: string | null;
+  planned_rounds?: number | null;
+  current_round?: number | null;
+  elapsed_seconds?: number | null;
+  estimated_total_seconds?: number | null;
+  estimated_remaining_seconds?: number | null;
+  counters: SimulationCounters;
+  checkpoint_status: Record<string, SimulationCheckpointStatus>;
+  top_threads: Array<Record<string, unknown>>;
+  discussion_momentum: Record<string, unknown>;
+  latest_metrics: Record<string, unknown>;
+  recent_events: Array<Record<string, unknown>>;
+}
+
+export interface StructuredReportState {
+  session_id: string;
+  status: string;
+  generated_at?: string | null;
+  executive_summary?: string | null;
+  insight_cards: Array<Record<string, unknown>>;
+  support_themes: Array<Record<string, unknown>>;
+  dissent_themes: Array<Record<string, unknown>>;
+  demographic_breakdown: Array<Record<string, unknown>>;
+  influential_content: Array<Record<string, unknown>>;
+  recommendations: Array<Record<string, unknown>>;
+  risks: Array<Record<string, unknown>>;
+  error?: string | null;
+}
+
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
@@ -198,5 +245,42 @@ export async function previewPopulation(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  return parseJson(response);
+}
+
+export async function startSimulation(
+  sessionId: string,
+  payload: {
+    policy_summary: string;
+    rounds: number;
+    mode?: ConsoleMode;
+  },
+): Promise<SimulationState> {
+  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/simulation/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJson(response);
+}
+
+export async function getSimulationState(sessionId: string): Promise<SimulationState> {
+  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/simulation/state`);
+  return parseJson(response);
+}
+
+export function buildSimulationStreamUrl(sessionId: string): string {
+  return `${API_BASE}/api/v2/console/session/${sessionId}/simulation/stream`;
+}
+
+export async function generateReport(sessionId: string): Promise<StructuredReportState> {
+  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/report/generate`, {
+    method: "POST",
+  });
+  return parseJson(response);
+}
+
+export async function getStructuredReport(sessionId: string): Promise<StructuredReportState> {
+  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/report/full`);
   return parseJson(response);
 }
