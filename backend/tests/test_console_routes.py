@@ -17,7 +17,17 @@ def test_console_session_creation_and_knowledge_processing(monkeypatch, tmp_path
             "status": "created",
         }
 
-    async def fake_process_knowledge(self, session_id, *, document_text=None, source_path=None, demographic_focus=None, use_default_demo_document=False):
+    async def fake_process_knowledge(
+        self,
+        session_id,
+        *,
+        document_text=None,
+        source_path=None,
+        guiding_prompt,
+        demographic_focus=None,
+        use_default_demo_document=False,
+    ):
+        assert guiding_prompt == "focus on budget tradeoffs and transport"
         return {
             "session_id": session_id,
             "document": {
@@ -27,15 +37,32 @@ def test_console_session_creation_and_knowledge_processing(monkeypatch, tmp_path
             },
             "summary": "Budget support touches transport and seniors.",
             "entity_nodes": [
-                {"id": "policy:transport", "label": "Transport Support", "type": "policy"},
-                {"id": "group:seniors", "label": "Seniors", "type": "demographic"},
+                {
+                    "id": "policy:transport",
+                    "label": "Transport Support",
+                    "type": "policy",
+                    "description": "Support for transport affordability.",
+                    "weight": 0.9,
+                },
+                {
+                    "id": "group:seniors",
+                    "label": "Seniors",
+                    "type": "demographic",
+                    "description": "Older residents targeted by support.",
+                },
             ],
             "relationship_edges": [
-                {"source": "policy:transport", "target": "group:seniors", "type": "affects"},
+                {
+                    "source": "policy:transport",
+                    "target": "group:seniors",
+                    "type": "targets",
+                    "label": "Targets seniors",
+                },
             ],
             "entity_type_counts": {"policy": 1, "demographic": 1},
             "processing_logs": ["Parsed document", "Built graph"],
             "demographic_focus_summary": demographic_focus,
+            "guiding_prompt": guiding_prompt,
         }
 
     monkeypatch.setattr(ConsoleService, "create_session", fake_create_session)
@@ -50,13 +77,16 @@ def test_console_session_creation_and_knowledge_processing(monkeypatch, tmp_path
         json={
             "document_text": "Singapore budget support for transport and seniors.",
             "demographic_focus": "seniors in Woodlands",
+            "guiding_prompt": "focus on budget tradeoffs and transport",
         },
     )
     assert knowledge.status_code == 200, knowledge.text
     body = knowledge.json()
     assert body["session_id"] == "session-a"
     assert body["entity_type_counts"]["policy"] == 1
-    assert body["relationship_edges"][0]["type"] == "affects"
+    assert body["relationship_edges"][0]["type"] == "targets"
+    assert body["entity_nodes"][0]["description"] == "Support for transport affordability."
+    assert body["guiding_prompt"] == "focus on budget tradeoffs and transport"
 
 
 def test_console_population_preview_route(monkeypatch):
@@ -104,7 +134,17 @@ def test_console_population_preview_route(monkeypatch):
 
 
 def test_console_knowledge_upload_route_parses_pdf(monkeypatch):
-    async def fake_process_knowledge(self, session_id, *, document_text=None, source_path=None, demographic_focus=None, use_default_demo_document=False):
+    async def fake_process_knowledge(
+        self,
+        session_id,
+        *,
+        document_text=None,
+        source_path=None,
+        guiding_prompt,
+        demographic_focus=None,
+        use_default_demo_document=False,
+    ):
+        assert guiding_prompt == "map policies to transport affordability"
         assert "transport" in (document_text or "").lower()
         assert source_path and source_path.endswith(".pdf")
         return {
@@ -115,11 +155,21 @@ def test_console_knowledge_upload_route_parses_pdf(monkeypatch):
                 "text_length": len(document_text or ""),
             },
             "summary": "Parsed uploaded PDF.",
-            "entity_nodes": [],
-            "relationship_edges": [],
+            "entity_nodes": [
+                {"id": "policy:transport", "label": "Transport", "type": "policy", "weight": 0.8}
+            ],
+            "relationship_edges": [
+                {
+                    "source": "policy:transport",
+                    "target": "group:seniors",
+                    "type": "funds",
+                    "label": "Funds transport support for seniors",
+                }
+            ],
             "entity_type_counts": {},
             "processing_logs": ["Uploaded file parsed"],
             "demographic_focus_summary": demographic_focus,
+            "guiding_prompt": guiding_prompt,
         }
 
     monkeypatch.setattr(ConsoleService, "process_knowledge", fake_process_knowledge)
@@ -128,7 +178,10 @@ def test_console_knowledge_upload_route_parses_pdf(monkeypatch):
     with sample_pdf.open("rb") as handle:
         response = client.post(
             "/api/v2/console/session/session-a/knowledge/upload",
-            data={"demographic_focus": "seniors in Woodlands"},
+            data={
+                "demographic_focus": "seniors in Woodlands",
+                "guiding_prompt": "map policies to transport affordability",
+            },
             files={"file": (sample_pdf.name, handle, "application/pdf")},
         )
 
@@ -137,6 +190,7 @@ def test_console_knowledge_upload_route_parses_pdf(monkeypatch):
     assert body["session_id"] == "session-a"
     assert body["document"]["source_path"].endswith(".pdf")
     assert body["summary"] == "Parsed uploaded PDF."
+    assert body["relationship_edges"][0]["label"] == "Funds transport support for seniors"
 
 
 def test_console_interaction_hub_chat_routes(monkeypatch):

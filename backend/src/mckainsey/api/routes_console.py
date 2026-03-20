@@ -46,6 +46,7 @@ async def process_knowledge(
         session_id,
         document_text=req.document_text,
         source_path=req.source_path,
+        guiding_prompt=req.guiding_prompt,
         demographic_focus=req.demographic_focus,
         use_default_demo_document=req.use_default_demo_document,
     )
@@ -56,12 +57,14 @@ async def process_knowledge(
 async def upload_knowledge(
     session_id: str,
     file: UploadFile = File(...),
+    guiding_prompt: str | None = Form(default=None),
     demographic_focus: str | None = Form(default=None),
     settings: Settings = Depends(get_settings),
 ) -> KnowledgeArtifactResponse:
     payload = await ConsoleService(settings).process_uploaded_knowledge(
         session_id,
         upload=file,
+        guiding_prompt=guiding_prompt,
         demographic_focus=demographic_focus,
     )
     return KnowledgeArtifactResponse(**payload)

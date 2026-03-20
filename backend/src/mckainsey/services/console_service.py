@@ -49,6 +49,7 @@ class ConsoleService:
         *,
         document_text: str | None = None,
         source_path: str | None = None,
+        guiding_prompt: str | None = None,
         demographic_focus: str | None = None,
         use_default_demo_document: bool = False,
     ) -> dict[str, Any]:
@@ -73,9 +74,11 @@ class ConsoleService:
             simulation_id=session_id,
             document_text=resolved_text,
             source_path=resolved_source,
+            guiding_prompt=guiding_prompt,
             demographic_focus=demographic_focus,
         )
         artifact["session_id"] = session_id
+        artifact["guiding_prompt"] = guiding_prompt
         self.store.save_knowledge_artifact(session_id, artifact)
         self.store.upsert_console_session(session_id=session_id, mode=session.get("mode", "demo") if session else "demo", status="knowledge_ready")
         return artifact
@@ -85,6 +88,7 @@ class ConsoleService:
         session_id: str,
         *,
         upload: UploadFile,
+        guiding_prompt: str | None = None,
         demographic_focus: str | None = None,
     ) -> dict[str, Any]:
         filename = upload.filename or "uploaded-document"
@@ -109,6 +113,7 @@ class ConsoleService:
             session_id,
             document_text=document_text,
             source_path=str(stored_path),
+            guiding_prompt=guiding_prompt,
             demographic_focus=demographic_focus,
         )
 

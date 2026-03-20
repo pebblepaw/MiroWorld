@@ -17,6 +17,7 @@ class ConsoleSessionResponse(BaseModel):
 class ConsoleKnowledgeProcessRequest(BaseModel):
     document_text: str | None = None
     source_path: str | None = None
+    guiding_prompt: str | None = None
     demographic_focus: str | None = None
     use_default_demo_document: bool = False
 
@@ -25,6 +26,7 @@ class KnowledgeArtifactResponse(BaseModel):
     session_id: str
     document: dict[str, Any]
     summary: str
+    guiding_prompt: str | None = None
     entity_nodes: list[dict[str, Any]]
     relationship_edges: list[dict[str, Any]]
     entity_type_counts: dict[str, int]
