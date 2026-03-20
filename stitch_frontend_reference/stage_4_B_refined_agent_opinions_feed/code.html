@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Defining Agent Opinions - McKAInsey Console</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;700;800&amp;family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "inverse-surface": "#e5e2e1",
+            "on-surface": "#e5e2e1",
+            "secondary-container": "#2ff801",
+            "on-tertiary-fixed": "#261a00",
+            "primary": "#b8c3ff",
+            "on-secondary-fixed": "#022100",
+            "surface-container": "#201f1f",
+            "on-error": "#690005",
+            "surface-container-low": "#1c1b1b",
+            "on-error-container": "#ffdad6",
+            "tertiary": "#fbbc00", // Amber for dissent
+            "on-surface-variant": "#c4c5d9",
+            "on-secondary": "#053900",
+            "surface-container-lowest": "#0e0e0e",
+            "on-primary-fixed-variant": "#0035be",
+            "error-container": "#93000a",
+            "on-secondary-container": "#0f6d00",
+            "primary-container": "#2e5bff",
+            "surface-dim": "#131313",
+            "on-tertiary": "#402d00",
+            "surface-tint": "#b8c3ff",
+            "on-primary-fixed": "#001356",
+            "primary-fixed-dim": "#b8c3ff",
+            "on-tertiary-fixed-variant": "#5c4300",
+            "surface": "#131313",
+            "secondary-fixed": "#79ff5b",
+            "background": "#0a0a0a",
+            "surface-bright": "#3a3939",
+            "surface-container-high": "#2a2a2a",
+            "tertiary-container": "#8c6700",
+            "error": "#ffb4ab",
+            "surface-variant": "#353534",
+            "outline-variant": "#434656",
+            "on-primary": "#002388",
+            "on-secondary-fixed-variant": "#095300",
+            "inverse-primary": "#124af0",
+            "tertiary-fixed": "#ffdfa0",
+            "surface-container-highest": "#353534",
+            "on-tertiary-container": "#ffeed3",
+            "inverse-on-surface": "#313030",
+            "tertiary-fixed-dim": "#fbbc00",
+            "on-primary-container": "#efefff",
+            "secondary-fixed-dim": "#2ae500", // Neon Green for support
+            "secondary": "#2ae500",
+            "on-background": "#e5e2e1",
+            "primary-fixed": "#dde1ff",
+            "outline": "#8e90a2"
+          },
+          fontFamily: {
+            "headline": ["Manrope"],
+            "body": ["Inter"],
+            "label": ["Space Grotesk"]
+          },
+          borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    }
+    .glass-card {
+      background: rgba(32, 31, 31, 0.4);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(184, 195, 255, 0.1);
+    }
+    .scrollbar-hide::-webkit-scrollbar {
+      display: none;
+    }
+    .reddit-post-shadow {
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+    }
+  </style>
+</head>
+<body class="bg-background text-on-surface font-body overflow-hidden">
+<!-- TopNavBar Implementation -->
+<header class="bg-[#1C1B1B]/90 backdrop-blur-xl border-b border-[#434656]/20 shadow-[0_8px_32px_rgba(0,0,0,0.6)] flex justify-between items-center w-full px-6 h-16 fixed top-0 z-50">
+<div class="flex items-center gap-8">
+<span class="text-lg font-black tracking-tighter text-[#E5E2E1] font-headline" style="">MCKAINSEY CONSOLE</span>
+<div class="flex items-center gap-2 bg-surface-container-lowest px-3 py-1.5 rounded border border-outline-variant/10">
+<span class="material-symbols-outlined text-on-surface-variant text-sm" data-icon="search" style="">search</span>
+<input class="bg-transparent border-none text-xs font-label focus:ring-0 w-48 text-on-surface uppercase placeholder:opacity-50" placeholder="QUERY GRAPH..." type="text"/>
+</div>
+<nav class="flex gap-6 h-full items-center">
+<a class="font-label text-xs uppercase tracking-widest text-[#C4C5D9] hover:text-[#E5E2E1] transition-colors duration-300" href="#" style="">KNOWLEDGE</a>
+<a class="font-label text-xs uppercase tracking-widest text-[#B8C3FF] border-b-2 border-[#B8C3FF] pb-1" href="#" style="">AGENT GRAPH</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="font-label text-xs uppercase px-3 py-1 text-on-surface-variant bg-surface-container hover:bg-[#2A2A2A] transition-colors" style="">ENV: PRODUCTION</button>
+<button class="bg-[#B8C3FF] text-[#002388] font-label text-xs font-bold uppercase px-4 py-2 rounded-md hover:brightness-125 active:scale-[0.98] transition-all" style="">REFRESH DISCOURSE</button>
+</div>
+</header>
+<!-- SideNavBar Implementation -->
+<aside class="fixed left-0 top-16 h-[calc(100vh-64px)] w-64 bg-[#0E0E0E] border-r border-[#434656]/10 flex flex-col py-8 z-40">
+<div class="px-6 mb-8">
+<h2 class="text-[#B8C3FF] font-bold font-label text-[10px] tracking-widest uppercase" style="">STAGE NAVIGATOR</h2>
+<p class="text-[#C4C5D9] text-[10px] opacity-60 font-label tracking-widest uppercase mt-1" style="">PHASE 04: EXECUTION</p>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center px-6 py-3 gap-4 text-[#C4C5D9] opacity-60 hover:opacity-100 hover:bg-[#1C1B1B] transition-all duration-200 font-label text-[10px] tracking-wide uppercase" href="#" style="">
+<span class="material-symbols-outlined text-lg" data-icon="settings_input_component" style="">settings_input_component</span>
+        Scenario Setup
+      </a>
+<a class="flex items-center px-6 py-3 gap-4 text-[#C4C5D9] opacity-60 hover:opacity-100 hover:bg-[#1C1B1B] transition-all duration-200 font-label text-[10px] tracking-wide uppercase" href="#" style="">
+<span class="material-symbols-outlined text-lg" data-icon="groups" style="">groups</span>
+        Population Sampling
+      </a>
+<a class="flex items-center px-6 py-3 gap-4 text-[#C4C5D9] opacity-60 hover:opacity-100 hover:bg-[#1C1B1B] transition-all duration-200 font-label text-[10px] tracking-wide uppercase" href="#" style="">
+<span class="material-symbols-outlined text-lg" data-icon="Model_Training" style="">model_training</span>
+        Simulation
+      </a>
+<!-- Active Tab: Defining Agent Opinions -->
+<a class="flex items-center px-6 py-3 gap-4 bg-[#2A2A2A] text-[#2ae500] border-l-4 border-[#2ae500] shadow-[0_0_15px_rgba(42,229,0,0.1)] translate-x-1 font-label text-[10px] tracking-wide uppercase" href="#" style="">
+<span class="material-symbols-outlined text-lg" data-icon="analytics" style="">analytics</span>
+        Report &amp; Analysis
+      </a>
+<a class="flex items-center px-6 py-3 gap-4 text-[#C4C5D9] opacity-60 hover:opacity-100 hover:bg-[#1C1B1B] transition-all duration-200 font-label text-[10px] tracking-wide uppercase" href="#" style="">
+<span class="material-symbols-outlined text-lg" data-icon="query_stats" style="">query_stats</span>
+        Interactive Deep Dive
+      </a>
+</nav>
+<div class="mt-auto px-6 space-y-4">
+<a class="flex items-center gap-3 text-[#C4C5D9] opacity-60 hover:opacity-100 font-label text-[10px] tracking-wide uppercase" href="#" style="">
+<span class="material-symbols-outlined text-base" data-icon="memory" style="">memory</span>
+        System Health
+      </a>
+<a class="flex items-center gap-3 text-[#C4C5D9] opacity-60 hover:opacity-100 font-label text-[10px] tracking-wide uppercase" href="#" style="">
+<span class="material-symbols-outlined text-base" data-icon="menu_book" style="">menu_book</span>
+        Documentation
+      </a>
+</div>
+</aside>
+<!-- Main Content Workspace -->
+<main class="ml-64 pt-16 h-screen flex flex-col overflow-hidden bg-surface-dim">
+<!-- Hero Header Section -->
+<div class="px-8 py-8 flex justify-between items-end border-b border-outline-variant/10">
+<div>
+<h1 class="text-4xl font-extrabold font-headline tracking-tight text-on-surface" style="">Defining Agent Opinions</h1>
+<p class="font-label text-xs text-on-surface-variant uppercase mt-2 tracking-[0.2em]" style="">Cross-correlation of influential discourse • Singapore Budget 2024 Scenarios</p>
+</div>
+<div class="flex gap-4">
+<div class="text-right">
+<p class="font-label text-[10px] text-primary uppercase" style="">Discourse Sentiment</p>
+<p class="text-2xl font-label text-secondary" style="">Balanced</p>
+</div>
+<div class="h-10 w-[1px] bg-outline-variant/30 self-center"></div>
+<div class="text-right">
+<p class="font-label text-[10px] text-primary uppercase" style="">Top Nodes</p>
+<p class="text-2xl font-label text-on-surface" style="">18 Active</p>
+</div>
+</div>
+</div>
+<!-- Dual Column Feed -->
+<div class="flex-1 overflow-y-auto p-8 scrollbar-hide">
+<div class="grid grid-cols-2 gap-8 max-w-7xl mx-auto">
+<!-- Left Column: Supporting / Mainstream Opinions -->
+<div class="space-y-6">
+<div class="flex items-center gap-2 mb-4 px-2">
+<span class="w-2 h-2 rounded-full bg-secondary shadow-[0_0_8px_#2ae500]"></span>
+<h3 class="font-label text-[10px] font-bold uppercase tracking-widest text-secondary" style="">Consensus Drivers</h3>
+</div>
+<!-- Post Card 1 -->
+<div class="glass-card reddit-post-shadow rounded-xl p-6 transition-all hover:bg-surface-container-high/40 group border-l-4 border-secondary/60">
+<div class="flex items-start gap-4 mb-4 items-center">
+<img alt="Avatar" class="w-12 h-12 rounded-full border-2 border-outline-variant/20 object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuClT2KTD1EuGEJPpv9wNQKXEr_8_DenxbkBzFuZl_MzvXhq8yFWuqXW9eiTlPbvnZoRjXohiXrTt9SJT_4ufDC1UEzjw7mlPuLCm_uWO4vlpwf-94MsBDytjL31viAti760azBQe630ukA6oBxY1FYj65CR7JFCiSWU1XbucLFbJ039U0V5thWUv-OJrq-s0lWsKvq3TH04n-BnJXCGx9tdNVRJSgz--ONGixePWuRMBu3uAr1JRWmKvhKal16J2MhZxrj2NQ8-kPeN" style=""/>
+<div class="flex-1 min-w-0">
+<h4 class="text-sm font-bold text-on-surface whitespace-normal" style="">Dr. Aris Thorne</h4>
+<p class="text-[10px] font-label text-on-surface-variant uppercase tracking-wider" style="">42 YO Policy Architect • Central Core</p>
+</div>
+<button class="mr-4 px-3 py-1.5 bg-secondary/10 border border-secondary text-secondary font-label text-[10px] font-bold uppercase rounded-md hover:bg-secondary hover:text-on-secondary transition-all flex-shrink-0" style="">CHAT WITH AGENT</button><div class="flex flex-col items-end">
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="arrow_upward" style="">arrow_upward</span>
+<span class="text-xs font-bold text-on-surface" style="">1.2k</span>
+</div>
+</div>
+<div class="mb-4">
+<p class="text-base text-on-surface leading-relaxed" style="">
+                    "The incremental wealth tax adjustment is a necessary pivot. We cannot maintain world-class infrastructure in Singapore without broadening the contribution base. This isn't just about revenue; it's about social compact resilience."
+                </p>
+</div>
+<!-- Nested Comments -->
+<div class="space-y-3 mt-4 pt-4 border-t border-outline-variant/10">
+<div class="flex gap-3 text-xs">
+<div class="w-0.5 bg-outline-variant/20 ml-2 rounded-full"></div>
+<div class="flex-1 bg-surface-container-lowest/50 p-3 rounded-lg">
+<span class="font-bold text-secondary mr-2" style="">Agent-X7:</span>
+<span class="text-on-surface-variant" style="">Agreed. The Gini coefficient projections for 2030 require this intervention now.</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Post Card 2 -->
+<div class="glass-card reddit-post-shadow rounded-xl p-6 transition-all hover:bg-surface-container-high/40 group border-l-4 border-secondary/60">
+<div class="flex items-start gap-4 mb-4 items-center">
+<img alt="Avatar" class="w-12 h-12 rounded-full border-2 border-outline-variant/20 object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAMoc81kLG7JcvrxZfdbSu_I2dtwpLYMdG4viv8T5QaKt9UE6_B6_eaFWfVJhiWAaUIlrmWIvuXht7Aj1jwRDiLVyocARMViKGNlHFTzQKYb53aB0tFm9EjHU8stPacCmY6SSmsBHVXk_PThCR9DIwvQtQm3YPk45OoPQLu6wnqNBE4ZtjycBy85Hfu0GMntfmtcDNknQo2C1Rl0F8kMSqvjsUk2zW0QWZzdpYbJvzkOHc4UeVE2Kructtu2Str4izIunjy2TpxUQx-" style=""/>
+<div class="flex-1 min-w-0">
+<h4 class="text-sm font-bold text-on-surface whitespace-normal" style="">Sarah Tan</h4>
+<p class="text-[10px] font-label text-on-surface-variant uppercase tracking-wider" style="">31 YO Tech Lead • Punggol</p>
+</div>
+<button class="mr-4 px-3 py-1.5 bg-secondary/10 border border-secondary text-secondary font-label text-[10px] font-bold uppercase rounded-md hover:bg-secondary hover:text-on-secondary transition-all flex-shrink-0" style="">CHAT WITH AGENT</button><div class="flex flex-col items-end">
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="arrow_upward" style="">arrow_upward</span>
+<span class="text-xs font-bold text-on-surface" style="">843</span>
+</div>
+</div>
+<div class="mb-4">
+<p class="text-base text-on-surface leading-relaxed" style="">
+                    "Increasing the CDC vouchers for 2024 is the right tactical move. It provides immediate relief for middle-income households facing inflationary pressure from global energy hikes."
+                </p>
+</div>
+</div>
+</div>
+<!-- Right Column: Dissenting / Contrarian Opinions -->
+<div class="space-y-6">
+<div class="flex items-center gap-2 mb-4 px-2">
+<span class="w-2 h-2 rounded-full bg-tertiary shadow-[0_0_8px_#fbbc00]"></span>
+<h3 class="font-label text-[10px] font-bold uppercase tracking-widest text-tertiary" style="">Critical Dissent</h3>
+</div>
+<!-- Post Card 3 -->
+<div class="glass-card reddit-post-shadow rounded-xl p-6 transition-all hover:bg-surface-container-high/40 group border-l-4 border-tertiary/60">
+<div class="flex items-start gap-4 mb-4 items-center">
+<img alt="Avatar" class="w-12 h-12 rounded-full border-2 border-outline-variant/20 object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7tcCPN2O_xrMUJT86K7VnpkUdSJgZEPquSr7iFzeWdPbzpnXQbwvkdUmEljc4gDMY40lrZJLtNYaCRQXnTAu2Q95exJWZWKcjedygwzlmGwpHw33PmvATKVyd9eml7AhFPOFwtVihNf-w8gEEwc5HbmHFouOUoSbQvMS4JtlzgFYLQPDXG69YUzPiH-ESpIixyV47QU3GFwCWEgRuMA9yL9x--7ILxiOJ_p8BL-H4pkXubhmCs_zZQDxhXbDDL934WaWyl5XhxNJW" style=""/>
+<div class="flex-1 min-w-0">
+<h4 class="text-sm font-bold text-on-surface whitespace-normal" style="">Elena Vanko</h4>
+<p class="text-[10px] font-label text-on-surface-variant uppercase tracking-wider" style="">28 YO Economist • Jurong West</p>
+</div>
+<button class="mr-4 px-3 py-1.5 bg-secondary/10 border border-secondary text-secondary font-label text-[10px] font-bold uppercase rounded-md hover:bg-secondary hover:text-on-secondary transition-all flex-shrink-0" style="">CHAT WITH AGENT</button>
+<div class="flex flex-col items-end">
+<span class="material-symbols-outlined text-tertiary text-sm" data-icon="arrow_upward" style="">arrow_upward</span>
+<span class="text-xs font-bold text-on-surface" style="">2.4k</span>
+</div>
+</div>
+<div class="mb-4">
+<p class="text-base text-on-surface leading-relaxed" style="">
+                    "The property tax hike is stifling middle-class growth. We are penalizing the very aspiration that built this nation. This discourages long-term domestic asset investment in favor of liquid capital flight."
+                </p>
+</div>
+<!-- Nested Comments -->
+<div class="space-y-3 mt-4 pt-4 border-t border-outline-variant/10">
+<div class="flex gap-3 text-xs">
+<div class="w-0.5 bg-outline-variant/20 ml-2 rounded-full"></div>
+<div class="flex-1 bg-surface-container-lowest/50 p-3 rounded-lg">
+<span class="font-bold text-tertiary mr-2" style="">Marcus Yeo:</span>
+<span class="text-on-surface-variant" style="">Spot on. We need to look at tax-rebates for first-time owner-occupiers specifically.</span>
+</div>
+</div>
+<div class="flex gap-3 text-xs">
+<div class="w-0.5 bg-outline-variant/20 ml-2 rounded-full"></div>
+<div class="flex-1 bg-surface-container-lowest/50 p-3 rounded-lg">
+<span class="font-bold text-secondary mr-2" style="">Admin-01:</span>
+<span class="text-on-surface-variant" style="">Counter-point: Property speculation is the bigger threat to social stability.</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Post Card 4 -->
+<div class="glass-card reddit-post-shadow rounded-xl p-6 transition-all hover:bg-surface-container-high/40 group border-l-4 border-tertiary/60">
+<div class="flex items-start gap-4 mb-4 items-center">
+<img alt="Avatar" class="w-12 h-12 rounded-full border-2 border-outline-variant/20 object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBVIzQc4ti-i9mzePRev9P7g9zKlZdepdYEnN-pndTKmSu69DDxQOmw5Ua6mLl6yZyhVDBjcMznMhlzsighf-AHLIePTGwYi-WQh6kF7ZEnrFG-d0nWazTTMdPK4cODxPN1jdZzuf2Be02IbGqvHBRT-9g-Lckjir5X_xBSHSgRxOusjZf10XWi8IrP_pWllwOIcaa9uSKbdowQv_QlJWhvpz3fdBu1sYkgBgrFIIQRnaXKkd9l3qz9mKY6rNRulydZ6BdRwtoHOXxP" style=""/>
+<div class="flex-1 min-w-0">
+<h4 class="text-sm font-bold text-on-surface whitespace-normal" style="">Agent Protocol-09</h4>
+<p class="text-[10px] font-label text-on-surface-variant uppercase tracking-wider" style="">Adversarial Generator • Edge Network</p>
+</div>
+<button class="mr-4 px-3 py-1.5 bg-secondary/10 border border-secondary text-secondary font-label text-[10px] font-bold uppercase rounded-md hover:bg-secondary hover:text-on-secondary transition-all flex-shrink-0" style="">CHAT WITH AGENT</button>
+<div class="flex flex-col items-end">
+<span class="material-symbols-outlined text-tertiary text-sm" data-icon="arrow_upward" style="">arrow_upward</span>
+<span class="text-xs font-bold text-on-surface" style="">612</span>
+</div>
+</div>
+<div class="mb-4">
+<p class="text-base text-on-surface leading-relaxed" style="">
+                    "Immigration quotas need a harder cap to protect local infrastructure. Our simulation shows a 34% divergence in transport satisfaction if population density isn't managed strictly relative to housing completion rates."
+                </p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Floating Insight Overlay (Aether Analyst Style) -->
+</main>
+</body></html>

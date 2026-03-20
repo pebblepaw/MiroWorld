@@ -1,5 +1,9 @@
 from functools import lru_cache
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -12,6 +16,8 @@ class Settings(BaseSettings):
     app_name: str = "McKAInsey API"
     nemotron_dataset: str = "nvidia/Nemotron-Personas-Singapore"
     nemotron_split: str = "train"
+    nemotron_cache_dir: str = "data/nemotron"
+    nemotron_download_workers: int = 4
 
     # The repo currently uses GEMINI_API and ZEP_CLOUD key names. We support
     # both legacy and canonical names to avoid breaking existing local setup.
@@ -43,6 +49,35 @@ class Settings(BaseSettings):
     planning_area_geojson_cache_path: str = "data/geo/planning_area_boundaries.geojson"
 
     frontend_dist_path: str = "../frontend/dist"
+    console_demo_output_path: str = "data/demo-output.json"
+    console_demo_frontend_output_path: str = "../frontend/public/demo-output.json"
+    console_upload_dir: str = "data/uploads"
+    simulation_stream_heartbeat_seconds: int = 5
+    simulation_stream_replay_limit: int = 500
+
+    def model_post_init(self, __context) -> None:  # type: ignore[override]
+        path_fields = [
+            "lightrag_workdir",
+            "demo_default_policy_markdown",
+            "simulation_db_path",
+            "oasis_python_bin",
+            "oasis_runner_script",
+            "oasis_db_dir",
+            "oasis_run_log_dir",
+            "planning_area_geojson_cache_path",
+            "frontend_dist_path",
+            "console_demo_output_path",
+            "console_demo_frontend_output_path",
+            "console_upload_dir",
+            "nemotron_cache_dir",
+        ]
+        for field in path_fields:
+            value = getattr(self, field)
+            if not value:
+                continue
+            path = Path(value)
+            if not path.is_absolute():
+                setattr(self, field, str((BACKEND_DIR / path).resolve()))
 
     @property
     def resolved_gemini_key(self) -> str | None:

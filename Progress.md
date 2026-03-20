@@ -2,16 +2,22 @@
 
 ## Global Status
 **Project:** McKAInsey — AI-Powered Population Simulation Consulting Service
-**Status:** Phase A-F implementation completed locally with integrated backend/frontend pipeline, test evidence, and benchmark evidence.
+**Status:** Phase A-G implementation completed locally with live console contracts, real uploaded-document parsing, live Nemotron sampling, native OASIS streaming, and verified Stage 5 Gemini + Zep Cloud chat.
 
-## Known Follow-Up Gaps
-- Frontend Stage 1 currently runs knowledge processing with default demo document mode.
-- Custom document upload/input controls are not yet wired to send `document_text` or `source_path` to the Phase A knowledge endpoint.
+## Current Operator Status
+- `./quick_start.sh --mode demo` remains the supported demo launcher path.
+- `./quick_start.sh --mode live --real-oasis` is the supported live launcher path when the OASIS Python 3.11 sidecar is available.
+- Stage 1 accepts real uploaded files (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.json`, `.csv`, `.yaml`, `.yml`) and persists screen-ready knowledge artifacts.
+- Stage 2 uses a real document-aware relevance scorer plus balanced hybrid sampling over the Nemotron Singapore dataset.
+- Stage 3 runs native OASIS and streams live events into the console.
+- Stage 5 report chat and agent chat now make real Gemini and Zep Cloud API calls. No placeholder UI handlers remain.
 
-## Recently Completed Reliability Improvements
-- Added same-site boot-mode control (`auto`, `demo`, `live`) through `quick_start.sh --mode` and frontend bootstrap behavior.
-- Implemented actual Knowledge Graph and Persona Graph rendering in frontend graph toggle panel.
-- Added explicit Stage 4 report loading controls and empty-state feedback to prevent silent blank report views.
+## Recently Completed Console Rebuild
+- Replaced the inherited dashboard with the 7-screen McKAInsey console shell.
+- Added `/api/v2/console/...` screen-shaped backend contracts for knowledge, sampling, live simulation, report, and interaction hub flows.
+- Added local parquet-backed Nemotron retrieval for faster live sampling and deterministic local operation.
+- Added SSE-backed simulation event streaming and persisted simulation state snapshots.
+- Regenerated the demo-cache pipeline so demo and live share the same screen contracts.
 
 ## Phase Checklist
 - [x] Phase A — Data Pipeline & LightRAG Integration — [progress/phaseA.md](progress/phaseA.md)
@@ -20,6 +26,7 @@
 - [x] Phase D — ReportAgent & Analysis Pipeline — [progress/phaseD.md](progress/phaseD.md)
 - [x] Phase E — Dashboard & Frontend — [progress/phaseE.md](progress/phaseE.md)
 - [x] Phase F — Integration Testing & Evaluation — [progress/phaseF.md](progress/phaseF.md)
+- [x] Phase G — McKAInsey Console Rebuild & Real-Time Validation — [progress/phaseG.md](progress/phaseG.md)
 
 ## Feature and Subtask Checklists
 
@@ -87,3 +94,14 @@
 - [x] F3 Cost comparison (cached vs uncached, batched vs unbatched) - baseline instrumentation delivered
 - [x] F4 Simulation quality analysis baseline
 - [x] F5 Final documentation updates
+
+### Phase G — McKAInsey Console Rebuild & Real-Time Validation
+- [x] G1 Replace legacy dashboard with the 7-screen McKAInsey console shell
+- [x] G2 Add `/api/v2/console` backend contracts for all primary screens
+- [x] G3 Implement real Stage 1 uploaded file parsing and knowledge artifact persistence
+- [x] G4 Implement real Stage 2 document-aware Nemotron sampling with balanced hybrid selection
+- [x] G5 Implement native OASIS live event streaming for Stage 3
+- [x] G6 Split Stage 4 into full report, opinions, and friction-map contracts
+- [x] G7 Implement real Stage 5 report chat and agent chat with Gemini + Zep Cloud
+- [x] G8 Add Playwright coverage for demo and live console boot paths
+- [x] G9 Verify a real multi-round OASIS run end-to-end from console session to Stage 5 chat

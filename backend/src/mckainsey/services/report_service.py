@@ -6,6 +6,7 @@ from typing import Any
 
 from mckainsey.config import Settings
 from mckainsey.services.llm_client import GeminiChatClient
+from mckainsey.services.memory_service import MemoryService
 from mckainsey.services.storage import SimulationStore
 
 
@@ -14,6 +15,7 @@ class ReportService:
         self.settings = settings
         self.store = SimulationStore(settings.simulation_db_path)
         self.llm = GeminiChatClient(settings)
+        self.memory = MemoryService(settings)
 
     def build_report(self, simulation_id: str) -> dict[str, Any]:
         cached = self.store.get_cached_report(simulation_id)
@@ -187,6 +189,28 @@ class ReportService:
                 "Use recommendations tab for cohort-specific mitigation actions."
             )
         return response
+
+    def report_chat_payload(self, simulation_id: str, message: str) -> dict[str, Any]:
+        report = self.build_report(simulation_id)
+        zep_context = self.memory.search_simulation_context(simulation_id, message, limit=8)
+        zep_excerpt = "\n".join(
+            f"- {item['content']}"
+            for item in zep_context["episodes"][:6]
+        )
+        prompt = (
+            f"Report JSON:\n{report}\n\n"
+            f"Relevant Zep Cloud memory search results:\n{zep_excerpt or '- none'}\n\n"
+            f"User asks: {message}\n"
+            "Provide a direct, data-grounded answer with concrete cohort references."
+        )
+        response = self.llm.complete_required(prompt, system_prompt="You are McKAInsey ReportAgent.")
+        return {
+            "session_id": simulation_id,
+            "simulation_id": simulation_id,
+            "response": response,
+            "gemini_model": self.settings.gemini_model,
+            "zep_context_used": zep_context["zep_context_used"],
+        }
 
     def _recommend(
         self,

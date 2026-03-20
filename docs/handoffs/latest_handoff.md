@@ -1,86 +1,76 @@
 # Latest Handoff
 
-**Date:** 2026-03-19
-**Session:** Final hardening + real OASIS validation + Playwright interaction completion + operator quick-start handoff + frontend reliability pass
+**Date:** 2026-03-20
+**Session:** McKAInsey console rebuild completion + real Stage 1 upload flow + real Stage 5 Gemini/Zep chat + native OASIS live verification
 
-## What Changed (this session)
-- Hardened native OASIS sidecar execution in `SimulationService`:
-	- absolute path resolution, timeout/heartbeat, and per-run OASIS logs.
-- Added deterministic fallback behavior for model quota/availability in:
-	- report generation/chat and agent chat response paths.
-- Improved planning-area GeoJSON retrieval reliability:
-	- retry strategy and request headers for Data.gov fetch pipeline.
-- Fixed dashboard opinion-flow Sankey payload to acyclic graph shape:
-	- split Stage 3 buckets into Stage3a -> Stage3b node layers.
-- Expanded demo generation script with staged artifacts and resumable behavior:
-	- writes `backend/data/demo-run/01..06_*.json`, `backend/data/demo-output.json`, and frontend cache files.
-- Completed live interaction validation:
-	- successful tab switching across all report views,
-	- deep-dive opening,
-	- ReportAgent chat send/receive,
-	- individual agent chat send path.
-- Added root quick launcher script:
-	- `quick_start.sh` to boot backend + frontend together,
-	- optional `--refresh-demo` and `--real-oasis` flags,
-	- startup health checks and log paths.
-	- mode switch support via `--mode auto|demo|live` to choose boot preference on same site.
-- Implemented actual graph rendering for top-bar toggle views:
-	- Knowledge Graph panel now renders an ECharts force graph from available policy/cohort/report data.
-	- Persona Graph panel now renders an influential-agent network by planning area.
-- Added Stage 4 robustness controls in frontend:
-	- explicit "Load Live Dashboard" and "Load Demo Cache" actions,
-	- clear empty-state messaging when report payload is not loaded.
-- Fixed launcher argument parsing bug:
-	- `--mode demo` and `--mode=demo` are both now accepted.
-- Updated root README quick-start section:
-	- clarified `bash` usage and mode semantics (`auto` is live-first).
+## What Changed
+- Replaced the inherited dashboard with the new McKAInsey console shell and 7 priority screens.
+- Added the new console backend surface under `/api/v2/console/...`.
+- Implemented real Stage 1 uploaded file parsing:
+  - PDF via `pypdf`
+  - DOCX via `python-docx`
+  - text-like files via direct decoding and normalization
+- Implemented real Stage 2 document-aware Nemotron sampling:
+  - local parquet-backed retrieval
+  - relevance scoring against the uploaded document artifact
+  - balanced hybrid sampling across planning area, income bracket, and age bucket
+- Implemented Stage 3 native OASIS event streaming persistence and SSE delivery.
+- Split Stage 4 into distinct report, opinions, and friction-map payloads.
+- Implemented Stage 5 real report chat and agent chat backed by Gemini and Zep Cloud.
+- Updated `quick_start.sh` to keep demo and live boot as the primary operator flows.
+- Added Playwright coverage for demo boot and live boot smoke validation.
 
 ## What Is Stable
-- Full local integrated pipeline runs end-to-end:
-	- scenario submission -> simulation -> memory sync -> report -> dashboard -> deep-dive chats.
-- Real OASIS execution path validated on Budget 2026 scenario (`runtime: oasis`).
-- Backend test suite passes (`9 passed, 2 warnings`).
-- Frontend production build passes.
-- Planning-area GeoJSON endpoint serves valid `FeatureCollection` with 55 features.
-- Browser interaction sweep completed without frontend runtime errors after Sankey fix.
-- `quick_start.sh` starts both services successfully when required ports are free.
-- Frontend now supports explicit boot preference (`auto` default, `demo`, `live`) via launcher mode flag.
-- Knowledge/Persona graph views and Stage 4 report panel now have explicit render paths instead of silent no-op/blank behavior.
+- `./quick_start.sh --mode demo` remains the primary demo launch path.
+- `./quick_start.sh --mode live --real-oasis` boots the live console path when the OASIS sidecar is installed.
+- Stage 1 file upload is fully wired UI -> API -> persisted knowledge artifact.
+- Stage 2 returns real sampled personas, representativeness diagnostics, and agent selection reasons.
+- Stage 3 supports native OASIS runs and live stream/state retrieval.
+- Stage 5 report chat and agent chat both make real API calls to Gemini and Zep Cloud.
+- Backend tests, frontend build, and Playwright smoke tests all pass.
 
-## What Is Risky
-- Native `camel-oasis` runtime requires Python 3.11 side environment while default backend runtime may differ.
-- External provider availability/quota (Gemini, Data.gov, Zep) can vary; deterministic fallback paths are now in place.
-- Frontend bundle size warning due ECharts can affect first-load performance if unoptimized.
-- Current Stage 1 frontend run path is wired to default demo document processing, not user-supplied upload content.
+## What Was Verified
+- Backend tests: `19 passed`
+- Frontend build: passed
+- Playwright:
+  - demo console smoke passed
+  - live boot smoke passed
+- Real live end-to-end session:
+  - session id: `oasis-v2-docx-1773994001`
+  - uploaded DOCX parsed successfully
+  - population preview returned a real selected cohort
+  - native OASIS completed a 2-round run
+  - persisted event count reached `36`
+  - report chat returned `200` with Gemini + Zep context
+  - agent chat returned `200` with Gemini + Zep context
+- Real PDF upload path was also verified using:
+  - `Sample_Inputs/fy2026_budget_statement.pdf`
 
-## What Is Blocked
-- No hard blockers for local development and demonstration flow.
-- Product gap: custom document upload is not yet wired in UI-to-API flow.
+## Operator Runbook
+1. Demo mode
+   - `./quick_start.sh --mode demo`
+   - open `http://127.0.0.1:5173`
+2. Live mode
+   - ensure `.env` contains valid Gemini and Zep credentials
+   - ensure `backend/.venv311/bin/python` exists with native OASIS dependencies
+   - run `./quick_start.sh --mode live --real-oasis`
+   - create a session, upload a document, run sampling, then start simulation
+3. Optional demo refresh
+   - `./quick_start.sh --refresh-demo --mode demo`
 
-## Exact Next Recommended Actions
-1. Wire custom document upload in frontend Stage 1 and pass `document_text` or `source_path` to `/api/v1/phase-a/knowledge/process` instead of forcing `use_default_demo_document=true`.
-2. Add CI automation for backend tests, frontend build, and a lightweight UI smoke interaction run.
-3. Implement frontend bundle splitting and optional lazy chart loading for ECharts modules.
-4. Promote OASIS Python 3.11 sidecar setup into deployment profile documentation/scripts.
+## Remaining Risks
+- Live mode still depends on external service health for Gemini and Zep Cloud.
+- Native OASIS still requires the Python 3.11 sidecar runtime.
+- Frontend bundle size remains large because graphing/mapping modules are not yet split into lazy chunks.
 
-## Known Gap Details (for takeover)
-- Backend supports custom content submission for knowledge processing.
-- Frontend API type also supports `document_text` and `source_path`.
-- Current Run handler in frontend currently hardcodes default demo processing and does not present file/text upload controls.
-- Expected follow-up change:
-	- add file input or text area in Stage 1,
-	- map selected content into knowledge process request,
-	- preserve fallback toggle for default demo doc mode.
+## Recommended Next Work
+1. Add frontend code-splitting for graph and map bundles.
+2. Add CI automation for backend tests, frontend build, and Playwright smoke coverage.
+3. Add a longer live Playwright scenario that exercises a full multi-step simulation run once provider quotas allow.
 
 ## File Links
-- [BRD.md](../BRD.md)
-- [Progress.md](../Progress.md)
-- [progress/index.md](../progress/index.md)
-- [progress/phaseB.md](../progress/phaseB.md)
-- [progress/phaseC.md](../progress/phaseC.md)
-- [progress/phaseD.md](../progress/phaseD.md)
-- [progress/phaseE.md](../progress/phaseE.md)
-- [progress/phaseF.md](../progress/phaseF.md)
-- [docs/decision_log.md](../decision_log.md)
-- [backend/README.md](../../backend/README.md)
+- [BRD.md](../../BRD.md)
+- [Progress.md](../../Progress.md)
+- [progress/index.md](../../progress/index.md)
+- [progress/phaseG.md](../../progress/phaseG.md)
 - [quick_start.sh](../../quick_start.sh)

@@ -22,6 +22,7 @@ class RunnerInput:
     gemini_api_key: str
     openai_base_url: str
     oasis_db_path: str
+    events_path: str | None = None
 
 
 def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
@@ -82,10 +83,29 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
     import oasis
     from oasis import ActionType, LLMAction, ManualAction, generate_reddit_agent_graph
 
+    event_file = None
+    if payload.events_path:
+        event_path = Path(payload.events_path)
+        event_path.parent.mkdir(parents=True, exist_ok=True)
+        event_file = event_path.open("a", encoding="utf-8")
+
+    def emit_event(event_type: str, **data: Any) -> None:
+        if not event_file:
+            return
+        event = {
+            "event_type": event_type,
+            "session_id": payload.simulation_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+            **data,
+        }
+        event_file.write(json.dumps(event, ensure_ascii=False) + "\n")
+        event_file.flush()
+
     print(
         f"[oasis-runner] start simulation_id={payload.simulation_id} agents={len(payload.personas)} rounds={payload.rounds}",
         flush=True,
     )
+    emit_event("run_started", round_no=0, agent_count=len(payload.personas))
 
     os.environ["OPENAI_API_KEY"] = payload.gemini_api_key
     os.environ["OPENAI_BASE_URL"] = payload.openai_base_url
@@ -149,17 +169,22 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         )
     await env.step(seed_actions)
     print("[oasis-runner] seed posts injected", flush=True)
+    emit_event("seed_post_created", round_no=0, count=len(seed_actions))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    last_seen = {"post": 0, "comment": 0, "like": 0, "dislike": 0}
 
     for i in range(payload.rounds):
+        emit_event("round_started", round_no=i + 1)
         actions = {agent: LLMAction() for _, agent in env.agent_graph.get_agents()}
         await env.step(actions)
+        _emit_incremental_db_events(conn, user_map=None, last_seen=last_seen, round_no=i + 1, emit_event=emit_event)
+        emit_event("round_completed", round_no=i + 1)
         print(f"[oasis-runner] completed round {i + 1}/{payload.rounds}", flush=True)
 
     await env.close()
     print("[oasis-runner] env closed, collecting artifacts", flush=True)
-
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
 
     user_rows = conn.execute("SELECT user_id, name FROM user ORDER BY user_id").fetchall()
     user_map = {int(r["user_id"]): f"agent-{int(r['user_id']) + 1:04d}" for r in user_rows}
@@ -242,6 +267,10 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         )
 
     conn.close()
+    if event_file:
+        emit_event("metrics_updated", round_no=payload.rounds, metrics={"posts": len(post_rows), "comments": len(comment_rows)})
+        emit_event("run_completed", round_no=payload.rounds)
+        event_file.close()
 
     agents: list[dict[str, Any]] = []
     pre_scores: list[float] = []
@@ -290,6 +319,72 @@ def main() -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result), encoding="utf-8")
+
+
+def _emit_incremental_db_events(
+    conn: sqlite3.Connection,
+    *,
+    user_map: dict[int, str] | None,
+    last_seen: dict[str, int],
+    round_no: int,
+    emit_event,
+) -> None:
+    user_rows = conn.execute("SELECT user_id, name FROM user ORDER BY user_id").fetchall()
+    resolved_user_map = user_map or {int(r["user_id"]): f"agent-{int(r['user_id']) + 1:04d}" for r in user_rows}
+
+    post_rows = conn.execute(
+        "SELECT post_id, user_id, content FROM post WHERE post_id > ? ORDER BY post_id",
+        (last_seen["post"],),
+    ).fetchall()
+    for row in post_rows:
+        last_seen["post"] = max(last_seen["post"], int(row["post_id"]))
+        emit_event(
+            "post_created",
+            round_no=round_no,
+            actor_agent_id=resolved_user_map.get(int(row["user_id"]), f"agent-{int(row['user_id']) + 1:04d}"),
+            content=row["content"],
+        )
+
+    comment_rows = conn.execute(
+        "SELECT comment_id, user_id, content FROM comment WHERE comment_id > ? ORDER BY comment_id",
+        (last_seen["comment"],),
+    ).fetchall()
+    for row in comment_rows:
+        last_seen["comment"] = max(last_seen["comment"], int(row["comment_id"]))
+        emit_event(
+            "comment_created",
+            round_no=round_no,
+            actor_agent_id=resolved_user_map.get(int(row["user_id"]), f"agent-{int(row['user_id']) + 1:04d}"),
+            content=row["content"],
+        )
+
+    like_rows = conn.execute(
+        "SELECT like_id, user_id, post_id FROM like WHERE like_id > ? ORDER BY like_id",
+        (last_seen["like"],),
+    ).fetchall()
+    for row in like_rows:
+        last_seen["like"] = max(last_seen["like"], int(row["like_id"]))
+        emit_event(
+            "reaction_added",
+            round_no=round_no,
+            actor_agent_id=resolved_user_map.get(int(row["user_id"]), f"agent-{int(row['user_id']) + 1:04d}"),
+            reaction="like",
+            post_id=row["post_id"],
+        )
+
+    dislike_rows = conn.execute(
+        "SELECT dislike_id, user_id, post_id FROM dislike WHERE dislike_id > ? ORDER BY dislike_id",
+        (last_seen["dislike"],),
+    ).fetchall()
+    for row in dislike_rows:
+        last_seen["dislike"] = max(last_seen["dislike"], int(row["dislike_id"]))
+        emit_event(
+            "reaction_added",
+            round_no=round_no,
+            actor_agent_id=resolved_user_map.get(int(row["user_id"]), f"agent-{int(row['user_id']) + 1:04d}"),
+            reaction="dislike",
+            post_id=row["post_id"],
+        )
 
 
 if __name__ == "__main__":

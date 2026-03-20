@@ -21,7 +21,12 @@ def sample_personas(
     req: PersonaFilterRequest,
     settings: Settings = Depends(get_settings),
 ) -> PersonaSampleResponse:
-    sampler = PersonaSampler(dataset_name=settings.nemotron_dataset, split=settings.nemotron_split)
+    sampler = PersonaSampler(
+        dataset_name=settings.nemotron_dataset,
+        split=settings.nemotron_split,
+        cache_dir=settings.nemotron_cache_dir,
+        download_workers=settings.nemotron_download_workers,
+    )
     personas = sampler.sample(req)
     return PersonaSampleResponse(mode=req.mode, count=len(personas), personas=personas)
 

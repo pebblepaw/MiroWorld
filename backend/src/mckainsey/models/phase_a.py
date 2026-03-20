@@ -9,7 +9,7 @@ class PersonaFilterRequest(BaseModel):
     planning_areas: list[str] = Field(default_factory=list)
     income_brackets: list[str] = Field(default_factory=list)
     limit: int = Field(default=200, ge=1, le=1000)
-    mode: str = Field(default="stream", description="stream|duckdb")
+    mode: str = Field(default="local", description="local|duckdb|stream")
 
 
 class PersonaSampleResponse(BaseModel):

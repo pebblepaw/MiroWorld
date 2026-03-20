@@ -15,7 +15,7 @@ OASIS_PY_BIN_DEFAULT="$BACKEND_DIR/.venv311/bin/python"
 
 REFRESH_DEMO=false
 REAL_OASIS=false
-BOOT_MODE="auto"
+BOOT_MODE="demo"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --mode)
       if [[ $# -lt 2 ]]; then
-        echo "Missing value for --mode. Use: --mode auto|demo|live"
+        echo "Missing value for --mode. Use: --mode demo|live"
         exit 1
       fi
       BOOT_MODE="$2"
@@ -41,12 +41,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<'EOF'
-Usage: ./quick_start.sh [--refresh-demo] [--real-oasis] [--mode auto|demo|live]
+Usage: ./quick_start.sh [--refresh-demo] [--real-oasis] [--mode demo|live]
 
 Options:
   --refresh-demo  Regenerate demo cache before launching servers.
   --real-oasis    Enable native OASIS runtime for backend simulation runs.
-  --mode          Frontend bootstrap mode: auto (default), demo, or live.
+  --mode          Frontend bootstrap mode: demo (default) or live.
 
 Environment overrides:
   PY_BIN, BACKEND_HOST, BACKEND_PORT, FRONTEND_HOST, FRONTEND_PORT
@@ -62,11 +62,11 @@ EOF
 done
 
 case "$BOOT_MODE" in
-  auto|demo|live)
+  demo|live)
     ;;
   *)
     echo "Invalid --mode value: $BOOT_MODE"
-    echo "Valid values: auto, demo, live"
+    echo "Valid values: demo, live"
     exit 1
     ;;
 esac
@@ -176,7 +176,7 @@ FRONTEND_PID=$!
 sleep 2
 
 echo ""
-echo "Demo is up:"
+echo "McKAInsey console is up:"
 echo "  Frontend: http://$FRONTEND_HOST:$FRONTEND_PORT"
 echo "  Backend:  http://$BACKEND_HOST:$BACKEND_PORT"
 echo "  Boot mode: $BOOT_MODE"

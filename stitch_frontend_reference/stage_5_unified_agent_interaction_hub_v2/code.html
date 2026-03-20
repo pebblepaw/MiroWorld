@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>McKAInsey | Interact with Agents</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@400;500;700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "surface-bright": "#3a3939",
+              "outline": "#8e90a2",
+              "on-tertiary": "#402d00",
+              "surface-container-high": "#2a2a2a",
+              "on-secondary": "#053900",
+              "tertiary-fixed-dim": "#fbbc00",
+              "surface-variant": "#353534",
+              "surface-container-lowest": "#0e0e0e",
+              "error-container": "#93000a",
+              "background": "#131313",
+              "on-secondary-fixed-variant": "#095300",
+              "surface": "#131313",
+              "secondary": "#d7ffc5",
+              "on-secondary-container": "#0f6d00",
+              "primary-fixed": "#dde1ff",
+              "surface-container-highest": "#353534",
+              "on-surface-variant": "#c4c5d9",
+              "on-secondary-fixed": "#022100",
+              "on-error-container": "#ffdad6",
+              "primary-container": "#2e5bff",
+              "surface-dim": "#131313",
+              "surface-tint": "#b8c3ff",
+              "tertiary-container": "#8c6700",
+              "primary": "#b8c3ff",
+              "outline-variant": "#434656",
+              "inverse-on-surface": "#313030",
+              "on-primary": "#002388",
+              "tertiary": "#fbbc00",
+              "secondary-fixed-dim": "#2ae500",
+              "on-surface": "#e5e2e1",
+              "on-error": "#690005",
+              "surface-container": "#201f1f",
+              "on-primary-container": "#efefff",
+              "inverse-primary": "#124af0",
+              "error": "#ffb4ab",
+              "primary-fixed-dim": "#b8c3ff",
+              "surface-container-low": "#1c1b1b",
+              "on-background": "#e5e2e1",
+              "on-tertiary-fixed": "#261a00",
+              "secondary-fixed": "#79ff5b",
+              "on-tertiary-container": "#ffeed3",
+              "on-primary-fixed-variant": "#0035be",
+              "tertiary-fixed": "#ffdfa0",
+              "on-tertiary-fixed-variant": "#5c4300",
+              "secondary-container": "#2ff801",
+              "inverse-surface": "#e5e2e1",
+              "on-primary-fixed": "#001356"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Space Grotesk"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      .glass-panel {
+        background: rgba(46, 91, 255, 0.05);
+        backdrop-filter: blur(12px);
+      }
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 4px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: #0e0e0e;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #434656;
+      }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body overflow-hidden">
+<div class="flex h-screen w-full">
+<!-- SideNavBar -->
+<aside class="hidden md:flex flex-col h-full py-6 space-y-2 bg-[#0E0E0E] dark:bg-[#0E0E0E] docked left-0 w-72 border-r border-[#434656]/10 font-['Space_Grotesk'] text-[13px] tracking-wide flat no shadows">
+<div class="px-8 mb-8">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-primary-container rounded flex items-center justify-center">
+<span class="material-symbols-outlined text-on-primary-container text-lg" data-icon="rocket_launch">rocket_launch</span>
+</div>
+<div>
+<h1 class="font-['Manrope'] font-bold text-[#E5E2E1]">Simulation Engine</h1>
+<p class="text-[10px] opacity-50 uppercase tracking-widest text-on-surface-variant">v2.4.0-Kinetic</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<div class="text-[#C4C5D9] px-4 py-3 opacity-60 hover:opacity-100 hover:bg-[#1C1B1B] hover:text-[#B8C3FF] transition-colors duration-200 active:translate-x-1 transition-transform cursor-pointer flex items-center gap-3">
+<span class="material-symbols-outlined" data-icon="settings_input_component">settings_input_component</span>
+<span>Scenario Setup</span>
+</div>
+<div class="text-[#C4C5D9] px-4 py-3 opacity-60 hover:opacity-100 hover:bg-[#1C1B1B] hover:text-[#B8C3FF] transition-colors duration-200 active:translate-x-1 transition-transform cursor-pointer flex items-center gap-3">
+<span class="material-symbols-outlined" data-icon="groups">groups</span>
+<span>Population Sampling</span>
+</div>
+<div class="text-[#C4C5D9] px-4 py-3 opacity-60 hover:opacity-100 hover:bg-[#1C1B1B] hover:text-[#B8C3FF] transition-colors duration-200 active:translate-x-1 transition-transform cursor-pointer flex items-center gap-3">
+<span class="material-symbols-outlined" data-icon="play_circle">play_circle</span>
+<span>Simulation</span>
+</div>
+<div class="text-[#C4C5D9] px-4 py-3 opacity-60 hover:opacity-100 hover:bg-[#1C1B1B] hover:text-[#B8C3FF] transition-colors duration-200 active:translate-x-1 transition-transform cursor-pointer flex items-center gap-3">
+<span class="material-symbols-outlined" data-icon="analytics">analytics</span>
+<span>Report &amp; Analysis</span>
+</div>
+<!-- Active Tab -->
+<div class="bg-[#2A2A2A] text-[#D7FFC5] border-l-4 border-[#D7FFC5] px-4 py-3 font-bold active:translate-x-1 transition-transform cursor-pointer flex items-center gap-3">
+<span class="material-symbols-outlined" data-icon="forum" style="font-variation-settings: 'FILL' 1;">forum</span>
+<span>Interact with Agents</span>
+</div>
+</nav>
+<div class="px-6 mb-4">
+<button class="w-full py-3 bg-surface-container-high border border-outline-variant/30 text-primary font-bold tracking-tighter hover:bg-primary hover:text-on-primary transition-all">
+                    NEW SIMULATION
+                </button>
+</div>
+<div class="pt-4 border-t border-outline-variant/10 space-y-1">
+<div class="text-[#C4C5D9] px-4 py-2 opacity-60 hover:opacity-100 flex items-center gap-3 text-xs">
+<span class="material-symbols-outlined text-sm" data-icon="sensors">sensors</span>
+<span>System Health</span>
+</div>
+<div class="text-[#C4C5D9] px-4 py-2 opacity-60 hover:opacity-100 flex items-center gap-3 text-xs">
+<span class="material-symbols-outlined text-sm" data-icon="settings">settings</span>
+<span>Settings</span>
+</div>
+</div>
+</aside>
+<!-- Main Workspace -->
+<main class="flex-1 flex flex-col min-w-0 bg-surface">
+<!-- TopNavBar -->
+<header class="flex justify-between items-center h-16 w-full px-8 bg-[#1C1B1B]/80 backdrop-blur-xl dark:bg-[#1C1B1B]/80 docked full-width top-0 z-50 bg-[#1C1B1B] border-b border-[#434656]/20 shadow-2xl shadow-black/40">
+<div class="flex items-center gap-8">
+<span class="text-xl font-black tracking-tighter text-[#E5E2E1] dark:text-[#E5E2E1]">McKAInsey</span>
+<nav class="hidden lg:flex gap-6">
+<span class="font-['Manrope'] tracking-tight font-semibold uppercase text-[12px] text-[#C4C5D9] opacity-70 hover:text-[#B8C3FF] transition-all cursor-pointer">Graph View</span>
+<span class="font-['Manrope'] tracking-tight font-semibold uppercase text-[12px] text-[#D7FFC5] border-b-2 border-[#D7FFC5] pb-1 cursor-pointer">Agent View</span>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex gap-2">
+<span class="material-symbols-outlined text-on-surface-variant p-2 hover:bg-[#2A2A2A]/50 rounded-full cursor-pointer" data-icon="notifications">notifications</span>
+<span class="material-symbols-outlined text-on-surface-variant p-2 hover:bg-[#2A2A2A]/50 rounded-full cursor-pointer" data-icon="help_outline">help_outline</span>
+</div>
+<button class="bg-primary text-on-primary font-['Manrope'] tracking-tight font-semibold uppercase text-[12px] px-6 py-2 rounded-sm active:scale-[0.97] transition-transform">
+                        RUN SIMULATION
+                    </button>
+</div>
+</header>
+<!-- Agent Content Area -->
+<div class="flex-1 flex flex-col overflow-hidden">
+<!-- Top Agent Selection Rail -->
+<section class="h-20 bg-surface-container-lowest border-b border-outline-variant/10 flex items-center px-8 gap-4 overflow-x-auto custom-scrollbar"><div class="flex items-center gap-4 flex-none mr-2">
+<button class="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#2E5BFF] text-white font-label text-sm font-bold hover:brightness-110 transition-all uppercase tracking-wider shadow-lg shadow-[#2E5BFF]/20">
+<span class="material-symbols-outlined text-sm" data-icon="report">report</span>
+        REPORT AGENT
+    </button>
+<div class="h-8 w-px bg-outline-variant/20 ml-2"></div>
+</div>
+<div class="flex-none px-5 py-2.5 rounded-lg border border-secondary text-secondary font-label text-sm flex items-center gap-3 bg-secondary/5 cursor-pointer">
+<div class="w-2 h-2 rounded-full bg-secondary"></div>
+                        36 YO Designer
+                    </div>
+<div class="flex-none px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface-variant font-label text-sm flex items-center gap-3 hover:bg-surface-container-high transition-colors cursor-pointer">
+<div class="w-2 h-2 rounded-full bg-outline-variant/40"></div>
+                        45 YO Policy Lead
+                    </div>
+<div class="flex-none px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface-variant font-label text-sm flex items-center gap-3 hover:bg-surface-container-high transition-colors cursor-pointer">
+<div class="w-2 h-2 rounded-full bg-outline-variant/40"></div>
+                        60 YO Resident
+                    </div>
+<div class="flex-none px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface-variant font-label text-sm flex items-center gap-3 hover:bg-surface-container-high transition-colors cursor-pointer">
+<div class="w-2 h-2 rounded-full bg-outline-variant/40"></div>
+                        22 YO Graduate
+                    </div>
+<div class="flex-none px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface-variant font-label text-sm flex items-center gap-3 hover:bg-surface-container-high transition-colors cursor-pointer">
+<div class="w-2 h-2 rounded-full bg-outline-variant/40"></div>
+                        52 YO CEO
+                    </div>
+</section>
+<div class="flex flex-1 overflow-hidden">
+<!-- Chat Pane -->
+<section class="flex-1 flex flex-col bg-surface-dim relative border-r border-outline-variant/10">
+<div class="p-6 border-b border-outline-variant/5 flex justify-between items-center">
+<div>
+<h2 class="font-headline font-bold text-xl text-on-surface">36 YO Designer</h2>
+<p class="text-xs font-label text-secondary flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]" data-icon="fiber_manual_record" style="font-variation-settings: 'FILL' 1;">fiber_manual_record</span>
+                                    ACTIVE AGENT SESSION
+                                </p>
+</div>
+<div class="flex gap-2">
+<button class="p-2 hover:bg-surface-container-high rounded-lg text-on-surface-variant"><span class="material-symbols-outlined" data-icon="download">download</span></button>
+<button class="p-2 hover:bg-surface-container-high rounded-lg text-on-surface-variant"><span class="material-symbols-outlined" data-icon="refresh">refresh</span></button>
+</div>
+</div>
+<!-- Chat History -->
+<div class="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+<!-- Analyst Msg -->
+<div class="flex gap-4 max-w-2xl">
+<div class="w-8 h-8 rounded bg-primary-container flex-none flex items-center justify-center">
+<span class="material-symbols-outlined text-sm text-on-primary-container" data-icon="person">person</span>
+</div>
+<div class="space-y-2">
+<p class="text-[10px] font-label text-on-surface-variant uppercase tracking-widest">Analyst — 14:22</p>
+<div class="bg-surface-container-high p-4 rounded-lg rounded-tl-none text-on-surface leading-relaxed border border-outline-variant/10">
+                                        Could you elaborate on how the new urban transit proposal impacts your daily commute to the design studio?
+                                    </div>
+</div>
+</div>
+<!-- Agent Msg -->
+<div class="flex gap-4 max-w-2xl ml-auto flex-row-reverse">
+<div class="w-8 h-8 rounded bg-secondary flex-none flex items-center justify-center">
+<span class="material-symbols-outlined text-sm text-on-secondary" data-icon="robot_2">robot_2</span>
+</div>
+<div class="space-y-2 text-right">
+<p class="text-[10px] font-label text-on-surface-variant uppercase tracking-widest">36 YO Designer — 14:23</p>
+<div class="bg-primary/5 p-4 rounded-lg rounded-tr-none text-on-surface leading-relaxed border border-primary/20 text-left glass-panel">
+                                        Honestly, it's a mixed bag. While the frequency increases, the rerouting adds an extra 10 minutes of walking. As someone who values 'flow' in my day, that friction matters. However, the new digital payment integration is a huge win for my workflow.
+                                    </div>
+</div>
+</div>
+<!-- Analyst Msg -->
+<div class="flex gap-4 max-w-2xl">
+<div class="w-8 h-8 rounded bg-primary-container flex-none flex items-center justify-center">
+<span class="material-symbols-outlined text-sm text-on-primary-container" data-icon="person">person</span>
+</div>
+<div class="space-y-2">
+<p class="text-[10px] font-label text-on-surface-variant uppercase tracking-widest">Analyst — 14:25</p>
+<div class="bg-surface-container-high p-4 rounded-lg rounded-tl-none text-on-surface leading-relaxed border border-outline-variant/10">
+                                        Does the increase in green spaces along the route mitigate that 'friction' you mentioned?
+                                    </div>
+</div>
+</div>
+<!-- Agent Msg (Thinking) -->
+<div class="flex gap-4 max-w-2xl ml-auto flex-row-reverse">
+<div class="w-8 h-8 rounded bg-secondary flex-none flex items-center justify-center animate-pulse">
+<span class="material-symbols-outlined text-sm text-on-secondary" data-icon="psychology">psychology</span>
+</div>
+<div class="space-y-2 text-right">
+<p class="text-[10px] font-label text-on-surface-variant uppercase tracking-widest">36 YO Designer — PROCESSING</p>
+<div class="flex gap-1 justify-end py-2">
+<div class="w-1.5 h-1.5 rounded-full bg-secondary animate-bounce"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-secondary animate-bounce [animation-delay:-0.15s]"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-secondary animate-bounce [animation-delay:-0.3s]"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- Chat Input -->
+<div class="p-6 bg-surface-container-lowest border-t border-outline-variant/10">
+<div class="relative flex items-center">
+<input class="w-full bg-background border-outline-variant/30 rounded-xl px-6 py-4 text-on-surface placeholder:text-on-surface-variant/40 focus:ring-1 focus:ring-primary focus:border-primary transition-all font-body pr-16" placeholder="Probe agent for further insights..." type="text"/>
+<button class="absolute right-3 bg-primary text-on-primary p-2 rounded-lg hover:shadow-[0_0_15px_rgba(184,195,255,0.4)] transition-all">
+<span class="material-symbols-outlined" data-icon="send">send</span>
+</button>
+</div>
+<div class="mt-3 flex gap-4 text-[10px] font-label text-on-surface-variant">
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[12px]" data-icon="info">info</span> Context: Urban Mobility v2.1</span>
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[12px]" data-icon="bolt">bolt</span> Model: Kinetic-DeepMind-X</span>
+</div>
+</div>
+</section>
+<!-- Profile Sidebar (Right) -->
+<aside class="w-96 bg-surface-container-low overflow-y-auto custom-scrollbar">
+<div class="p-8 space-y-10">
+<!-- Persona Header -->
+<div class="text-center space-y-4">
+<div class="relative inline-block">
+<img alt="Portrait" class="w-32 h-32 rounded-full object-cover grayscale border-4 border-surface-container-high mx-auto" data-alt="Black and white portrait of a woman in her 30s" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBKDenSDB7YsB1UNe1UtYHFSjJ2ruGea49xae67Hc0p5zdSNFuFLdtgg3lAVijqsB4Adw9PpwfQ_J0oXKObXkekZzDOyjZjnwt5tgui5cmKuYIbWBFOfM-ZpPRzE95QNh5UEvJ8HI6BYHvFsaiK9HD3ryZFyOjQ0n8qMKKulcSc-mPWT3N9q6GzV0P6ABKaqYsPvqwIbYb8B0wHr_X9LMKIiOY02oRkMYQa7NgDr_mXSmFJRVkkcAwUqh0XW8i1EG5mlG-ZTIy4sQ5t"/>
+<div class="absolute bottom-1 right-1 w-8 h-8 bg-secondary rounded-full flex items-center justify-center border-4 border-surface-container-low">
+<span class="material-symbols-outlined text-[16px] text-on-secondary" data-icon="verified" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+</div>
+<div>
+<h3 class="font-headline font-bold text-2xl">Maya Chen</h3>
+<p class="font-label text-primary uppercase tracking-[0.2em] text-[10px]">Strategic Persona Node #8821</p>
+</div>
+</div>
+<!-- Demographics Grid -->
+<div class="grid grid-cols-2 gap-px bg-outline-variant/10 border border-outline-variant/10 rounded-lg overflow-hidden">
+<div class="bg-surface-container-high p-4">
+<p class="text-[10px] font-label text-on-surface-variant uppercase">Age</p>
+<p class="font-headline font-bold text-lg">36</p>
+</div>
+<div class="bg-surface-container-high p-4">
+<p class="text-[10px] font-label text-on-surface-variant uppercase">Role</p>
+<p class="font-headline font-bold text-lg truncate">UX Director</p>
+</div>
+<div class="bg-surface-container-high p-4">
+<p class="text-[10px] font-label text-on-surface-variant uppercase">Income</p>
+<p class="font-headline font-bold text-lg">$145k/yr</p>
+</div>
+<div class="bg-surface-container-high p-4">
+<p class="text-[10px] font-label text-on-surface-variant uppercase">Location</p>
+<p class="font-headline font-bold text-lg">District 4</p>
+</div>
+</div>
+<!-- Core Opinions -->
+<div class="space-y-4">
+<h4 class="font-label text-xs font-bold text-on-surface-variant uppercase tracking-widest flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                                    Core Viewpoints &amp; Biases
+                                </h4>
+<div class="space-y-3">
+<div class="bg-surface p-4 rounded-lg border-l-2 border-primary">
+<p class="text-xs font-bold text-primary mb-1 uppercase tracking-tight">Efficiency Absolutism</p>
+<p class="text-sm text-on-surface-variant leading-relaxed italic">"If it takes more than 3 steps or 5 minutes of friction, it's a design failure, regardless of the policy goal."</p>
+</div>
+<div class="bg-surface p-4 rounded-lg border-l-2 border-secondary">
+<p class="text-xs font-bold text-secondary mb-1 uppercase tracking-tight">Digital First Infrastructure</p>
+<p class="text-sm text-on-surface-variant leading-relaxed italic">"Physical cards are relics. Everything should be invisible, biometric, and seamless."</p>
+</div>
+<div class="bg-surface p-4 rounded-lg border-l-2 border-tertiary">
+<p class="text-xs font-bold text-tertiary mb-1 uppercase tracking-tight">Sustainability Skepticism</p>
+<p class="text-sm text-on-surface-variant leading-relaxed italic">"I support green initiatives only if they don't compromise the velocity of my lifestyle."</p>
+</div>
+</div>
+</div>
+<!-- AI Analysis Tag Cloud -->
+<div class="space-y-4">
+<h4 class="font-label text-xs font-bold text-on-surface-variant uppercase tracking-widest">Cognitive Mapping</h4>
+<div class="flex flex-wrap gap-2">
+<span class="px-3 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded-full">EARLY ADOPTER</span>
+<span class="px-3 py-1 bg-surface-container-highest text-on-surface-variant text-[10px] font-bold rounded-full">HIGH SPEND</span>
+<span class="px-3 py-1 bg-surface-container-highest text-on-surface-variant text-[10px] font-bold rounded-full">COMMUTER</span>
+<span class="px-3 py-1 bg-tertiary/10 text-tertiary text-[10px] font-bold rounded-full">RISK AVERSE</span>
+<span class="px-3 py-1 bg-surface-container-highest text-on-surface-variant text-[10px] font-bold rounded-full">URBANIST</span>
+</div>
+</div>
+</div>
+</aside>
+</div>
+</div>
+</main>
+</div>
+</body></html>

@@ -27,7 +27,12 @@ class SimulationService:
 
     def __post_init__(self) -> None:
         self.store = SimulationStore(self.settings.simulation_db_path)
-        self.sampler = PersonaSampler(self.settings.nemotron_dataset, self.settings.nemotron_split)
+        self.sampler = PersonaSampler(
+            self.settings.nemotron_dataset,
+            self.settings.nemotron_split,
+            cache_dir=self.settings.nemotron_cache_dir,
+            download_workers=self.settings.nemotron_download_workers,
+        )
         self.llm = GeminiChatClient(self.settings)
 
     def run(self, req: SimulationRunRequest) -> dict[str, Any]:
@@ -37,7 +42,7 @@ class SimulationService:
             planning_areas=req.planning_areas,
             income_brackets=req.income_brackets,
             limit=req.agent_count,
-            mode="stream",
+            mode="local",
         )
         personas = self.sampler.sample(sample_req)
         if not personas:
@@ -83,7 +88,77 @@ class SimulationService:
             "runtime": runtime,
         }
 
+    def run_with_personas(
+        self,
+        *,
+        simulation_id: str,
+        policy_summary: str,
+        rounds: int,
+        personas: list[dict[str, Any]],
+        events_path: Path | None = None,
+        force_live: bool = False,
+    ) -> dict[str, Any]:
+        if force_live or self.settings.enable_real_oasis:
+            result = self._run_oasis_with_inputs(
+                simulation_id=simulation_id,
+                policy_summary=policy_summary,
+                rounds=rounds,
+                personas=personas,
+                events_path=events_path,
+            )
+            agents = result["agents"]
+            interactions = result["interactions"]
+            runtime = "oasis"
+            stage3a_approval_rate = float(result["stage3a_approval_rate"])
+            stage3b_approval_rate = float(result["stage3b_approval_rate"])
+            net_opinion_shift = float(result["net_opinion_shift"])
+        else:
+            agents = self._build_agents(personas)
+            interactions = []
+            for round_no in range(1, rounds + 1):
+                round_delta = self._run_round(policy_summary, agents, round_no, interactions)
+                for agent in agents:
+                    agent["opinion_post"] = max(1.0, min(10.0, agent["opinion_post"] + round_delta * 0.05))
+            pre = [a["opinion_pre"] for a in agents]
+            post = [a["opinion_post"] for a in agents]
+            stage3a_approval_rate = _approval_rate(pre)
+            stage3b_approval_rate = _approval_rate(post)
+            net_opinion_shift = (sum(post) / len(post)) - (sum(pre) / len(pre))
+            runtime = "heuristic"
+
+        self.store.upsert_simulation(simulation_id, policy_summary, rounds, len(agents), runtime=runtime)
+        self.store.replace_agents(simulation_id, agents)
+        self.store.replace_interactions(simulation_id, interactions)
+        return {
+            "simulation_id": simulation_id,
+            "platform": self.settings.simulation_platform,
+            "agent_count": len(agents),
+            "rounds": rounds,
+            "stage3a_approval_rate": stage3a_approval_rate,
+            "stage3b_approval_rate": stage3b_approval_rate,
+            "net_opinion_shift": net_opinion_shift,
+            "sqlite_path": self.settings.simulation_db_path,
+            "runtime": runtime,
+        }
+
     def _run_oasis(self, req: SimulationRunRequest, personas: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._run_oasis_with_inputs(
+            simulation_id=req.simulation_id,
+            policy_summary=req.policy_summary,
+            rounds=req.rounds,
+            personas=personas,
+            events_path=None,
+        )
+
+    def _run_oasis_with_inputs(
+        self,
+        *,
+        simulation_id: str,
+        policy_summary: str,
+        rounds: int,
+        personas: list[dict[str, Any]],
+        events_path: Path | None,
+    ) -> dict[str, Any]:
         runner = Path(self.settings.oasis_runner_script)
         if not runner.is_absolute():
             runner = BACKEND_ROOT / runner
@@ -106,24 +181,25 @@ class SimulationService:
         oasis_db_root = Path(self.settings.oasis_db_dir)
         if not oasis_db_root.is_absolute():
             oasis_db_root = BACKEND_ROOT / oasis_db_root
-        oasis_db = oasis_db_root / f"{req.simulation_id}.db"
+        oasis_db = oasis_db_root / f"{simulation_id}.db"
 
         run_log_dir = Path(self.settings.oasis_run_log_dir)
         if not run_log_dir.is_absolute():
             run_log_dir = BACKEND_ROOT / run_log_dir
         run_log_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        run_log_path = run_log_dir / f"{req.simulation_id}-{ts}.log"
+        run_log_path = run_log_dir / f"{simulation_id}-{ts}.log"
 
         payload = {
-            "simulation_id": req.simulation_id,
-            "policy_summary": req.policy_summary,
-            "rounds": req.rounds,
+            "simulation_id": simulation_id,
+            "policy_summary": policy_summary,
+            "rounds": rounds,
             "personas": personas,
             "model_name": self.settings.gemini_model,
             "gemini_api_key": gemini_key,
             "openai_base_url": self.settings.gemini_openai_base_url,
             "oasis_db_path": str(oasis_db),
+            "events_path": str(events_path) if events_path else None,
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -139,7 +215,7 @@ class SimulationService:
             ]
             with run_log_path.open("w", encoding="utf-8") as log_file:
                 log_file.write(f"command={cmd}\n")
-                log_file.write(f"simulation_id={req.simulation_id}\n")
+                log_file.write(f"simulation_id={simulation_id}\n")
                 log_file.write(f"started_at={datetime.now(UTC).isoformat()}\n")
                 log_file.flush()
 

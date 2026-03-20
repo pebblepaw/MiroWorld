@@ -220,13 +220,103 @@ def main() -> None:
         "chat",
     )
 
+    influential = report_payload.get("influential_agents", [])
+    friction = report_payload.get("friction_by_planning_area", [])
     output = {
         "generated_at": _now(),
         "simulation_id": SIMULATION_ID,
+        "session": {
+            "session_id": SIMULATION_ID,
+            "mode": "demo",
+            "status": "created",
+        },
         "knowledge": knowledge_payload,
+        "population": {
+            "session_id": SIMULATION_ID,
+            "candidate_count": len(influential),
+            "sample_count": len(influential),
+            "coverage": {
+                "planning_areas": sorted({str(agent.get("planning_area", "Unknown")) for agent in influential}),
+                "age_buckets": {},
+            },
+            "sampled_personas": [
+                {
+                    "agent_id": agent.get("agent_id", f"agent-{idx+1:04d}"),
+                    "persona": {
+                        "planning_area": agent.get("planning_area", "Unknown"),
+                        "income_bracket": agent.get("income_bracket", "Unknown"),
+                        "occupation": agent.get("occupation", "Unknown"),
+                    },
+                    "selection_reason": {
+                        "score": agent.get("influence_score", 0.6),
+                        "semantic_relevance": 0.7,
+                        "geographic_relevance": 0.8,
+                        "socioeconomic_relevance": 0.6,
+                        "digital_behavior_relevance": 0.5,
+                        "filter_alignment": 1.0,
+                    },
+                }
+                for idx, agent in enumerate(influential)
+            ],
+            "agent_graph": {
+                "nodes": [
+                    {
+                        "id": agent.get("agent_id", f"agent-{idx+1:04d}"),
+                        "label": agent.get("agent_id", f"agent-{idx+1:04d}"),
+                        "planning_area": agent.get("planning_area", "Unknown"),
+                        "score": agent.get("influence_score", 0.6),
+                    }
+                    for idx, agent in enumerate(influential)
+                ],
+                "links": [],
+            },
+            "representativeness": {"status": "cached-demo"},
+        },
         "simulation": simulation_payload,
+        "simulationState": {
+            "session_id": SIMULATION_ID,
+            "status": "completed",
+            "event_count": len(dashboard_payload.get("simulation", {}).get("top_posts", [])),
+            "last_round": args.rounds,
+            "latest_metrics": {
+                "approval_pre": simulation_payload.get("stage3a_approval_rate", 0),
+                "approval_post": simulation_payload.get("stage3b_approval_rate", 0),
+            },
+            "recent_events": [
+                {
+                    "event_type": "post_created",
+                    "session_id": SIMULATION_ID,
+                    "round_no": 1,
+                    "actor_agent_id": row.get("actor_agent_id"),
+                    "content": row.get("content"),
+                }
+                for row in dashboard_payload.get("simulation", {}).get("top_posts", [])
+            ],
+        },
         "memory_sync": memory_sync_payload,
         "report": report_payload,
+        "reportFull": {
+            "session_id": SIMULATION_ID,
+            "report": report_payload,
+        },
+        "reportOpinions": {
+            "session_id": SIMULATION_ID,
+            "feed": dashboard_payload.get("simulation", {}).get("top_posts", []),
+            "influential_agents": influential,
+        },
+        "reportFriction": {
+            "session_id": SIMULATION_ID,
+            "map_metrics": friction,
+            "anomaly_summary": f"Highest observed friction cluster: {friction[0]['planning_area']}" if friction else "No friction anomalies in cached run.",
+        },
+        "interactionHub": {
+            "session_id": SIMULATION_ID,
+            "report_agent": {
+                "starter_prompt": chat_payload.get("report_chat", {}).get("response", ""),
+            },
+            "influential_agents": influential,
+            "selected_agent": influential[0] if influential else None,
+        },
         "dashboard": dashboard_payload,
         "report_chat": chat_payload.get("report_chat", {}),
         "agent_chat": chat_payload.get("agent_chat"),
