@@ -19,3 +19,9 @@ build/
 .vscode/
 log/
 backend/log/
+.codex_tmp/*
+.gemini/*
+.playwright-cli/*
+stitch_frontend_reference.zip
+backend/.cache/*
+archive/*
