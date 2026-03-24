@@ -9,6 +9,9 @@
 | E | [phaseE.md](phaseE.md) | Completed | Dashboard & Frontend |
 | F | [phaseF.md](phaseF.md) | Completed | Integration Testing & Evaluation |
 | G | [phaseG.md](phaseG.md) | Completed | McKAInsey Console Rebuild & Real-Time Validation |
-| H | [phaseH.md](phaseH.md) | Completed | Screen 1 Frontend V2 Adoption & Graph Hardening |
-| I | [phaseI.md](phaseI.md) | Completed | Screen 2 Sampling Logic & Agent Graph |
-| J | [phaseJ.md](phaseJ.md) | Awaiting Review | Screen 3 Live Simulation & Screen 4A Reports |
+| H | [Phase H](phaseH.md) | Complete | Screen 1 Frontend V2 Adoption & Graph Hardening |
+| I | [Phase I](phaseI.md) | Complete | Screen 2 Sampling Logic & Agent Graph |
+| J | [Phase J](phaseJ.md) | Complete | Screen 3 Live Simulation & Screen 4A Reports |
+| K | [Phase K](phaseK.md) | In Progress | Screen 2 Redesign |
+
+## Quick Links

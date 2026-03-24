@@ -1,17 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { forceCollide, forceManyBody } from 'd3-force-3d';
-import ForceGraph2D from 'react-force-graph-2d';
-import { ArrowRight, Eye, EyeOff, Loader2, Shuffle, Sparkles, Users } from 'lucide-react';
-import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowRight, Loader2, Shuffle, Sparkles, Users, Info } from 'lucide-react';
+import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts';
 
-import { GlassCard } from '@/components/GlassCard';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useApp } from '@/contexts/AppContext';
-import { Agent } from '@/data/mockData';
 import { previewPopulation } from '@/lib/console-api';
 import { toast } from '@/hooks/use-toast';
+import { SingaporeMap } from '@/components/SingaporeMap';
 
 const INDUSTRY_COLORS = [
   'hsl(193, 100%, 50%)',
@@ -21,29 +19,9 @@ const INDUSTRY_COLORS = [
   'hsl(0, 72%, 51%)',
   'hsl(215, 20%, 55%)',
 ];
-const MIN_NODE_RADIUS = 4;
-const MAX_NODE_RADIUS = 12;
-const NODE_LABEL_GAP = 8;
-const STAGE2_RELATIONSHIP_LABEL_STORAGE_KEY = 'screen2-relationship-labels';
 
 type SampleMode = 'affected_groups' | 'population_baseline';
-type GraphNodeDatum = {
-  id: string;
-  name: string;
-  label: string;
-  subtitle?: string;
-  industryKey: string;
-  score: number;
-  renderRadius: number;
-  x?: number;
-  y?: number;
-};
-type GraphLinkDatum = {
-  source: string | GraphNodeDatum;
-  target: string | GraphNodeDatum;
-  label?: string;
-  reason?: string;
-};
+type GroupDimension = 'industry' | 'ageBucket' | 'planningArea' | 'sex' | 'occupation';
 
 export default function AgentConfig() {
   const {
@@ -70,26 +48,8 @@ export default function AgentConfig() {
     completeStep,
     setCurrentStep,
   } = useApp();
-  const [dimensions, setDimensions] = useState({ width: 500, height: 300 });
-  const [showRelationshipLabels, setShowRelationshipLabels] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.sessionStorage.getItem(STAGE2_RELATIONSHIP_LABEL_STORAGE_KEY) === 'on';
-  });
-  const containerRef = useRef<HTMLDivElement>(null);
-  const graphRef = useRef<any>(null);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const obs = new ResizeObserver(([entry]) => setDimensions({ width: entry.contentRect.width, height: entry.contentRect.height }));
-    obs.observe(containerRef.current);
-    return () => obs.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem(STAGE2_RELATIONSHIP_LABEL_STORAGE_KEY, showRelationshipLabels ? 'on' : 'off');
-    }
-  }, [showRelationshipLabels]);
+  const [groupCategory, setGroupCategory] = useState<string>('industry');
 
   const resetPopulationPreview = useCallback(() => {
     setPopulationArtifact(null);
@@ -208,438 +168,310 @@ export default function AgentConfig() {
   const ageBuckets = useMemo(() => buildAgeBuckets(sampledPersonas), [sampledPersonas]);
   const industryData = useMemo(() => buildIndustryMix(sampledPersonas), [sampledPersonas]);
   const topAreas = useMemo(() => buildTopAreas(artifact?.representativeness?.planning_area_distribution ?? {}), [artifact]);
-  const graphLegend = useMemo(() => buildIndustryLegend(artifact), [artifact]);
 
-  const graphData = useMemo(() => {
-    if (!artifact) {
-      return { nodes: [] as GraphNodeDatum[], links: [] as GraphLinkDatum[] };
-    }
-    const colorGroups = graphLegend.map((entry) => entry.key);
-    return {
-      nodes: artifact.agent_graph.nodes.map((node) => {
-        const industryKey = normalizeIndustryKey(String(node.industry ?? 'Other'), colorGroups);
-        return {
-          id: node.id,
-          name: formatLabel(node.label),
-          label: formatLabel(node.label),
-          subtitle: node.subtitle,
-          industryKey,
-          score: normalizeNodeScore(node.score),
-          renderRadius: radiusFromScore(node.score),
-        };
-      }),
-      links: artifact.agent_graph.links.map((link) => ({
-        source: link.source,
-        target: link.target,
-        label: link.label || link.reason || '',
-        reason: link.reason,
-      })),
+  const waffleGroups = useMemo(() => {
+    if (!sampledPersonas.length) return [];
+    
+    const resolveKey = (row: any, dim: string) => {
+      if (dim === 'industry') return formatLabel(String(row.persona.industry ?? 'Other'));
+      if (dim === 'planningArea') return formatLabel(String(row.persona.planning_area ?? 'Unknown'));
+      if (dim === 'sex') return formatLabel(String(row.persona.sex ?? 'Unknown'));
+      if (dim === 'occupation') return formatLabel(String(row.persona.occupation ?? 'Unknown'));
+      if (dim === 'ageBucket') {
+        const age = Number(row.persona.age ?? 0);
+        return age <= 24 ? '18-24' : age <= 34 ? '25-34' : age <= 49 ? '35-49' : '50+';
+      }
+      return 'Other';
     };
-  }, [artifact, graphLegend]);
 
-  useEffect(() => {
-    if (!graphRef.current?.d3Force || graphData.nodes.length === 0) return;
+    const grouped = new Map<string, any[]>();
+    sampledPersonas.forEach((row) => {
+      const key = resolveKey(row, groupCategory);
+      const score = Math.max(0, Math.min(1, Number(row.selection_reason?.score ?? 0.4)));
+      const agent = {
+        id: row.agent_id,
+        categoryName: key,
+        score,
+        persona: row.persona,
+        selection_reason: row.selection_reason
+      };
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(agent);
+    });
 
-    const maxRadius = Math.max(...graphData.nodes.map((node) => node.renderRadius), MIN_NODE_RADIUS);
-    graphRef.current.d3Force('charge', forceManyBody().strength(-(120 + maxRadius * 16)));
-    graphRef.current.d3Force('collide', forceCollide((node: GraphNodeDatum) => node.renderRadius + 24).iterations(2));
+    const sortedGroups = Array.from(grouped.entries())
+      .sort((a, b) => b[1].length - a[1].length);
 
-    const linkForce = graphRef.current.d3Force('link');
-    if (linkForce && typeof linkForce.distance === 'function') {
-      linkForce.distance((link: { source: GraphNodeDatum; target: GraphNodeDatum }) => {
-        const sourceRadius = link.source?.renderRadius ?? MIN_NODE_RADIUS;
-        const targetRadius = link.target?.renderRadius ?? MIN_NODE_RADIUS;
-        return Math.max(90, (sourceRadius + targetRadius) * 8);
-      });
+    // Keep top 12, group rest into "Other"
+    let finalGroups = sortedGroups.slice(0, 11);
+    const rest = sortedGroups.slice(11);
+    if (rest.length > 0) {
+      const otherAgents = rest.flatMap(g => g[1]);
+      const existingOther = finalGroups.find(g => g[0] === 'Other');
+      if (existingOther) {
+        existingOther[1].push(...otherAgents);
+      } else {
+        finalGroups.push(['Other', otherAgents]);
+      }
     }
-    graphRef.current.d3ReheatSimulation?.();
-  }, [graphData]);
+
+    return finalGroups.map(([name, agents]) => ({ name, agents }));
+  }, [sampledPersonas, groupCategory]);
 
   const generationDisabled = populationLoading || !sessionId || !knowledgeArtifact;
 
   return (
-    <div className="flex flex-col gap-6 h-full p-6 overflow-y-auto scrollbar-thin">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-8 h-full p-2 lg:p-6 overflow-y-auto scrollbar-thin bg-background">
+      {/* Header */}
+      <div className="flex items-center justify-between pb-4 border-b border-white/5">
         <div>
-          <h2 className="text-xl font-bold text-foreground">Agent Configuration</h2>
-          <p className="text-sm text-muted-foreground">Generate a live Singapore cohort from the Nemotron population dataset</p>
+          <h2 className="text-2xl font-semibold text-foreground tracking-tight">Agent Configuration</h2>
+          <p className="text-sm text-muted-foreground mt-1 font-light">Generate and refine an AI population cohort matching your parameters</p>
         </div>
         <div className="flex gap-3">
-          <Button onClick={handleGenerate} disabled={generationDisabled} className="bg-primary text-primary-foreground">
-            {populationLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</> : <><Sparkles className="w-4 h-4" /> Generate Agents</>}
+          <Button onClick={handleGenerate} disabled={generationDisabled} className="bg-primary text-primary-foreground font-medium px-5">
+            {populationLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Sampling...</> : <><Sparkles className="w-4 h-4 mr-2" /> Sample Population</>}
           </Button>
           {artifact && (
-            <Button onClick={handleResample} disabled={populationLoading} variant="outline" className="border-white/12 text-foreground hover:bg-white/6">
-              <Shuffle className="w-4 h-4" /> Re-sample
+            <Button onClick={handleResample} disabled={populationLoading} variant="outline" className="border-white/10 text-foreground hover:bg-white/5">
+              <Shuffle className="w-4 h-4 mr-2" /> Re-sample
             </Button>
           )}
           {artifact && (
-            <Button onClick={handleProceed} variant="outline" className="border-success/30 text-success hover:bg-success/10">
-              <ArrowRight className="w-4 h-4" /> Proceed
+            <Button onClick={handleProceed} variant="outline" className="border-success/30 text-success hover:bg-success/10 px-6">
+              Proceed <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           )}
         </div>
       </div>
 
-      <GlassCard className="p-5">
-        <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-6">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm text-muted-foreground">Number of Agents</span>
-              <span className="text-2xl font-mono font-bold text-primary">{agentCount.toLocaleString()}</span>
-            </div>
-            <Slider
-              value={[agentCount]}
-              onValueChange={handleCountChange}
-              min={100}
-              max={500}
-              step={100}
-              className="w-full"
-            />
-            <div className="flex justify-between mt-1 text-[10px] text-muted-foreground font-mono">
-              <span>100</span><span>500</span>
-            </div>
+      {populationError && (
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm p-3 rounded-md">
+          {populationError}
+        </div>
+      )}
 
-            <div className="mt-5">
-              <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Sampling Mode</div>
-              <div className="flex flex-wrap gap-2">
-                <ModeButton
-                  active={sampleMode === 'affected_groups'}
-                  label="Affected Groups"
-                  onClick={() => handleSampleModeChange('affected_groups')}
-                />
-                <ModeButton
-                  active={sampleMode === 'population_baseline'}
-                  label="Population Baseline"
-                  onClick={() => handleSampleModeChange('population_baseline')}
-                />
-              </div>
-            </div>
+      {/* Row 1: Configuration */}
+      <div className="grid grid-cols-1 xl:grid-cols-[0.8fr_1.2fr] gap-6">
+        <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-sm font-medium text-foreground">Target Sample Size</span>
+            <span className="text-2xl font-mono text-primary/90">{agentCount.toLocaleString()}</span>
+          </div>
+          <Slider
+            value={[agentCount]}
+            onValueChange={handleCountChange}
+            min={100}
+            max={500}
+            step={50}
+            className="w-full mb-2"
+          />
+          <div className="flex justify-between text-[11px] text-muted-foreground font-mono mb-6">
+            <span>100</span><span>500</span>
           </div>
 
-          <div>
-            <label htmlFor="sampling-instructions" className="text-sm font-medium text-foreground mb-2 block">
-              Sampling Instructions
-            </label>
-            <Textarea
-              id="sampling-instructions"
-              value={samplingInstructions}
-              onChange={(event) => handleInstructionsChange(event.target.value)}
-              placeholder="Describe which groups to bias toward, compare against, or keep balanced."
-              className="bg-background/50 border-border text-foreground min-h-[130px] resize-none"
+          <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3">Sampling Strategy</div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <ModeButton
+              active={sampleMode === 'affected_groups'}
+              label="Affected Cohort"
+              onClick={() => handleSampleModeChange('affected_groups')}
             />
-            <p className="text-[11px] text-muted-foreground mt-2">
-              This is parsed into hard filters, soft boosts, exclusions, and distribution hints before sampling.
-            </p>
+            <ModeButton
+              active={sampleMode === 'population_baseline'}
+              label="Singapore Baseline"
+              onClick={() => handleSampleModeChange('population_baseline')}
+            />
           </div>
         </div>
-      </GlassCard>
 
-      {populationError && (
-        <p className="text-xs text-destructive">{populationError}</p>
-      )}
+        <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5 shadow-sm flex flex-col">
+          <label htmlFor="sampling-instructions" className="text-sm font-medium text-foreground mb-3 flex items-center justify-between">
+            <span>Strategic Parameters</span>
+            {artifact && (
+              <span className="text-xs font-normal text-muted-foreground border border-white/10 px-2 py-0.5 rounded-sm bg-black/20">
+                Mode: {artifact.sample_mode === 'affected_groups' ? 'Targeted' : 'Baseline'}
+              </span>
+            )}
+          </label>
+          <Textarea
+            id="sampling-instructions"
+            value={samplingInstructions}
+            onChange={(event) => handleInstructionsChange(event.target.value)}
+            placeholder="E.g. Over-sample gig workers under 30. Exclude tourists..."
+            className="bg-[#0A0A0A] border-white/10 text-foreground flex-1 min-h-[100px] resize-none focus-visible:ring-1 focus-visible:ring-primary/50 text-sm leading-relaxed"
+          />
+          <p className="text-[11px] text-muted-foreground/70 mt-3 flex items-center gap-1.5">
+            <Info className="w-3 h-3" /> System automatically extracts soft boosts, hard filters, and distribution quotas.
+          </p>
+          {artifact && artifact.parsed_sampling_instructions?.notes_for_ui?.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-white/5 flex-1">
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2">Parsed Strategy Notes</div>
+              <ul className="text-xs text-muted-foreground/80 space-y-1.5 list-disc pl-3 marker:text-primary">
+                {artifact.parsed_sampling_instructions.notes_for_ui.map((note: string) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
 
       {artifact ? (
         <>
-          <GlassCard className="p-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <MetricCard label="Candidate Pool" value={artifact.candidate_count} />
-              <MetricCard label="Sample Size" value={artifact.sample_count} />
-              <MetricCard label="Sample Seed" value={artifact.sample_seed} />
-            </div>
-          </GlassCard>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <GlassCard className="p-4">
-              <h4 className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Age Distribution</h4>
-              <ResponsiveContainer width="100%" height={160}>
-                <BarChart data={ageBuckets}>
-                  <XAxis dataKey="name" tick={{ fill: 'hsl(215,20%,55%)', fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis hide />
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Bar dataKey="count" fill="hsl(193,100%,50%)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </GlassCard>
-
-            <GlassCard className="p-4">
-              <h4 className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Industry Mix</h4>
-              <ResponsiveContainer width="100%" height={160}>
-                <PieChart>
-                  <Pie data={industryData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={35} outerRadius={60} paddingAngle={2}>
-                    {industryData.map((entry, index) => <Cell key={entry.name} fill={INDUSTRY_COLORS[index % INDUSTRY_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip contentStyle={tooltipStyle} />
-                </PieChart>
-              </ResponsiveContainer>
-            </GlassCard>
-
-            <GlassCard className="p-4">
-              <h4 className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Top Planning Areas</h4>
-              <ResponsiveContainer width="100%" height={160}>
-                <BarChart data={topAreas} layout="vertical">
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="name" tick={{ fill: 'hsl(215,20%,55%)', fontSize: 9 }} axisLine={false} tickLine={false} width={70} />
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Bar dataKey="count" fill="hsl(38,92%,50%)" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </GlassCard>
+          {/* Analytical Header Stats */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/5 border border-white/5 rounded-xl overflow-hidden">
+            <InlineStat label="Candidate Shortlist" value={artifact.candidate_count.toLocaleString()} tooltipText="Initial candidate pool passing hard demographic filters." />
+            <InlineStat label="Semantic Rerank" value={artifact.selection_diagnostics?.semantic_rerank_count?.toLocaleString() ?? 0} tooltipText="Secondary retrieval phase that refines the candidate pool based on exact meaning and context." />
+            <InlineStat label="Target Sample Size" value={artifact.sample_count.toLocaleString()} />
+            <InlineStat label="Representativeness" value={artifact.representativeness.status} highlight={artifact.representativeness.status === 'Pass'} tooltipText="Statistical parity check against baseline distributions." />
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-[0.92fr_1.08fr] gap-4">
-            <GlassCard className="p-4">
-              <h4 className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Parsed Instructions</h4>
-              {artifact.parsed_sampling_instructions.notes_for_ui.length > 0 ? (
-                <div className="space-y-2 text-sm text-foreground">
-                  {artifact.parsed_sampling_instructions.notes_for_ui.map((note) => (
-                    <p key={note}>{note}</p>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">No additional parsing notes for this cohort.</p>
-              )}
-              <div className="mt-4 space-y-3">
-                <ParsedInstructionSection
-                  title="Hard Filters"
-                  values={flattenInstructionBucket(artifact.parsed_sampling_instructions.hard_filters)}
-                  emptyLabel="No hard filters"
-                />
-                <ParsedInstructionSection
-                  title="Soft Boosts"
-                  values={flattenInstructionBucket(artifact.parsed_sampling_instructions.soft_boosts)}
-                  emptyLabel="No soft boosts"
-                />
-                <ParsedInstructionSection
-                  title="Exclusions"
-                  values={flattenInstructionBucket(artifact.parsed_sampling_instructions.exclusions)}
-                  emptyLabel="No exclusions"
-                />
-                <ParsedInstructionSection
-                  title="Distribution Targets"
-                  values={flattenInstructionBucket(artifact.parsed_sampling_instructions.distribution_targets)}
-                  emptyLabel="No distribution targets"
-                />
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-                <DiagnosticStat label="Shortlist" value={artifact.selection_diagnostics.shortlist_count ?? 0} />
-                <DiagnosticStat label="Semantic Rerank" value={artifact.selection_diagnostics.semantic_rerank_count ?? 0} />
-                <DiagnosticStat label="Mode" value={artifact.sample_mode === 'affected_groups' ? 'Affected' : 'Baseline'} />
-                <DiagnosticStat label="Status" value={artifact.representativeness.status} />
-              </div>
-            </GlassCard>
+          {/* Row 2: Demographics & Geography */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Age Stratification</h4>
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart data={ageBuckets} margin={{ top: 0, right: 0, left: -25, bottom: 0 }}>
+                  <XAxis dataKey="name" tick={{ fill: 'hsl(215,20%,55%)', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: 'hsl(215,20%,40%)', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.02)' }} content={<CustomBarTooltip />} />
+                  <Bar dataKey="count" fill="hsl(193, 100%, 50%)" radius={[2, 2, 0, 0]} maxBarSize={48} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
 
-            <GlassCard className="p-4">
-              <h4 className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Selection Rationale</h4>
-              <div className="space-y-3">
-                {sampledPersonas.slice(0, 3).map((row) => (
-                  <div key={row.agent_id} className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-medium text-foreground">{formatLabel(String(row.persona.occupation ?? row.agent_id))}</div>
-                        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                          {String(row.persona.planning_area ?? 'Unknown')} · {String(row.persona.industry ?? 'Unknown')}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-mono text-primary">{Number(row.selection_reason.score).toFixed(2)}</div>
-                        <div className="text-[10px] text-muted-foreground">selection score</div>
-                      </div>
+            <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Industry Sector Mix</h4>
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart data={industryData} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
+                  <XAxis type="number" hide />
+                  <YAxis type="category" dataKey="name" tick={{ fill: 'hsl(215,20%,65%)', fontSize: 11 }} axisLine={false} tickLine={false} width={135} />
+                  <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.02)' }} content={<CustomBarTooltip />} />
+                  <Bar dataKey="value" radius={[0, 2, 2, 0]} maxBarSize={20}>
+                    {industryData.map((entry, index) => (
+                      <Cell key={entry.name} fill={INDUSTRY_COLORS[index % INDUSTRY_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5 flex flex-col">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Top Planning Areas</h4>
+              <div className="flex-1 -mx-2 -mb-2 rounded-lg overflow-hidden border border-white/5">
+                <SingaporeMap areaData={topAreas} />
+              </div>
+            </div>
+          </div>
+
+          {/* Row 3: Cohort Explorer (Waffle Grid Pane) */}
+          <div className="bg-[#0e0e0e] border border-white/5 rounded-xl flex flex-col min-h-[800px] overflow-hidden">
+            <div className="p-5 border-b border-white/5 shrink-0 flex flex-col md:flex-row items-center justify-between bg-[#111111]">
+              <div>
+                <h3 className="text-base font-medium text-foreground">Cohort Explorer</h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Individual personas visualized by categorical grid. Hover over any block to view exhaustive profile metadata.
+                </p>
+              </div>
+              <div className="flex flex-col md:flex-row md:items-center mt-4 md:mt-0 gap-x-6 gap-y-3 bg-black/20 p-2 md:px-4 md:py-2 rounded-md border border-white/5">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground/50 uppercase tracking-widest font-semibold mr-1">Sort By</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    <MetricToggle active={groupCategory === 'industry'} onClick={() => setGroupCategory('industry')} label="Industry" />
+                    <MetricToggle active={groupCategory === 'ageBucket'} onClick={() => setGroupCategory('ageBucket')} label="Age" />
+                    <MetricToggle active={groupCategory === 'planningArea'} onClick={() => setGroupCategory('planningArea')} label="Area" />
+                    <MetricToggle active={groupCategory === 'occupation'} onClick={() => setGroupCategory('occupation')} label="Occupation" />
+                    <MetricToggle active={groupCategory === 'sex'} onClick={() => setGroupCategory('sex')} label="Gender" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 p-6 md:p-8 overflow-y-auto scrollbar-thin">
+              <div className="flex flex-wrap gap-x-8 gap-y-10">
+                {waffleGroups.map((group, groupIndex) => (
+                  <div key={group.name} className="flex flex-col shrink-0 min-w-[200px]">
+                    <div className="flex items-baseline justify-between mb-3 border-b border-white/5 pb-1 w-full max-w-[340px]">
+                      <h4 className="text-sm font-semibold text-white/90 truncate max-w-[280px]" title={group.name}>{group.name}</h4>
+                      <span className="text-[11px] font-mono text-muted-foreground ml-3 bg-white/5 px-2 py-0.5 rounded">{group.agents.length}</span>
                     </div>
-                    <p className="mt-2 text-xs text-muted-foreground">{row.selection_reason.semantic_summary}</p>
+                    <div className="flex flex-wrap gap-1 max-w-[340px]">
+                      {group.agents.map((agent: any) => (
+                        <TooltipProvider key={agent.id} delayDuration={100}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div 
+                                className="w-3.5 h-3.5 rounded-[2px] transition-transform hover:scale-125 hover:z-10 cursor-crosshair border border-black/20"
+                                style={{ backgroundColor: INDUSTRY_COLORS[groupIndex % INDUSTRY_COLORS.length] }}
+                                aria-label={`Persona ${agent.id}`}
+                              />
+                            </TooltipTrigger>
+                            <TooltipContent 
+                              className="max-w-[340px] w-[340px] text-xs bg-[#111111] text-white border border-white/10 shadow-2xl p-0 overflow-hidden" 
+                              side="top"
+                              align="center"
+                              sideOffset={6}
+                            >
+                               <WaffleTooltipContent data={agent} />
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
-            </GlassCard>
+            </div>
           </div>
         </>
-      ) : null}
-
-      <GlassCard glow={artifact ? 'primary' : 'none'} className="p-4 flex-1 min-h-[320px]">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">Agent Graph</h3>
-            <p className="text-xs text-muted-foreground mt-1">Live cohort graph using shared planning area, industry, and occupation edges</p>
-          </div>
-          {artifact && graphLegend.length > 0 && (
-            <div className="flex flex-wrap justify-end gap-3">
-              {graphLegend.map((entry) => (
-                <span key={entry.key} className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-                  {entry.label}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {artifact && (
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="text-[11px] text-muted-foreground">
-              {artifact.sample_mode === 'affected_groups'
-                ? 'Targeted toward the most affected groups in the document.'
-                : 'Balanced baseline sample across the broader Singapore population.'}
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowRelationshipLabels((current) => !current)}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] transition-colors ${
-                showRelationshipLabels
-                  ? 'border-primary/60 bg-primary/10 text-foreground'
-                  : 'border-white/8 bg-white/4 text-muted-foreground hover:border-white/15 hover:text-foreground'
-              }`}
-            >
-              {showRelationshipLabels ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-              {showRelationshipLabels ? 'Relationship Labels On' : 'Relationship Labels Off'}
-            </button>
-          </div>
-        )}
-
-        <div ref={containerRef} className="w-full h-[320px] rounded-lg overflow-hidden bg-background/30">
-          {artifact && graphData.nodes.length > 0 ? (
-            <ForceGraph2D
-              ref={graphRef}
-              graphData={graphData}
-              width={dimensions.width}
-              height={dimensions.height}
-              nodeColor={(node: GraphNodeDatum) => legendColorFor(node.industryKey, graphLegend)}
-              nodeRelSize={1}
-              linkColor={() => 'hsl(225, 20%, 25%)'}
-              linkWidth={1.25}
-              linkLabel={(link: GraphLinkDatum) => link.label || link.reason || ''}
-              nodeCanvasObjectMode={() => 'replace'}
-              nodeCanvasObject={(node: GraphNodeDatum, ctx, globalScale) => {
-                if (typeof node.x !== 'number' || typeof node.y !== 'number') return;
-
-                const radius = node.renderRadius;
-                const fontSize = Math.max(8, 11 / globalScale);
-                const labelX = node.x + radius + NODE_LABEL_GAP;
-                const labelY = node.y;
-                const labelWidth = ctx.measureText(node.name).width;
-
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-                ctx.fillStyle = legendColorFor(node.industryKey, graphLegend);
-                ctx.fill();
-                ctx.lineWidth = 1;
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
-                ctx.stroke();
-
-                ctx.font = `${fontSize}px Inter, sans-serif`;
-                ctx.fillStyle = 'rgba(8, 10, 16, 0.78)';
-                ctx.fillRect(labelX - 4, labelY - fontSize / 2 - 3, labelWidth + 8, fontSize + 6);
-
-                ctx.textAlign = 'left';
-                ctx.textBaseline = 'middle';
-                ctx.fillStyle = 'hsl(210, 40%, 93%)';
-                ctx.fillText(node.name, labelX, labelY);
-                ctx.restore();
-              }}
-              linkCanvasObjectMode={() => 'after'}
-              linkCanvasObject={(link: GraphLinkDatum, ctx, globalScale) => {
-                if (!showRelationshipLabels) {
-                  return;
-                }
-                const label = (link.label || link.reason || '').trim();
-                const source = typeof link.source === 'string' ? undefined : link.source;
-                const target = typeof link.target === 'string' ? undefined : link.target;
-                if (!label || typeof source?.x !== 'number' || typeof source?.y !== 'number' || typeof target?.x !== 'number' || typeof target?.y !== 'number') {
-                  return;
-                }
-
-                const midX = (source.x + target.x) / 2;
-                const midY = (source.y + target.y) / 2;
-                const dx = target.x - source.x;
-                const dy = target.y - source.y;
-                const length = Math.hypot(dx, dy) || 1;
-                const normalX = -dy / length;
-                const normalY = dx / length;
-                const fontSize = Math.max(8.5, 10.5 / globalScale);
-                const textWidth = ctx.measureText(label).width;
-                const offset = Math.min(20, Math.max(8, length * 0.08));
-
-                ctx.save();
-                ctx.font = `${fontSize}px Inter, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillStyle = 'rgba(8, 10, 16, 0.84)';
-                ctx.fillRect(midX + normalX * offset - (textWidth + 12) / 2, midY + normalY * offset - (fontSize + 8) / 2, textWidth + 12, fontSize + 8);
-                ctx.fillStyle = 'hsl(210, 28%, 96%)';
-                ctx.fillText(label, midX + normalX * offset, midY + normalY * offset);
-                ctx.restore();
-              }}
-              backgroundColor="transparent"
-              cooldownTicks={80}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              {populationLoading ? (
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                  <span>Generating population cohort...</span>
-                </div>
-              ) : (
-                <div className="text-center">
-                  <Users className="w-8 h-8 mx-auto mb-3 text-muted-foreground/60" />
-                  <p>Generate agents to preview the sampled cohort graph.</p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </GlassCard>
-    </div>
-  );
-}
-
-function MetricCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div>
-      <div className="text-xl font-bold font-mono text-primary">{value}</div>
-      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</div>
-    </div>
-  );
-}
-
-function DiagnosticStat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-lg border border-white/8 bg-white/[0.02] px-3 py-2">
-      <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-      <div className="mt-1 text-sm font-medium text-foreground">{value}</div>
-    </div>
-  );
-}
-
-function ParsedInstructionSection({
-  title,
-  values,
-  emptyLabel,
-}: {
-  title: string;
-  values: Array<{ key: string; value: string }>;
-  emptyLabel: string;
-}) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{title}</div>
-      {values.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {values.map((entry) => (
-            <span
-              key={`${title}-${entry.key}-${entry.value}`}
-              className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-foreground"
-            >
-              <span className="text-muted-foreground">{formatInstructionKey(entry.key)}</span>
-              <span>{formatLabel(entry.value)}</span>
-            </span>
-          ))}
-        </div>
       ) : (
-        <p className="mt-2 text-xs text-muted-foreground">{emptyLabel}</p>
+        <div className="flex-1 flex items-center justify-center min-h-[400px] border border-white/5 border-dashed rounded-xl bg-white/[0.01]">
+          {populationLoading ? (
+            <div className="flex flex-col items-center gap-4 text-primary">
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <span className="text-sm font-medium">Sampling population...</span>
+            </div>
+          ) : (
+            <div className="text-center text-muted-foreground/60 max-w-sm">
+              <Users className="w-10 h-10 mx-auto mb-4 opacity-50" />
+              <p className="text-sm">Configure parameters and generate the initial cohort to populate the analytics dashboard.</p>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
+}
+
+// Subcomponents
+
+function InlineStat({ label, value, highlight = false, tooltipText }: { label: string; value: string | number; highlight?: boolean; tooltipText?: string }) {
+  const inner = (
+    <div className={`p-4 bg-[#0e0e0e] flex flex-col justify-center h-full transition-colors ${highlight ? 'text-primary' : ''} ${tooltipText ? 'hover:bg-white-[0.02]' : ''}`}>
+      <div className="text-2xl font-mono font-medium tracking-tight mb-1" style={highlight ? { color: 'hsl(160, 84%, 45%)' } : {}}>{value}</div>
+      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+        {label}
+        {tooltipText && <Info className="w-3 h-3 text-muted-foreground/60" />}
+      </div>
+    </div>
+  );
+
+  if (tooltipText) {
+    return (
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="cursor-help">{inner}</div>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-[220px] text-xs leading-relaxed bg-[#1A1A1A] text-white/90 border-white/10" side="bottom">
+            {tooltipText}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+  return inner;
 }
 
 function ModeButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
@@ -647,10 +479,10 @@ function ModeButton({ active, label, onClick }: { active: boolean; label: string
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full border px-4 py-2 text-xs uppercase tracking-[0.18em] transition-colors ${
+      className={`px-4 py-2 text-xs font-medium uppercase tracking-wider rounded-md transition-colors ${
         active
-          ? 'border-primary/60 bg-primary/12 text-foreground'
-          : 'border-white/8 bg-white/[0.03] text-muted-foreground hover:border-white/15 hover:text-foreground'
+          ? 'bg-white/10 text-white'
+          : 'bg-transparent text-muted-foreground hover:bg-white/5 hover:text-foreground'
       }`}
     >
       {label}
@@ -658,15 +490,118 @@ function ModeButton({ active, label, onClick }: { active: boolean; label: string
   );
 }
 
-function flattenInstructionBucket(bucket: Record<string, string[]>) {
-  return Object.entries(bucket).flatMap(([key, values]) =>
-    values.map((value) => ({ key, value })),
+function MetricToggle({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1.5 text-[11px] font-medium transition-all rounded-sm ${
+        active 
+        ? 'bg-white/10 text-white shadow-sm' 
+        : 'text-muted-foreground/80 hover:text-white hover:bg-white/5'
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 
-function formatInstructionKey(key: string) {
-  return key.replace(/_/g, ' ');
+const CustomBarTooltip = ({ active, payload }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-[#111111] border border-white/10 px-3 py-2 rounded shadow-xl text-xs">
+        <span className="text-muted-foreground mr-3">{payload[0].payload.name}:</span>
+        <span className="font-mono text-white tracking-widest">{payload[0].value}</span>
+      </div>
+    );
+  }
+  return null;
+};
+
+function WaffleTooltipContent({ data }: { data: any }) {
+  const persona = data.persona;
+  
+  // Parse lists or unstructured text
+  const rawSkills = String(persona.skills_and_expertise_list || persona.skills_and_expertise || '');
+  const skills = rawSkills.split('\\n').filter(Boolean).map(s => s.replace(/^- /, ''));
+  
+  const rawHobbies = String(persona.hobbies_and_interests_list || persona.hobbies_and_interests || '');
+  const hobbies = rawHobbies.split('\\n').filter(Boolean).map(s => s.replace(/^- /, ''));
+
+  return (
+    <div className="flex flex-col text-left">
+      <div className="bg-[#1A1A1A] p-4 border-b border-white/5">
+        <div className="flex justify-between items-start mb-1">
+          <div className="font-semibold text-white text-[13px] tracking-tight leading-snug pr-2">
+            {formatLabel(String(persona.occupation ?? 'Resident'))}
+          </div>
+          <span className="bg-primary/20 text-primary px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap">
+            Match: {(data.score * 100).toFixed(0)}%
+          </span>
+        </div>
+        <div className="text-[11px] text-muted-foreground mt-1">
+          {persona.age} yrs • {persona.sex} • {formatLabel(String(persona.marital_status ?? 'Single'))}
+        </div>
+      </div>
+      
+      <div className="p-4 space-y-3 bg-[#0e0e0e]">
+        <div className="grid grid-cols-[80px_1fr] gap-x-2 gap-y-2 text-[11px]">
+          <span className="text-white/40">Location</span>
+          <span className="text-white/90 truncate">{formatLabel(String(persona.planning_area ?? ''))}</span>
+          
+          <span className="text-white/40">Education</span>
+          <span className="text-white/90 truncate">{formatLabel(String(persona.education_level ?? ''))}</span>
+          
+          <span className="text-white/40">Industry</span>
+          <span className="text-white/90 truncate">{formatLabel(String(persona.industry ?? ''))}</span>
+          
+          <span className="text-white/40">Culture</span>
+          <span className="text-white/90 truncate">{formatLabel(String(persona.cultural_background ?? ''))}</span>
+          
+          <span className="text-white/40" title="Salary Range (Mock)">Salary</span>
+          <span className="text-white/90 truncate">{String(persona.occupation ?? '').toLowerCase().includes('manager') ? '$8k - $12k SGD' : '$4k - $7k SGD'}</span>
+        </div>
+
+        {skills.length > 0 && (
+          <div className="border-t border-white/5 pt-3">
+            <div className="text-[9px] uppercase tracking-widest text-[#666] mb-1.5">Skills & Expertise</div>
+            <div className="flex flex-wrap gap-1">
+              {skills.slice(0, 4).map((skill: string, i: number) => (
+                <span key={i} className="text-[9px] bg-white/5 text-white/70 px-1.5 py-0.5 rounded border border-white/[0.03]">{skill}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {hobbies.length > 0 && (
+          <div className="border-t border-white/5 pt-3">
+            <div className="text-[9px] uppercase tracking-widest text-[#666] mb-1.5">Hobbies</div>
+            <div className="flex flex-wrap gap-1">
+              {hobbies.slice(0, 3).map((hobby: string, i: number) => (
+                <span key={i} className="text-[9px] bg-white/5 text-white/70 px-1.5 py-0.5 rounded border border-white/[0.03]">{hobby}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="border-t border-white/5 pt-3">
+          <div className="text-[9px] uppercase tracking-widest text-[#666] mb-1">Career Goal</div>
+          <div className="text-[10px] text-white/70 leading-relaxed italic line-clamp-2">
+            "{String(persona.career_goals_and_ambitions ?? 'Not specified').trim()}"
+          </div>
+        </div>
+
+        {data.selection_reason?.semantic_summary && (
+          <div className="mt-1 pt-3 border-t border-white/5 text-[10px] text-primary/80 leading-relaxed italic">
+             Reason: {data.selection_reason.semantic_summary}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
+
+// Data Transformers
 
 function buildAgeBuckets(sampledPersonas: Array<{ persona: Record<string, unknown> }>) {
   const buckets = [
@@ -691,61 +626,25 @@ function buildIndustryMix(sampledPersonas: Array<{ persona: Record<string, unkno
     acc[industry] = (acc[industry] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
-  return Object.entries(counts).map(([name, value]) => ({ name, value }));
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1]) // highest first
+    .slice(0, 6)
+    .map(([name, value]) => ({ name: name.length > 20 ? name.slice(0, 20)+'…' : name, value }));
 }
 
 function buildTopAreas(distribution: Record<string, number>) {
   return Object.entries(distribution)
     .sort((left, right) => right[1] - left[1])
     .slice(0, 8)
-    .map(([name, count]) => ({ name: name.length > 10 ? `${name.slice(0, 10)}…` : name, count }));
+    .map(([name, count]) => ({ name: name.length > 15 ? `${name.slice(0, 15)}…` : name, count }));
 }
 
-function buildIndustryLegend(
-  artifact: ReturnType<typeof useApp>['populationArtifact'],
-): Array<{ key: string; label: string; color: string }> {
-  if (!artifact) {
-    return [];
-  }
-  const counts = artifact.agent_graph.nodes.reduce((acc, node) => {
-    const key = normalizeIndustryKey(String(node.industry ?? 'Other'));
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  const ordered = Object.entries(counts)
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 4);
-  const keys = ordered.map(([key]) => key);
-  if (Object.keys(counts).length > keys.length) {
-    keys.push('other');
-  }
-  return keys.map((key, index) => ({
-    key,
-    label: key === 'other' ? 'Other' : formatLabel(key),
-    color: INDUSTRY_COLORS[index % INDUSTRY_COLORS.length],
-  }));
-}
-
-function legendColorFor(key: string, legend: Array<{ key: string; color: string }>) {
-  return legend.find((entry) => entry.key === key)?.color ?? INDUSTRY_COLORS[INDUSTRY_COLORS.length - 1];
-}
-
-function normalizeIndustryKey(rawIndustry: string, visibleKeys?: string[]) {
-  const normalized = rawIndustry.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'other';
-  if (visibleKeys && visibleKeys.length > 0 && !visibleKeys.includes(normalized)) {
-    return 'other';
-  }
-  return normalized;
-}
-
-function normalizeNodeScore(value?: number | null) {
-  const score = Number.isFinite(value) ? Number(value) : 0.4;
-  return Math.max(0, Math.min(1, score));
-}
-
-function radiusFromScore(value?: number | null) {
-  const normalized = normalizeNodeScore(value);
-  return Math.ceil(MIN_NODE_RADIUS + ((MAX_NODE_RADIUS - MIN_NODE_RADIUS) * normalized));
+function formatLabel(raw: string) {
+  return raw
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function nextSeed(previousSeed: number | null) {
@@ -763,8 +662,8 @@ function sampledPersonaToMockAgent(
     selection_reason: { score: number };
   },
   index: number,
-): Agent {
-  const approvalScore = Math.round(Number(row.selection_reason.score ?? 0) * 100);
+): any {
+  const approvalScore = Math.round(Number(row.selection_reason?.score ?? 0.5) * 100);
   return {
     id: row.agent_id,
     name: `${formatLabel(String(row.persona.occupation ?? 'Resident'))} ${index + 1}`,
@@ -779,18 +678,3 @@ function sampledPersonaToMockAgent(
     approvalScore,
   };
 }
-
-function formatLabel(raw: string) {
-  return raw
-    .replace(/_/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-const tooltipStyle = {
-  background: 'hsl(225,40%,8%)',
-  border: '1px solid hsl(225,20%,18%)',
-  borderRadius: 8,
-  color: 'hsl(210,40%,93%)',
-};
