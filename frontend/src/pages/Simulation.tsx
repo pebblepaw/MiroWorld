@@ -1,10 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Loader2, MessageSquare, Play, ThumbsDown, ThumbsUp, TimerReset, Waves, Clock } from "lucide-react";
+import { ArrowRight, Flame, Loader2, MessageSquare, Play, ThumbsDown, ThumbsUp, Clock, TrendingUp, Sparkles, Users, Zap } from "lucide-react";
 
 import { GlassCard } from "@/components/GlassCard";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { Slider } from "@/components/ui/slider";
 import { useApp } from "@/contexts/AppContext";
 import { buildSimulationStreamUrl, SimulationState, startSimulation } from "@/lib/console-api";
 
@@ -30,26 +28,97 @@ type FeedThread = {
 };
 
 // Occupation color mapping for visual variety
-const OCCUPATION_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  "Teacher": { bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-500/30" },
-  "Professional": { bg: "bg-blue-500/15", text: "text-blue-400", border: "border-blue-500/30" },
-  "Manager": { bg: "bg-violet-500/15", text: "text-violet-400", border: "border-violet-500/30" },
-  "Engineer": { bg: "bg-cyan-500/15", text: "text-cyan-400", border: "border-cyan-500/30" },
-  "Nurse": { bg: "bg-rose-500/15", text: "text-rose-400", border: "border-rose-500/30" },
-  "Clerical": { bg: "bg-amber-500/15", text: "text-amber-400", border: "border-amber-500/30" },
-  "Sales": { bg: "bg-orange-500/15", text: "text-orange-400", border: "border-orange-500/30" },
-  "Service": { bg: "bg-pink-500/15", text: "text-pink-400", border: "border-pink-500/30" },
-  "Retired": { bg: "bg-slate-500/15", text: "text-slate-400", border: "border-slate-500/30" },
-  "Student": { bg: "bg-indigo-500/15", text: "text-indigo-400", border: "border-indigo-500/30" },
-  "default": { bg: "bg-primary/15", text: "text-primary", border: "border-primary/30" },
+const OCCUPATION_COLORS: Record<string, { bg: string; text: string; border: string; glow: string }> = {
+  "Teacher": { bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-500/30", glow: "shadow-emerald-500/20" },
+  "Professional": { bg: "bg-blue-500/15", text: "text-blue-400", border: "border-blue-500/30", glow: "shadow-blue-500/20" },
+  "Manager": { bg: "bg-violet-500/15", text: "text-violet-400", border: "border-violet-500/30", glow: "shadow-violet-500/20" },
+  "Engineer": { bg: "bg-cyan-500/15", text: "text-cyan-400", border: "border-cyan-500/30", glow: "shadow-cyan-500/20" },
+  "Nurse": { bg: "bg-rose-500/15", text: "text-rose-400", border: "border-rose-500/30", glow: "shadow-rose-500/20" },
+  "Clerical": { bg: "bg-amber-500/15", text: "text-amber-400", border: "border-amber-500/30", glow: "shadow-amber-500/20" },
+  "Sales": { bg: "bg-orange-500/15", text: "text-orange-400", border: "border-orange-500/30", glow: "shadow-orange-500/20" },
+  "Service": { bg: "bg-pink-500/15", text: "text-pink-400", border: "border-pink-500/30", glow: "shadow-pink-500/20" },
+  "Retired": { bg: "bg-slate-500/15", text: "text-slate-400", border: "border-slate-500/30", glow: "shadow-slate-500/20" },
+  "Student": { bg: "bg-indigo-500/15", text: "text-indigo-400", border: "border-indigo-500/30", glow: "shadow-indigo-500/20" },
+  "Homemaker": { bg: "bg-teal-500/15", text: "text-teal-400", border: "border-teal-500/30", glow: "shadow-teal-500/20" },
+  "Unemployed": { bg: "bg-gray-500/15", text: "text-gray-400", border: "border-gray-500/30", glow: "shadow-gray-500/20" },
+  "Consultant": { bg: "bg-sky-500/15", text: "text-sky-400", border: "border-sky-500/30", glow: "shadow-sky-500/20" },
+  "Analyst": { bg: "bg-lime-500/15", text: "text-lime-400", border: "border-lime-500/30", glow: "shadow-lime-500/20" },
+  "default": { bg: "bg-primary/15", text: "text-primary", border: "border-primary/30", glow: "shadow-primary/20" },
 };
 
-function getOccupationColor(occupation?: string): { bg: string; text: string; border: string } {
+function getOccupationColor(occupation?: string): { bg: string; text: string; border: string; glow: string } {
   if (!occupation) return OCCUPATION_COLORS["default"];
   const key = Object.keys(OCCUPATION_COLORS).find(k => 
     occupation.toLowerCase().includes(k.toLowerCase())
   );
   return OCCUPATION_COLORS[key || "default"];
+}
+
+type SortOption = "new" | "popular";
+
+// Custom styled slider with marks
+function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) {
+  const marks = useMemo(() => Array.from({ length: max - min + 1 }, (_, i) => min + i), [min, max]);
+  const percentage = ((value - min) / (max - min)) * 100;
+  
+  return (
+    <div className="relative w-full py-4">
+      {/* Track background */}
+      <div className="absolute left-0 right-0 h-2 bg-white/5 rounded-full overflow-hidden">
+        {/* Filled track */}
+        <div 
+          className="h-full bg-gradient-to-r from-primary/60 via-primary to-primary/80 transition-all duration-300 ease-out"
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+      
+      {/* Marks */}
+      <div className="absolute left-0 right-0 h-2 flex justify-between items-center px-0">
+        {marks.map((mark) => (
+          <button
+            key={mark}
+            onClick={() => onChange(mark)}
+            className={`relative w-8 h-8 -ml-4 rounded-full flex items-center justify-center transition-all duration-300 group
+              ${value === mark 
+                ? 'scale-110' 
+                : 'hover:scale-105'
+              }
+            `}
+          >
+            {/* Mark dot */}
+            <div className={`w-3 h-3 rounded-full transition-all duration-300 
+              ${value >= mark 
+                ? 'bg-primary shadow-lg shadow-primary/40' 
+                : 'bg-white/20 group-hover:bg-white/40'
+              }
+              ${value === mark ? 'scale-150' : ''}
+            `} />
+            
+            {/* Mark label */}
+            <span className={`absolute -bottom-6 text-xs font-mono transition-all duration-300
+              ${value === mark 
+                ? 'text-primary font-bold scale-110' 
+                : 'text-white/30 group-hover:text-white/60'
+              }
+            `}>
+              {mark}
+            </span>
+          </button>
+        ))}
+      </div>
+      
+      {/* Invisible range input for accessibility and drag */}
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="absolute left-0 right-0 h-8 -mt-3 opacity-0 cursor-pointer"
+      />
+    </div>
+  );
 }
 
 export default function Simulation() {
@@ -68,8 +137,35 @@ export default function Simulation() {
   const [feedThreads, setFeedThreads] = useState<FeedThread[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedRound, setSelectedRound] = useState<number | "all">("all");
+  const [sortBy, setSortBy] = useState<SortOption>("new");
   const streamRef = useRef<EventSource | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
+
+  // Available rounds based on simulationRounds selection (1 to simulationRounds)
+  const availableRounds = useMemo(() => {
+    return Array.from({ length: simulationRounds }, (_, i) => i + 1);
+  }, [simulationRounds]);
+
+  // Filtered and sorted threads
+  const displayedThreads = useMemo(() => {
+    let threads = [...feedThreads];
+    
+    // Filter by round
+    if (selectedRound !== "all") {
+      threads = threads.filter(t => t.roundNo === selectedRound);
+    }
+    
+    // Sort
+    if (sortBy === "popular") {
+      threads.sort((a, b) => (b.likes + b.comments.length) - (a.likes + a.comments.length));
+    } else {
+      // Keep original order (newest first) - already in order they were received
+      threads = threads.reverse();
+    }
+    
+    return threads;
+  }, [feedThreads, selectedRound, sortBy]);
 
   const counters = simulationState?.counters ?? { posts: 0, comments: 0, reactions: 0, active_authors: 0 };
   const running = simulationState?.status === "running";
@@ -238,133 +334,306 @@ export default function Simulation() {
   return (
     <div className="flex h-full p-6 gap-6 overflow-hidden">
       <div className="flex-1 flex flex-col gap-4 min-w-0">
+        {/* Header - removed Generate Report button from here */}
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-foreground">Live Social Simulation</h2>
             <p className="text-sm text-muted-foreground">Real-time Reddit discourse from native OASIS, grounded in the McKAInsey knowledge graph.</p>
           </div>
-          <div className="flex gap-3">
-            {!completed && (
-              <Button onClick={handleStartSimulation} disabled={loading || running || !sessionId || !populationArtifact} className="bg-primary text-primary-foreground">
-                {loading || running ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</> : <><Play className="w-4 h-4" /> Start Simulation</>}
-              </Button>
-            )}
-            {completed && (
-              <Button onClick={handleProceed} variant="outline" className="border-success/30 text-success hover:bg-success/10">
-                <ArrowRight className="w-4 h-4" /> Generate Report
-              </Button>
-            )}
-          </div>
+          {!completed ? (
+            <Button 
+              onClick={handleStartSimulation} 
+              disabled={loading || running || !sessionId || !populationArtifact} 
+              className="bg-primary text-primary-foreground"
+            >
+              {loading || running ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</> : <><Play className="w-4 h-4" /> Start Simulation</>}
+            </Button>
+          ) : (
+            <Button 
+              onClick={handleProceed} 
+              variant="outline" 
+              className="border-success/30 text-success hover:bg-success/10"
+            >
+              <ArrowRight className="w-4 h-4" /> Generate Report
+            </Button>
+          )}
         </div>
 
-        <GlassCard className="p-5">
-          <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] gap-5 items-start">
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm text-muted-foreground">Simulation Rounds</span>
-                <span className="text-2xl font-mono font-bold text-primary">{simulationRounds}</span>
-              </div>
-              <Slider value={[simulationRounds]} onValueChange={(value) => setSimulationRounds(value[0])} min={1} max={8} step={1} />
-              <div className="flex items-center gap-2 mt-3 text-[11px] text-muted-foreground font-mono">
-                <Clock className="w-3.5 h-3.5" />
-                <span>Estimated time: ~{formatSeconds(estimatedTime)}</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <MetricCard label="Visible Events" value={String(simulationState?.event_count ?? 0)} icon={<Waves className="w-4 h-4 text-primary" />} />
-              <MetricCard label="Elapsed" value={formatSeconds(simulationState?.elapsed_seconds ?? 0)} icon={<TimerReset className="w-4 h-4 text-primary" />} />
-              <MetricCard label="ETA" value={formatSeconds(simulationState?.estimated_remaining_seconds ?? estimatedTime)} icon={<TimerReset className="w-4 h-4 text-primary" />} />
-              <MetricCard
-                label="Hottest Thread"
-                value={hottestThread?.title ? `${String(hottestThread.title)} · ${Number(hottestThread.engagement ?? 0)}` : "Awaiting activity"}
-                icon={<MessageSquare className="w-4 h-4 text-primary" />}
-                compact
-              />
-            </div>
-          </div>
-        </GlassCard>
-
-        <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.65fr] gap-4 min-h-0 flex-1">
-          <GlassCard className="p-4 min-h-0 flex flex-col">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Topic Community</h3>
-                <p className="text-xs text-muted-foreground">Auto-scrolling live feed of Reddit posts, comments, and reactions.</p>
-              </div>
-              <div className="text-xs text-muted-foreground font-mono">
-                Round {simulationState?.current_round ?? 0} / {simulationRounds}
-              </div>
-            </div>
-            <Progress value={(((simulationState?.current_round ?? 0) / Math.max(1, simulationRounds)) * 100)} className="h-2 mb-4" />
-
-            <div ref={feedRef} className="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
-              {feedThreads.map((thread) => {
-                const colors = getOccupationColor(thread.actorOccupation);
-                return (
-                  <GlassCard key={thread.id} className={`p-4 bg-white/[0.03] border ${colors.border} hover:bg-white/[0.05] transition-colors`}>
-                    <div className="flex items-start justify-between gap-4 mb-2">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-full ${colors.bg} flex items-center justify-center text-sm font-bold ${colors.text} border ${colors.border}`}>
-                          {thread.actorName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                        </div>
-                        <div>
-                          <div className={`text-sm font-semibold ${colors.text}`}>{thread.actorName}</div>
-                          <div className="text-[11px] text-muted-foreground">{thread.actorSubtitle}</div>
-                        </div>
-                      </div>
-                      <div className="text-[11px] text-muted-foreground font-mono bg-white/5 px-2 py-1 rounded">R{thread.roundNo}</div>
-                    </div>
-                    <h4 className="text-sm font-semibold text-foreground mb-1">{thread.title}</h4>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{thread.content}</p>
-                    <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1 hover:text-emerald-400 transition-colors"><ThumbsUp className="w-3 h-3" /> {thread.likes}</span>
-                      <span className="flex items-center gap-1 hover:text-rose-400 transition-colors"><ThumbsDown className="w-3 h-3" /> {thread.dislikes}</span>
-                      <span className="flex items-center gap-1 hover:text-primary transition-colors"><MessageSquare className="w-3 h-3" /> {thread.comments.length}</span>
-                    </div>
-                    {thread.comments.length > 0 && (
-                      <div className="mt-3 space-y-2 border-l-2 border-white/10 pl-3">
-                        {thread.comments.map((comment) => (
-                          <div key={comment.id} className="text-xs">
-                            <span className="font-medium text-foreground">{comment.actorName}</span>
-                            <span className="text-muted-foreground ml-2">{comment.content}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </GlassCard>
-                );
-              })}
-              {feedThreads.length === 0 && (
-                <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
-                  Configure rounds and start the simulation
+        {/* Main Content: Number Picker + Feed + Stats */}
+        <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-5 min-h-0 flex-1">
+          {/* Left Column: Number Picker + Feed */}
+          <div className="flex flex-col gap-4 min-h-0">
+            {/* Number Picker - same width as feed */}
+            <GlassCard className="p-4 shrink-0">
+              <div className="flex items-center gap-6">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Sparkles className="w-4 h-4 text-primary/70" />
+                    <h3 className="text-sm font-medium text-foreground">Simulation Rounds</h3>
+                  </div>
+                  
+                  <RoundSlider 
+                    value={simulationRounds} 
+                    onChange={setSimulationRounds} 
+                    min={1} 
+                    max={8} 
+                  />
+                  
+                  <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground font-mono">
+                    <Clock className="w-3 h-3" />
+                    <span>~{formatSeconds(estimatedTime)}</span>
+                    <span className="text-white/20">|</span>
+                    <span>{populationArtifact?.sample_count ?? 250} agents × {simulationRounds} rounds</span>
+                  </div>
                 </div>
-              )}
-            </div>
-          </GlassCard>
-
-          <div className="space-y-4">
-            <GlassCard className="p-4">
-              <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-3">Discussion Momentum</h4>
-              <div className="space-y-3">
-                <StatLine label="Posts" value={counters.posts} />
-                <StatLine label="Comments" value={counters.comments} />
-                <StatLine label="Reactions" value={counters.reactions} />
-                <StatLine label="Active Authors" value={counters.active_authors} />
-                <StatLine label="Dominant Stance" value={String(simulationState?.discussion_momentum?.dominant_stance ?? "mixed")} />
+                
+                <div className="flex flex-col items-center justify-center px-6 border-l border-white/10">
+                  <div className="text-4xl font-mono font-bold text-foreground">{simulationRounds}</div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Rounds</div>
+                </div>
               </div>
             </GlassCard>
 
+            {/* Feed - takes remaining space */}
+            <GlassCard className="p-0 min-h-0 flex flex-col overflow-hidden flex-1">
+              <div className="p-4 border-b border-white/5 bg-white/[0.02]">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <MessageSquare className="w-4 h-4 text-violet-400" />
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">Topic Community</h3>
+                      <p className="text-[11px] text-muted-foreground">Live discourse feed</p>
+                    </div>
+                  </div>
+                  <div className="px-2 py-1 rounded-md bg-white/5 border border-white/10">
+                    <span className="text-sm font-mono font-bold text-primary">{simulationState?.current_round ?? 0}</span>
+                    <span className="text-xs text-muted-foreground">/{simulationRounds}</span>
+                  </div>
+                </div>
+                
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">View:</span>
+                    <select
+                      value={selectedRound === "all" ? "all" : String(selectedRound)}
+                      onChange={(e) => setSelectedRound(e.target.value === "all" ? "all" : Number(e.target.value))}
+                      className="bg-white/[0.03] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary/30"
+                    >
+                      <option value="all">All Rounds</option>
+                      {availableRounds.map((round) => (
+                        <option key={round} value={round}>Round {round}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="flex items-center gap-1 bg-white/[0.03] rounded-lg p-1 border border-white/5">
+                    <button
+                      onClick={() => setSortBy("new")}
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5
+                        ${sortBy === "new" 
+                          ? 'bg-white/10 text-foreground border border-white/10' 
+                          : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                    >
+                      <Clock className="w-3 h-3" /> New
+                    </button>
+                    <button
+                      onClick={() => setSortBy("popular")}
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5
+                        ${sortBy === "popular" 
+                          ? 'bg-white/10 text-foreground border border-white/10' 
+                          : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                    >
+                      <TrendingUp className="w-3 h-3" /> Popular
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div ref={feedRef} className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
+                {displayedThreads.map((thread) => {
+                  const colors = getOccupationColor(thread.actorOccupation);
+                  return (
+                    <GlassCard key={thread.id} className="p-4 bg-white/[0.02] border border-white/10 hover:bg-white/[0.04] transition-all duration-200 group">
+                      <div className="flex items-start justify-between gap-4 mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-full ${colors.bg} flex items-center justify-center text-sm font-bold ${colors.text} border ${colors.border}`}>
+                            {thread.actorName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className={`text-sm font-semibold ${colors.text}`}>{thread.actorName}</div>
+                            <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                              <span>{thread.actorSubtitle}</span>
+                              <span className="w-1 h-1 rounded-full bg-white/20" />
+                              <span className="font-mono text-white/40">R{thread.roundNo}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="px-2 py-1 rounded-full text-[10px] font-medium bg-white/5 text-muted-foreground border border-white/10">
+                          {thread.actorOccupation || "Agent"}
+                        </div>
+                      </div>
+                      
+                      <h4 className="text-sm font-semibold text-foreground mb-2 leading-tight">{thread.title}</h4>
+                      <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{thread.content}</p>
+                      
+                      <div className="flex items-center gap-5 mt-4 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer">
+                          <ThumbsUp className="w-3.5 h-3.5" /> 
+                          <span className="font-mono font-medium">{thread.likes}</span>
+                        </span>
+                        <span className="flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer">
+                          <ThumbsDown className="w-3.5 h-3.5" /> 
+                          <span className="font-mono font-medium">{thread.dislikes}</span>
+                        </span>
+                        <span className="flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer">
+                          <MessageSquare className="w-3.5 h-3.5" /> 
+                          <span className="font-mono font-medium">{thread.comments.length}</span>
+                          <span className="text-muted-foreground">comments</span>
+                        </span>
+                      </div>
+                      
+                      {thread.comments.length > 0 && (
+                        <div className="mt-4 space-y-2.5 border-l-2 border-white/[0.08] pl-3">
+                          {thread.comments.slice(0, 3).map((comment) => (
+                            <div key={comment.id} className="text-xs flex items-start gap-2">
+                              <div className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-[9px] font-bold text-white/40 flex-shrink-0">
+                                {comment.actorName.split(' ').map(n => n[0]).join('').slice(0, 1).toUpperCase()}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <span className="font-medium text-foreground/80 text-[11px]">{comment.actorName}</span>
+                                <span className="text-muted-foreground ml-2 line-clamp-2">{comment.content}</span>
+                              </div>
+                            </div>
+                          ))}
+                          {thread.comments.length > 3 && (
+                            <div className="text-[10px] text-muted-foreground pl-7">
+                              +{thread.comments.length - 3} more replies
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </GlassCard>
+                  );
+                })}
+                
+                {displayedThreads.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                    <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4">
+                      <MessageSquare className="w-8 h-8 text-white/20" />
+                    </div>
+                    <p className="text-sm">No posts to display</p>
+                  </div>
+                )}
+              </div>
+            </GlassCard>
+          </div>
+
+          {/* Right: Stats Panel - Now starts from top */}
+          <div className="space-y-4 flex flex-col">
+            {/* Hottest Thread */}
             <GlassCard className="p-4">
-              <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-3">Checkpoint Status</h4>
-              <div className="space-y-3">
-                <CheckpointLine label="Baseline" status={baselineStatus} />
-                <CheckpointLine label="Final" status={finalStatus} />
+              <div className="flex items-center gap-2 mb-3">
+                <Flame className="w-4 h-4 text-orange-400" />
+                <h4 className="text-xs uppercase tracking-wider text-orange-400 font-semibold">Hottest Thread</h4>
+              </div>
+              
+              {hottestThread?.title ? (
+                <div>
+                  <h3 className="text-base font-semibold text-foreground leading-tight mb-3 line-clamp-2">
+                    {String(hottestThread.title)}
+                  </h3>
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 w-fit">
+                    <TrendingUp className="w-3.5 h-3.5 text-orange-400" />
+                    <span className="text-sm font-mono font-bold text-orange-400">
+                      {Number(hottestThread.engagement ?? 0).toLocaleString()}
+                    </span>
+                    <span className="text-xs text-orange-400/70">engagement</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-6 text-center">
+                  <p className="text-sm text-muted-foreground">Awaiting activity...</p>
+                </div>
+              )}
+            </GlassCard>
+
+            {/* Time Elapsed - Big */}
+            <GlassCard className="p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Clock className="w-4 h-4 text-cyan-400" />
+                <h4 className="text-xs uppercase tracking-wider text-cyan-400 font-semibold">Time Elapsed</h4>
+              </div>
+              
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-mono font-bold text-foreground">
+                  {formatSeconds(simulationState?.elapsed_seconds ?? 0)}
+                </span>
+              </div>
+              
+              {running && (
+                <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Simulation in progress...</span>
+                </div>
+              )}
+              
+              {completed && (
+                <div className="mt-3 flex items-center gap-2 text-xs text-emerald-400">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span>Completed</span>
+                </div>
+              )}
+            </GlassCard>
+
+            {/* Expanded Metrics */}
+            <GlassCard className="p-4 flex-1">
+              <div className="flex items-center gap-2 mb-4">
+                <Users className="w-4 h-4 text-primary" />
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Metrics</h4>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/5">
+                  <div className="text-xs text-muted-foreground mb-1">Posts</div>
+                  <div className="text-2xl font-mono font-bold text-foreground">{counters.posts}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/5">
+                  <div className="text-xs text-muted-foreground mb-1">Comments</div>
+                  <div className="text-2xl font-mono font-bold text-foreground">{counters.comments}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/5">
+                  <div className="text-xs text-muted-foreground mb-1">Reactions</div>
+                  <div className="text-2xl font-mono font-bold text-foreground">{counters.reactions}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/5">
+                  <div className="text-xs text-muted-foreground mb-1">Authors</div>
+                  <div className="text-2xl font-mono font-bold text-foreground">{counters.active_authors}</div>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between py-3 border-t border-white/5">
+                <span className="text-sm text-muted-foreground">Dominant Stance</span>
+                <span className="text-sm font-medium text-primary capitalize">
+                  {String(simulationState?.discussion_momentum?.dominant_stance ?? "mixed")}
+                </span>
+              </div>
+              
+              <div className="mt-4 pt-4 border-t border-white/5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Baseline Checkpoint</span>
+                  <StatusBadge status={baselineStatus} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Final Checkpoint</span>
+                  <StatusBadge status={finalStatus} />
+                </div>
               </div>
             </GlassCard>
 
             {error && (
-              <GlassCard className="p-4 border border-destructive/30">
+              <GlassCard className="p-4 border border-destructive/30 bg-destructive/5">
                 <div className="text-sm font-semibold text-destructive">Simulation Error</div>
                 <p className="text-xs text-muted-foreground mt-1">{error}</p>
               </GlassCard>
@@ -376,33 +645,18 @@ export default function Simulation() {
   );
 }
 
-function MetricCard({ label, value, icon, compact = false }: { label: string; value: string; icon: ReactNode; compact?: boolean }) {
+function StatusBadge({ status }: { status: string }) {
+  const styles = {
+    pending: "bg-white/5 text-white/40 border-white/10",
+    running: "bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse",
+    completed: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    failed: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+  };
+  
   return (
-    <div className={`rounded-2xl border border-white/10 bg-white/[0.03] p-3 ${compact ? "col-span-2" : ""}`}>
-      <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground mb-1">
-        {icon}
-        <span>{label}</span>
-      </div>
-      <div className={`text-foreground ${compact ? "text-sm font-semibold" : "text-lg font-mono font-bold"}`}>{value}</div>
-    </div>
-  );
-}
-
-function StatLine({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono text-foreground">{value}</span>
-    </div>
-  );
-}
-
-function CheckpointLine({ label, status }: { label: string; status: string }) {
-  return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono text-foreground capitalize">{status}</span>
-    </div>
+    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border capitalize ${styles[status as keyof typeof styles] || styles.pending}`}>
+      {status}
+    </span>
   );
 }
 
