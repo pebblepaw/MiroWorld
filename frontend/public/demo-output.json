@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-03-25T14:35:22.656326+00:00",
+  "generated_at": "2026-03-25T15:51:31.479284+00:00",
   "simulation_id": "session-c14cfc7e",
   "session": {
     "session_id": "session-c14cfc7e",
     "mode": "demo",
     "status": "simulation_completed",
     "created_at": "2026-03-24 10:31:28",
-    "updated_at": "2026-03-25T14:35:22.656329+00:00"
+    "updated_at": "2026-03-25T15:51:31.479288+00:00"
   },
   "knowledge": {
     "simulation_id": "session-c14cfc7e",
@@ -83300,7 +83300,7 @@
     ],
     "runtime": "heuristic",
     "demo_mode": true,
-    "generated_at": "2026-03-25T14:35:22.656332+00:00"
+    "generated_at": "2026-03-25T15:51:31.479291+00:00"
   },
   "simulationState": {
     "session_id": "session-c14cfc7e",
@@ -83324,6 +83324,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0225",
+        "actor_name": "Pearl Fong Chong leverages her decades\u2011long mastery of budgeting",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0224 in round 3",
         "post_id": "agent-0224"
       },
@@ -83332,6 +83335,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0226",
+        "actor_name": "Meng Kuan Hoo",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0226"
       },
@@ -83340,6 +83346,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0226",
+        "actor_name": "Meng Kuan Hoo",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0085 in round 3",
         "post_id": "agent-0085"
       },
@@ -83348,6 +83357,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0227",
+        "actor_name": "Fadillah Ainal",
+        "actor_occupation": "Manager",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0227"
       },
@@ -83356,6 +83368,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0227",
+        "actor_name": "Fadillah Ainal",
+        "actor_occupation": "Manager",
+        "actor_age": 35,
         "content": "Responding to agent-0233 in round 3",
         "post_id": "agent-0233"
       },
@@ -83364,6 +83379,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0228",
+        "actor_name": "Yin Hong Tan",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0228"
       },
@@ -83372,6 +83390,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0228",
+        "actor_name": "Yin Hong Tan",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0079 in round 3",
         "post_id": "agent-0079"
       },
@@ -83380,6 +83401,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0229",
+        "actor_name": "Sharifah Yusli manages her household with meticulous budgeting and cooking expertise and",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0229"
       },
@@ -83388,6 +83412,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0229",
+        "actor_name": "Sharifah Yusli manages her household with meticulous budgeting and cooking expertise and",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0033 in round 3",
         "post_id": "agent-0033"
       },
@@ -83396,6 +83423,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0230",
+        "actor_name": "Tamilchelvan Kumar Ramchandani is a manufacturing specialist adept at CNC machining",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0230"
       },
@@ -83404,6 +83434,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0230",
+        "actor_name": "Tamilchelvan Kumar Ramchandani is a manufacturing specialist adept at CNC machining",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0162 in round 3",
         "post_id": "agent-0162"
       },
@@ -83412,6 +83445,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0231",
+        "actor_name": "David",
+        "actor_occupation": "Retired",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0231"
       },
@@ -83420,6 +83456,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0232",
+        "actor_name": "Thiam Siang Lim",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0232"
       },
@@ -83428,6 +83467,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0232",
+        "actor_name": "Thiam Siang Lim",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0215 in round 3",
         "post_id": "agent-0215"
       },
@@ -83436,6 +83478,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0233",
+        "actor_name": "Lai Hee Bong",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0233"
       },
@@ -83444,6 +83489,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0233",
+        "actor_name": "Lai Hee Bong",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Responding to agent-0149 in round 3",
         "post_id": "agent-0149"
       },
@@ -83452,6 +83500,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0234",
+        "actor_name": "Yaqing Ying Teo",
+        "actor_occupation": "Professional",
+        "actor_age": 48,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0234"
       },
@@ -83460,6 +83511,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0234",
+        "actor_name": "Yaqing Ying Teo",
+        "actor_occupation": "Professional",
+        "actor_age": 48,
         "content": "Responding to agent-0146 in round 3",
         "post_id": "agent-0146"
       },
@@ -83468,6 +83522,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0235",
+        "actor_name": "Ying Siew Hui Kam",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0235"
       },
@@ -83476,6 +83533,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0235",
+        "actor_name": "Ying Siew Hui Kam",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Responding to agent-0175 in round 3",
         "post_id": "agent-0175"
       },
@@ -83484,6 +83544,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0236",
+        "actor_name": "Khairunnissa Mardhiana 'Erni' Latiff",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0236"
       },
@@ -83492,6 +83555,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0236",
+        "actor_name": "Khairunnissa Mardhiana 'Erni' Latiff",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Responding to agent-0019 in round 3",
         "post_id": "agent-0019"
       },
@@ -83500,6 +83566,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0237",
+        "actor_name": "Seema Puri",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0237"
       },
@@ -83508,6 +83577,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0237",
+        "actor_name": "Seema Puri",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0203 in round 3",
         "post_id": "agent-0203"
       },
@@ -83516,6 +83588,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0238",
+        "actor_name": "Manjit Ravi Gnanaseelan",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0238"
       },
@@ -83524,6 +83599,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0238",
+        "actor_name": "Manjit Ravi Gnanaseelan",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0216 in round 3",
         "post_id": "agent-0216"
       },
@@ -83532,6 +83610,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0239",
+        "actor_name": "Mohamed is a veteran heavy\u2011machinery operator in Singapore\u2019s transportation and storage industry",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0239"
       },
@@ -83540,6 +83621,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0239",
+        "actor_name": "Mohamed is a veteran heavy\u2011machinery operator in Singapore\u2019s transportation and storage industry",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0176 in round 3",
         "post_id": "agent-0176"
       },
@@ -83548,6 +83632,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0240",
+        "actor_name": "Sharin",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0240"
       },
@@ -83556,6 +83643,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0240",
+        "actor_name": "Sharin",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Responding to agent-0086 in round 3",
         "post_id": "agent-0086"
       },
@@ -83564,6 +83654,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0241",
+        "actor_name": "Michael Cher Beng Ang",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0241"
       },
@@ -83572,6 +83665,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0241",
+        "actor_name": "Michael Cher Beng Ang",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Responding to agent-0091 in round 3",
         "post_id": "agent-0091"
       },
@@ -83580,6 +83676,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0242",
+        "actor_name": "Cathy",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0242"
       },
@@ -83588,6 +83687,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0242",
+        "actor_name": "Cathy",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Responding to agent-0006 in round 3",
         "post_id": "agent-0006"
       },
@@ -83596,6 +83698,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0243",
+        "actor_name": "Junle Hock Lau",
+        "actor_occupation": "Sales",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0243"
       },
@@ -83604,6 +83709,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0243",
+        "actor_name": "Junle Hock Lau",
+        "actor_occupation": "Sales",
+        "actor_age": 35,
         "content": "Responding to agent-0147 in round 3",
         "post_id": "agent-0147"
       },
@@ -83612,6 +83720,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0244",
+        "actor_name": "Jason",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0244"
       },
@@ -83620,6 +83731,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0244",
+        "actor_name": "Jason",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0048 in round 3",
         "post_id": "agent-0048"
       },
@@ -83628,6 +83742,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0245",
+        "actor_name": "Doreen",
+        "actor_occupation": "Service",
+        "actor_age": 50,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0245"
       },
@@ -83636,6 +83753,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0245",
+        "actor_name": "Doreen",
+        "actor_occupation": "Service",
+        "actor_age": 50,
         "content": "Responding to agent-0123 in round 3",
         "post_id": "agent-0123"
       },
@@ -83644,6 +83764,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0246",
+        "actor_name": "Giak Hong Toh",
+        "actor_occupation": "Manager",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0246"
       },
@@ -83652,6 +83775,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0246",
+        "actor_name": "Giak Hong Toh",
+        "actor_occupation": "Manager",
+        "actor_age": 35,
         "content": "Responding to agent-0047 in round 3",
         "post_id": "agent-0047"
       },
@@ -83660,6 +83786,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0247",
+        "actor_name": "Lay Chen is a seasoned community event organizer who leverages meticulous budgeting and hands\u2011on home\u2011repair skills to orchestrate neighbourhood karaoke nights",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0247"
       },
@@ -83668,6 +83797,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0247",
+        "actor_name": "Lay Chen is a seasoned community event organizer who leverages meticulous budgeting and hands\u2011on home\u2011repair skills to orchestrate neighbourhood karaoke nights",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0162 in round 3",
         "post_id": "agent-0162"
       },
@@ -83676,6 +83808,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0248",
+        "actor_name": "Merwin",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0248"
       },
@@ -83684,6 +83819,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0248",
+        "actor_name": "Merwin",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0093 in round 3",
         "post_id": "agent-0093"
       },
@@ -83692,6 +83830,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0249",
+        "actor_name": "Lawrence",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0249"
       },
@@ -83700,6 +83841,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0249",
+        "actor_name": "Lawrence",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0155 in round 3",
         "post_id": "agent-0155"
       },
@@ -83708,6 +83852,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0250",
+        "actor_name": "Laura",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0250"
       },
@@ -83716,6 +83863,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0250",
+        "actor_name": "Laura",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Responding to agent-0106 in round 3",
         "post_id": "agent-0106"
       },
@@ -83760,7 +83910,7 @@
   "report": {
     "session_id": "session-c14cfc7e",
     "status": "completed",
-    "generated_at": "2026-03-25T14:35:22.656075+00:00",
+    "generated_at": "2026-03-25T15:51:31.479043+00:00",
     "executive_summary": "Demo simulation with 250 agents. Approval shifted from 97.6% to 0.0%.",
     "insight_cards": [
       {
@@ -84186,7 +84336,7 @@
   "reportFull": {
     "session_id": "session-c14cfc7e",
     "status": "completed",
-    "generated_at": "2026-03-25T14:35:22.656075+00:00",
+    "generated_at": "2026-03-25T15:51:31.479043+00:00",
     "executive_summary": "Demo simulation with 250 agents. Approval shifted from 97.6% to 0.0%.",
     "insight_cards": [
       {
@@ -84617,6 +84767,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0225",
+        "actor_name": "Pearl Fong Chong leverages her decades\u2011long mastery of budgeting",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0224 in round 3",
         "post_id": "agent-0224"
       },
@@ -84625,6 +84778,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0226",
+        "actor_name": "Meng Kuan Hoo",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0226"
       },
@@ -84633,6 +84789,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0226",
+        "actor_name": "Meng Kuan Hoo",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0085 in round 3",
         "post_id": "agent-0085"
       },
@@ -84641,6 +84800,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0227",
+        "actor_name": "Fadillah Ainal",
+        "actor_occupation": "Manager",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0227"
       },
@@ -84649,6 +84811,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0227",
+        "actor_name": "Fadillah Ainal",
+        "actor_occupation": "Manager",
+        "actor_age": 35,
         "content": "Responding to agent-0233 in round 3",
         "post_id": "agent-0233"
       },
@@ -84657,6 +84822,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0228",
+        "actor_name": "Yin Hong Tan",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0228"
       },
@@ -84665,6 +84833,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0228",
+        "actor_name": "Yin Hong Tan",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0079 in round 3",
         "post_id": "agent-0079"
       },
@@ -84673,6 +84844,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0229",
+        "actor_name": "Sharifah Yusli manages her household with meticulous budgeting and cooking expertise and",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0229"
       },
@@ -84681,6 +84855,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0229",
+        "actor_name": "Sharifah Yusli manages her household with meticulous budgeting and cooking expertise and",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0033 in round 3",
         "post_id": "agent-0033"
       },
@@ -84689,6 +84866,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0230",
+        "actor_name": "Tamilchelvan Kumar Ramchandani is a manufacturing specialist adept at CNC machining",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0230"
       },
@@ -84697,6 +84877,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0230",
+        "actor_name": "Tamilchelvan Kumar Ramchandani is a manufacturing specialist adept at CNC machining",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0162 in round 3",
         "post_id": "agent-0162"
       },
@@ -84705,6 +84888,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0231",
+        "actor_name": "David",
+        "actor_occupation": "Retired",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0231"
       },
@@ -84713,6 +84899,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0232",
+        "actor_name": "Thiam Siang Lim",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0232"
       },
@@ -84721,6 +84910,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0232",
+        "actor_name": "Thiam Siang Lim",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0215 in round 3",
         "post_id": "agent-0215"
       },
@@ -84729,6 +84921,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0233",
+        "actor_name": "Lai Hee Bong",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0233"
       },
@@ -84737,6 +84932,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0233",
+        "actor_name": "Lai Hee Bong",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Responding to agent-0149 in round 3",
         "post_id": "agent-0149"
       },
@@ -84745,6 +84943,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0234",
+        "actor_name": "Yaqing Ying Teo",
+        "actor_occupation": "Professional",
+        "actor_age": 48,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0234"
       },
@@ -84753,6 +84954,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0234",
+        "actor_name": "Yaqing Ying Teo",
+        "actor_occupation": "Professional",
+        "actor_age": 48,
         "content": "Responding to agent-0146 in round 3",
         "post_id": "agent-0146"
       },
@@ -84761,6 +84965,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0235",
+        "actor_name": "Ying Siew Hui Kam",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0235"
       },
@@ -84769,6 +84976,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0235",
+        "actor_name": "Ying Siew Hui Kam",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Responding to agent-0175 in round 3",
         "post_id": "agent-0175"
       },
@@ -84777,6 +84987,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0236",
+        "actor_name": "Khairunnissa Mardhiana 'Erni' Latiff",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0236"
       },
@@ -84785,6 +84998,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0236",
+        "actor_name": "Khairunnissa Mardhiana 'Erni' Latiff",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Responding to agent-0019 in round 3",
         "post_id": "agent-0019"
       },
@@ -84793,6 +85009,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0237",
+        "actor_name": "Seema Puri",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0237"
       },
@@ -84801,6 +85020,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0237",
+        "actor_name": "Seema Puri",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0203 in round 3",
         "post_id": "agent-0203"
       },
@@ -84809,6 +85031,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0238",
+        "actor_name": "Manjit Ravi Gnanaseelan",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0238"
       },
@@ -84817,6 +85042,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0238",
+        "actor_name": "Manjit Ravi Gnanaseelan",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0216 in round 3",
         "post_id": "agent-0216"
       },
@@ -84825,6 +85053,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0239",
+        "actor_name": "Mohamed is a veteran heavy\u2011machinery operator in Singapore\u2019s transportation and storage industry",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0239"
       },
@@ -84833,6 +85064,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0239",
+        "actor_name": "Mohamed is a veteran heavy\u2011machinery operator in Singapore\u2019s transportation and storage industry",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0176 in round 3",
         "post_id": "agent-0176"
       },
@@ -84841,6 +85075,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0240",
+        "actor_name": "Sharin",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0240"
       },
@@ -84849,6 +85086,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0240",
+        "actor_name": "Sharin",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Responding to agent-0086 in round 3",
         "post_id": "agent-0086"
       },
@@ -84857,6 +85097,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0241",
+        "actor_name": "Michael Cher Beng Ang",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0241"
       },
@@ -84865,6 +85108,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0241",
+        "actor_name": "Michael Cher Beng Ang",
+        "actor_occupation": "Service",
+        "actor_age": 35,
         "content": "Responding to agent-0091 in round 3",
         "post_id": "agent-0091"
       },
@@ -84873,6 +85119,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0242",
+        "actor_name": "Cathy",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0242"
       },
@@ -84881,6 +85130,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0242",
+        "actor_name": "Cathy",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Responding to agent-0006 in round 3",
         "post_id": "agent-0006"
       },
@@ -84889,6 +85141,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0243",
+        "actor_name": "Junle Hock Lau",
+        "actor_occupation": "Sales",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0243"
       },
@@ -84897,6 +85152,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0243",
+        "actor_name": "Junle Hock Lau",
+        "actor_occupation": "Sales",
+        "actor_age": 35,
         "content": "Responding to agent-0147 in round 3",
         "post_id": "agent-0147"
       },
@@ -84905,6 +85163,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0244",
+        "actor_name": "Jason",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0244"
       },
@@ -84913,6 +85174,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0244",
+        "actor_name": "Jason",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0048 in round 3",
         "post_id": "agent-0048"
       },
@@ -84921,6 +85185,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0245",
+        "actor_name": "Doreen",
+        "actor_occupation": "Service",
+        "actor_age": 50,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0245"
       },
@@ -84929,6 +85196,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0245",
+        "actor_name": "Doreen",
+        "actor_occupation": "Service",
+        "actor_age": 50,
         "content": "Responding to agent-0123 in round 3",
         "post_id": "agent-0123"
       },
@@ -84937,6 +85207,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0246",
+        "actor_name": "Giak Hong Toh",
+        "actor_occupation": "Manager",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0246"
       },
@@ -84945,6 +85218,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0246",
+        "actor_name": "Giak Hong Toh",
+        "actor_occupation": "Manager",
+        "actor_age": 35,
         "content": "Responding to agent-0047 in round 3",
         "post_id": "agent-0047"
       },
@@ -84953,6 +85229,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0247",
+        "actor_name": "Lay Chen is a seasoned community event organizer who leverages meticulous budgeting and hands\u2011on home\u2011repair skills to orchestrate neighbourhood karaoke nights",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0247"
       },
@@ -84961,6 +85240,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0247",
+        "actor_name": "Lay Chen is a seasoned community event organizer who leverages meticulous budgeting and hands\u2011on home\u2011repair skills to orchestrate neighbourhood karaoke nights",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0162 in round 3",
         "post_id": "agent-0162"
       },
@@ -84969,6 +85251,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0248",
+        "actor_name": "Merwin",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0248"
       },
@@ -84977,6 +85262,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0248",
+        "actor_name": "Merwin",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0093 in round 3",
         "post_id": "agent-0093"
       },
@@ -84985,6 +85273,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0249",
+        "actor_name": "Lawrence",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0249"
       },
@@ -84993,6 +85284,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0249",
+        "actor_name": "Lawrence",
+        "actor_occupation": "Professional",
+        "actor_age": 35,
         "content": "Responding to agent-0155 in round 3",
         "post_id": "agent-0155"
       },
@@ -85001,6 +85295,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0250",
+        "actor_name": "Laura",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Round 3 neutral stance on policy: Budget 2026 is the Government's financial strategy designed to support Singaporeans and prepare the society for the futu",
         "post_id": "agent-0250"
       },
@@ -85009,6 +85306,9 @@
         "session_id": "session-c14cfc7e",
         "round_no": 3,
         "actor_agent_id": "agent-0250",
+        "actor_name": "Laura",
+        "actor_occupation": "Homemaker",
+        "actor_age": 35,
         "content": "Responding to agent-0106 in round 3",
         "post_id": "agent-0106"
       },
@@ -85507,7 +85807,7 @@
     "rounds": 6,
     "document": "Sample_Inputs/fy2026_budget_statement.md",
     "zep_enabled": true,
-    "cached_at": "2026-03-25T14:35:22.656432+00:00",
+    "cached_at": "2026-03-25T15:51:31.479402+00:00",
     "source": "demo-snapshot-conversion"
   }
 }

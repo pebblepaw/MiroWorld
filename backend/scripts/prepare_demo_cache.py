@@ -104,18 +104,66 @@ def main() -> None:
         }
         return mapping.get(action_type, action_type)
     
-    # Build feed from last 50 interactions
-    feed = [
-        {
+    # Build agent lookup for persona data
+    agent_lookup = {a.get("agent_id"): a for a in agents}
+    
+    def _extract_name_from_persona(persona: dict) -> str:
+        """Extract name from professional_persona text (format: 'Name, a XX-year-old...')"""
+        prof = persona.get("professional_persona", "")
+        if prof:
+            # Extract name before first comma
+            match = prof.split(",")[0] if "," in prof else prof.split(" ")[0]
+            return match.strip() if match else None
+        return None
+    
+    def _extract_age_from_persona(persona: dict) -> int:
+        """Extract age from professional_persona text"""
+        import re
+        prof = persona.get("professional_persona", "")
+        if prof:
+            # Look for patterns like "20-year-old" or "52 year old"
+            match = re.search(r'(\d+)[\s\-]?year[\s\-]?old', prof, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        return 35  # default
+    
+    def _extract_occupation_from_persona(persona: dict) -> str:
+        """Extract occupation from professional_persona text"""
+        prof = persona.get("professional_persona", "")
+        occupations = ["Teacher", "Engineer", "Manager", "Nurse", "Doctor", "Lawyer", 
+                      "Accountant", "Sales", "Clerical", "Service", "Professional",
+                      "Homemaker", "Student", "Retired", "Unemployed", "Consultant",
+                      "Analyst", "Developer", "Designer", "Researcher"]
+        if prof:
+            prof_lower = prof.lower()
+            for occ in occupations:
+                if occ.lower() in prof_lower:
+                    return occ
+        return "Professional"  # default
+    
+    # Build feed from last 50 interactions with persona data
+    feed = []
+    for i in interactions[-50:]:
+        actor_id = i.get("actor_agent_id")
+        agent = agent_lookup.get(actor_id, {})
+        persona = agent.get("persona", {})
+        
+        # Extract name, age, occupation from persona text
+        name = _extract_name_from_persona(persona) or actor_id
+        age = _extract_age_from_persona(persona)
+        occupation = _extract_occupation_from_persona(persona)
+        
+        feed.append({
             "event_type": _map_event_type(i.get("action_type", "post")),
             "session_id": session_id,
             "round_no": i.get("round_no", 1),
-            "actor_agent_id": i.get("actor_agent_id"),
+            "actor_agent_id": actor_id,
+            "actor_name": name,
+            "actor_occupation": occupation,
+            "actor_age": age,
             "content": i.get("content", ""),
-            "post_id": i.get("target_agent_id") or i.get("actor_agent_id"),
-        }
-        for i in interactions[-50:]
-    ]
+            "post_id": i.get("target_agent_id") or actor_id,
+        })
     
     # Add run_completed event at the end
     feed.append({

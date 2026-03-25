@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Loader2, MessageSquare, Play, ThumbsDown, ThumbsUp, TimerReset, Waves } from "lucide-react";
+import { ArrowRight, Loader2, MessageSquare, Play, ThumbsDown, ThumbsUp, TimerReset, Waves, Clock } from "lucide-react";
 
 import { GlassCard } from "@/components/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,8 @@ type FeedThread = {
   postId: string | number;
   actorName: string;
   actorSubtitle: string;
+  actorOccupation?: string;
+  actorAge?: number;
   title: string;
   content: string;
   roundNo: number;
@@ -27,7 +29,28 @@ type FeedThread = {
   comments: FeedComment[];
 };
 
-const QUICK_ROUNDS = [3, 4, 5];
+// Occupation color mapping for visual variety
+const OCCUPATION_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  "Teacher": { bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-500/30" },
+  "Professional": { bg: "bg-blue-500/15", text: "text-blue-400", border: "border-blue-500/30" },
+  "Manager": { bg: "bg-violet-500/15", text: "text-violet-400", border: "border-violet-500/30" },
+  "Engineer": { bg: "bg-cyan-500/15", text: "text-cyan-400", border: "border-cyan-500/30" },
+  "Nurse": { bg: "bg-rose-500/15", text: "text-rose-400", border: "border-rose-500/30" },
+  "Clerical": { bg: "bg-amber-500/15", text: "text-amber-400", border: "border-amber-500/30" },
+  "Sales": { bg: "bg-orange-500/15", text: "text-orange-400", border: "border-orange-500/30" },
+  "Service": { bg: "bg-pink-500/15", text: "text-pink-400", border: "border-pink-500/30" },
+  "Retired": { bg: "bg-slate-500/15", text: "text-slate-400", border: "border-slate-500/30" },
+  "Student": { bg: "bg-indigo-500/15", text: "text-indigo-400", border: "border-indigo-500/30" },
+  "default": { bg: "bg-primary/15", text: "text-primary", border: "border-primary/30" },
+};
+
+function getOccupationColor(occupation?: string): { bg: string; text: string; border: string } {
+  if (!occupation) return OCCUPATION_COLORS["default"];
+  const key = Object.keys(OCCUPATION_COLORS).find(k => 
+    occupation.toLowerCase().includes(k.toLowerCase())
+  );
+  return OCCUPATION_COLORS[key || "default"];
+}
 
 export default function Simulation() {
   const {
@@ -83,7 +106,11 @@ export default function Simulation() {
         const content = String(payload.content ?? "").trim();
         const title = String(payload.title ?? (content.slice(0, 72) || "New discussion thread"));
         const actorName = String(payload.actor_name ?? payload.actor_agent_id ?? "Agent");
-        const actorSubtitle = String(payload.actor_subtitle ?? payload.actor_agent_id ?? "Sampled persona");
+        const actorOccupation = String(payload.actor_occupation ?? "");
+        const actorAge = payload.actor_age ? Number(payload.actor_age) : undefined;
+        const actorSubtitle = actorOccupation && actorAge 
+          ? `${actorOccupation}, ${actorAge}` 
+          : String(payload.actor_subtitle ?? payload.actor_agent_id ?? "Sampled persona");
         return [
           ...previous,
           {
@@ -91,6 +118,8 @@ export default function Simulation() {
             postId,
             actorName,
             actorSubtitle,
+            actorOccupation,
+            actorAge,
             title,
             content,
             roundNo: Number(payload.round_no ?? 0),
@@ -235,22 +264,11 @@ export default function Simulation() {
                 <span className="text-sm text-muted-foreground">Simulation Rounds</span>
                 <span className="text-2xl font-mono font-bold text-primary">{simulationRounds}</span>
               </div>
-              <div className="flex gap-2 mb-3">
-                {QUICK_ROUNDS.map((value) => (
-                  <Button
-                    key={value}
-                    type="button"
-                    size="sm"
-                    variant={simulationRounds === value ? "default" : "outline"}
-                    className={simulationRounds === value ? "bg-primary text-primary-foreground" : "border-white/12 text-foreground hover:bg-white/6"}
-                    onClick={() => setSimulationRounds(value)}
-                  >
-                    {value}
-                  </Button>
-                ))}
-              </div>
               <Slider value={[simulationRounds]} onValueChange={(value) => setSimulationRounds(value[0])} min={1} max={8} step={1} />
-              <p className="text-[10px] text-muted-foreground mt-2 font-mono">Estimated time: ~{formatSeconds(estimatedTime)}</p>
+              <div className="flex items-center gap-2 mt-3 text-[11px] text-muted-foreground font-mono">
+                <Clock className="w-3.5 h-3.5" />
+                <span>Estimated time: ~{formatSeconds(estimatedTime)}</span>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -281,34 +299,42 @@ export default function Simulation() {
             <Progress value={(((simulationState?.current_round ?? 0) / Math.max(1, simulationRounds)) * 100)} className="h-2 mb-4" />
 
             <div ref={feedRef} className="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
-              {feedThreads.map((thread) => (
-                <GlassCard key={thread.id} className="p-4 bg-white/[0.03] border border-white/8">
-                  <div className="flex items-center justify-between gap-4 mb-2">
-                    <div>
-                      <div className="text-sm font-semibold text-foreground">{thread.actorName}</div>
-                      <div className="text-[11px] text-muted-foreground">{thread.actorSubtitle}</div>
-                    </div>
-                    <div className="text-[11px] text-muted-foreground font-mono">R{thread.roundNo}</div>
-                  </div>
-                  <h4 className="text-sm font-semibold text-foreground mb-1">{thread.title}</h4>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{thread.content}</p>
-                  <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1"><ThumbsUp className="w-3 h-3" /> {thread.likes}</span>
-                    <span className="flex items-center gap-1"><ThumbsDown className="w-3 h-3" /> {thread.dislikes}</span>
-                    <span className="flex items-center gap-1"><MessageSquare className="w-3 h-3" /> {thread.comments.length}</span>
-                  </div>
-                  {thread.comments.length > 0 && (
-                    <div className="mt-3 space-y-2 border-l border-white/10 pl-3">
-                      {thread.comments.map((comment) => (
-                        <div key={comment.id} className="text-xs">
-                          <span className="font-medium text-foreground">{comment.actorName}</span>
-                          <span className="text-muted-foreground ml-2">{comment.content}</span>
+              {feedThreads.map((thread) => {
+                const colors = getOccupationColor(thread.actorOccupation);
+                return (
+                  <GlassCard key={thread.id} className={`p-4 bg-white/[0.03] border ${colors.border} hover:bg-white/[0.05] transition-colors`}>
+                    <div className="flex items-start justify-between gap-4 mb-2">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-full ${colors.bg} flex items-center justify-center text-sm font-bold ${colors.text} border ${colors.border}`}>
+                          {thread.actorName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                         </div>
-                      ))}
+                        <div>
+                          <div className={`text-sm font-semibold ${colors.text}`}>{thread.actorName}</div>
+                          <div className="text-[11px] text-muted-foreground">{thread.actorSubtitle}</div>
+                        </div>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground font-mono bg-white/5 px-2 py-1 rounded">R{thread.roundNo}</div>
                     </div>
-                  )}
-                </GlassCard>
-              ))}
+                    <h4 className="text-sm font-semibold text-foreground mb-1">{thread.title}</h4>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{thread.content}</p>
+                    <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1 hover:text-emerald-400 transition-colors"><ThumbsUp className="w-3 h-3" /> {thread.likes}</span>
+                      <span className="flex items-center gap-1 hover:text-rose-400 transition-colors"><ThumbsDown className="w-3 h-3" /> {thread.dislikes}</span>
+                      <span className="flex items-center gap-1 hover:text-primary transition-colors"><MessageSquare className="w-3 h-3" /> {thread.comments.length}</span>
+                    </div>
+                    {thread.comments.length > 0 && (
+                      <div className="mt-3 space-y-2 border-l-2 border-white/10 pl-3">
+                        {thread.comments.map((comment) => (
+                          <div key={comment.id} className="text-xs">
+                            <span className="font-medium text-foreground">{comment.actorName}</span>
+                            <span className="text-muted-foreground ml-2">{comment.content}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </GlassCard>
+                );
+              })}
               {feedThreads.length === 0 && (
                 <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
                   Configure rounds and start the simulation
