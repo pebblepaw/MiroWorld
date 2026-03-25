@@ -62,9 +62,9 @@ function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onC
   const percentage = ((value - min) / (max - min)) * 100;
   
   return (
-    <div className="relative w-full py-4">
+    <div className="relative w-full py-6">
       {/* Track background */}
-      <div className="absolute left-0 right-0 h-2 bg-white/5 rounded-full overflow-hidden">
+      <div className="absolute left-0 right-0 h-2 bg-white/5 rounded-full overflow-hidden top-1/2 -translate-y-1/2">
         {/* Filled track */}
         <div 
           className="h-full bg-gradient-to-r from-primary/60 via-primary to-primary/80 transition-all duration-300 ease-out"
@@ -73,7 +73,7 @@ function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onC
       </div>
       
       {/* Marks */}
-      <div className="absolute left-0 right-0 h-2 flex justify-between items-center px-0">
+      <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 flex justify-between items-center px-0">
         {marks.map((mark) => (
           <button
             key={mark}
@@ -94,8 +94,8 @@ function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onC
               ${value === mark ? 'scale-150' : ''}
             `} />
             
-            {/* Mark label */}
-            <span className={`absolute -bottom-6 text-xs font-mono transition-all duration-300
+            {/* Mark label - positioned below with more space */}
+            <span className={`absolute top-full mt-3 text-xs font-mono transition-all duration-300
               ${value === mark 
                 ? 'text-primary font-bold scale-110' 
                 : 'text-white/30 group-hover:text-white/60'
@@ -115,7 +115,7 @@ function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onC
         step={1}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="absolute left-0 right-0 h-8 -mt-3 opacity-0 cursor-pointer"
+        className="absolute left-0 right-0 h-8 top-1/2 -translate-y-1/2 opacity-0 cursor-pointer"
       />
     </div>
   );
@@ -364,10 +364,10 @@ export default function Simulation() {
           {/* Left Column: Number Picker + Feed */}
           <div className="flex flex-col gap-4 min-h-0">
             {/* Number Picker - same width as feed */}
-            <GlassCard className="p-4 shrink-0">
+            <GlassCard className="p-5 shrink-0">
               <div className="flex items-center gap-6">
                 <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-2">
                     <Sparkles className="w-4 h-4 text-primary/70" />
                     <h3 className="text-sm font-medium text-foreground">Simulation Rounds</h3>
                   </div>
@@ -379,7 +379,7 @@ export default function Simulation() {
                     max={8} 
                   />
                   
-                  <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground font-mono">
+                  <div className="flex items-center gap-2 mt-6 text-xs text-muted-foreground font-mono">
                     <Clock className="w-3 h-3" />
                     <span>~{formatSeconds(estimatedTime)}</span>
                     <span className="text-white/20">|</span>
@@ -417,7 +417,12 @@ export default function Simulation() {
                     <select
                       value={selectedRound === "all" ? "all" : String(selectedRound)}
                       onChange={(e) => setSelectedRound(e.target.value === "all" ? "all" : Number(e.target.value))}
-                      className="bg-white/[0.03] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary/30"
+                      className="bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 pr-8 text-xs text-foreground focus:outline-none focus:border-primary/30 appearance-none cursor-pointer min-w-[100px]"
+                      style={{ 
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239CA3AF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: 'right 8px center'
+                      }}
                     >
                       <option value="all">All Rounds</option>
                       {availableRounds.map((round) => (
