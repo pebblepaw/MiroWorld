@@ -12,6 +12,7 @@ from fastapi import UploadFile
 
 from mckainsey.config import Settings
 from mckainsey.models.phase_a import PersonaFilterRequest
+from mckainsey.services.demo_service import DemoService
 from mckainsey.services.document_parser import extract_document_text
 from mckainsey.services.lightrag_service import LightRAGService
 from mckainsey.services.memory_service import MemoryService
@@ -44,8 +45,13 @@ class ConsoleService:
         self.streams = SimulationStreamService(settings)
         self.memory = MemoryService(settings)
         self.report = ReportService(settings)
+        self.demo = DemoService(settings)
 
     def create_session(self, requested_session_id: str | None = None, mode: str = "demo") -> dict[str, Any]:
+        # If demo mode and demo cache is available, use demo service
+        if mode == "demo" and self.demo.is_demo_available():
+            return self.demo.create_demo_session(requested_session_id)
+        
         session_id = requested_session_id or f"session-{uuid.uuid4().hex[:8]}"
         self.store.upsert_console_session(session_id=session_id, mode=mode, status="created")
         return {"session_id": session_id, "mode": mode, "status": "created"}
@@ -243,7 +249,16 @@ class ConsoleService:
         thread.start()
         return self.streams.get_state(session_id)
 
+    def _is_demo_session(self, session_id: str) -> bool:
+        """Check if this is a demo session."""
+        session = self.store.get_console_session(session_id)
+        return session is not None and session.get("mode") == "demo"
+
     def generate_report(self, session_id: str) -> dict[str, Any]:
+        # Check if demo mode
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            return self.demo.get_report(session_id) or self._empty_report_state(session_id, status="completed")
+        
         state = self.store.get_report_state(session_id)
         if state and state.get("status") in {"running", "completed"}:
             return state
@@ -259,9 +274,17 @@ class ConsoleService:
         return initial_state
 
     def get_report_full(self, session_id: str) -> dict[str, Any]:
+        # Check if demo mode
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            return self.demo.get_report(session_id) or self._empty_report_state(session_id, status="completed")
+        
         return self.store.get_report_state(session_id) or self._empty_report_state(session_id, status="idle")
 
     def get_report_opinions(self, session_id: str) -> dict[str, Any]:
+        # Check if demo mode
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            return self.demo.get_report_opinions(session_id)
+        
         report = self.report.build_report(session_id)
         feed = self.store.get_interactions(session_id)[-50:]
         return {
@@ -271,6 +294,10 @@ class ConsoleService:
         }
 
     def get_report_friction_map(self, session_id: str) -> dict[str, Any]:
+        # Check if demo mode
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            return self.demo.get_friction_map(session_id)
+        
         report = self.report.build_report(session_id)
         friction = report.get("friction_by_planning_area", [])
         top = friction[0]["planning_area"] if friction else "N/A"
@@ -281,6 +308,10 @@ class ConsoleService:
         }
 
     def get_interaction_hub(self, session_id: str, agent_id: str | None = None) -> dict[str, Any]:
+        # Check if demo mode
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            return self.demo.get_interaction_hub(session_id, agent_id)
+        
         report = self.report.build_report(session_id)
         influential = report.get("influential_agents", [])
         selected_agent_id = agent_id or (str(influential[0].get("agent_id")) if influential else None)
@@ -298,12 +329,26 @@ class ConsoleService:
         }
 
     def report_chat(self, session_id: str, message: str) -> dict[str, Any]:
+        # Check if demo mode
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            payload = self.demo.generate_demo_report_chat(session_id, message)
+            self.store.append_interaction_transcript(session_id, "report_agent", "user", message)
+            self.store.append_interaction_transcript(session_id, "report_agent", "assistant", payload["response"])
+            return payload
+        
         payload = self.report.report_chat_payload(session_id, message)
         self.store.append_interaction_transcript(session_id, "report_agent", "user", message)
         self.store.append_interaction_transcript(session_id, "report_agent", "assistant", payload["response"])
         return payload
 
     def agent_chat(self, session_id: str, agent_id: str, message: str) -> dict[str, Any]:
+        # Check if demo mode
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            payload = self.demo.generate_demo_agent_chat(session_id, agent_id, message)
+            self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
+            self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)
+            return payload
+        
         payload = self.memory.agent_chat_realtime(session_id, agent_id, message)
         self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
         self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)

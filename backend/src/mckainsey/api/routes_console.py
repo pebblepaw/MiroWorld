@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
@@ -21,10 +23,24 @@ from mckainsey.models.console import (
     SimulationStateResponse,
 )
 from mckainsey.services.console_service import ConsoleService
+from mckainsey.services.demo_service import DemoService
 from mckainsey.services.simulation_stream_service import SimulationStreamService
 
 
 router = APIRouter(prefix="/api/v2/console", tags=["console"])
+
+
+def _is_demo_session(session_id: str, settings: Settings) -> bool:
+    """Check if session is in demo mode."""
+    from mckainsey.services.storage import SimulationStore
+    store = SimulationStore(settings.simulation_db_path)
+    session = store.get_console_session(session_id)
+    return session is not None and session.get("mode") == "demo"
+
+
+def _get_demo_service(settings: Settings) -> DemoService:
+    """Get demo service instance."""
+    return DemoService(settings)
 
 
 @router.post("/session", response_model=ConsoleSessionResponse)
@@ -42,6 +58,14 @@ async def process_knowledge(
     req: ConsoleKnowledgeProcessRequest,
     settings: Settings = Depends(get_settings),
 ) -> KnowledgeArtifactResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        # Return cached knowledge for demo
+        demo_service = _get_demo_service(settings)
+        knowledge = demo_service.get_knowledge_artifact(session_id)
+        if knowledge:
+            return KnowledgeArtifactResponse(**knowledge)
+    
     payload = await ConsoleService(settings).process_knowledge(
         session_id,
         document_text=req.document_text,
@@ -61,6 +85,14 @@ async def upload_knowledge(
     demographic_focus: str | None = Form(default=None),
     settings: Settings = Depends(get_settings),
 ) -> KnowledgeArtifactResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        # Return cached knowledge for demo
+        demo_service = _get_demo_service(settings)
+        knowledge = demo_service.get_knowledge_artifact(session_id)
+        if knowledge:
+            return KnowledgeArtifactResponse(**knowledge)
+    
     payload = await ConsoleService(settings).process_uploaded_knowledge(
         session_id,
         upload=file,
@@ -76,6 +108,14 @@ def preview_population(
     req: PopulationPreviewRequest,
     settings: Settings = Depends(get_settings),
 ) -> PopulationArtifactResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        # Return cached population for demo
+        demo_service = _get_demo_service(settings)
+        population = demo_service.get_population_artifact(session_id)
+        if population:
+            return PopulationArtifactResponse(**population)
+    
     payload = ConsoleService(settings).preview_population(session_id, req)
     return PopulationArtifactResponse(**payload)
 
@@ -85,6 +125,14 @@ def simulation_state(
     session_id: str,
     settings: Settings = Depends(get_settings),
 ) -> SimulationStateResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        # Return cached simulation state for demo
+        demo_service = _get_demo_service(settings)
+        state = demo_service.get_simulation_state(session_id)
+        if state:
+            return SimulationStateResponse(**state)
+    
     payload = SimulationStreamService(settings).get_state(session_id)
     return SimulationStateResponse(**payload)
 
@@ -95,6 +143,14 @@ def simulation_start(
     req: SimulationStartRequest,
     settings: Settings = Depends(get_settings),
 ) -> SimulationStateResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        # Return cached simulation state for demo (already completed)
+        demo_service = _get_demo_service(settings)
+        state = demo_service.get_simulation_state(session_id)
+        if state:
+            return SimulationStateResponse(**state)
+    
     payload = ConsoleService(settings).start_simulation(
         session_id,
         policy_summary=req.policy_summary,
@@ -109,6 +165,27 @@ def simulation_stream(
     session_id: str,
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        # Return cached events from demo cache
+        demo_service = _get_demo_service(settings)
+        cache = demo_service._load_demo_cache()
+        if cache and "simulationState" in cache:
+            # Create a stream from cached events
+            sim_state = cache["simulationState"]
+            recent_events = sim_state.get("recent_events", [])
+            
+            def demo_sse_iter():
+                # Send all cached events
+                for event in recent_events:
+                    event_type = event.get("event_type", "event")
+                    data = json.dumps(event)
+                    yield f"event: {event_type}\ndata: {data}\n\n"
+                # Send completion
+                yield f"event: completed\ndata: {json.dumps({'session_id': session_id, 'status': 'completed'})}\n\n"
+            
+            return StreamingResponse(demo_sse_iter(), media_type="text/event-stream")
+    
     stream = SimulationStreamService(settings).sse_iter(session_id)
     return StreamingResponse(stream, media_type="text/event-stream")
 
@@ -118,6 +195,13 @@ def report_full(
     session_id: str,
     settings: Settings = Depends(get_settings),
 ) -> ReportFullResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        report = demo_service.get_report(session_id)
+        if report:
+            return ReportFullResponse(**report)
+    
     return ReportFullResponse(**ConsoleService(settings).get_report_full(session_id))
 
 
@@ -126,6 +210,13 @@ def report_generate(
     session_id: str,
     settings: Settings = Depends(get_settings),
 ) -> ReportFullResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        report = demo_service.get_report(session_id)
+        if report:
+            return ReportFullResponse(**report)
+    
     return ReportFullResponse(**ConsoleService(settings).generate_report(session_id))
 
 
@@ -134,6 +225,12 @@ def report_opinions(
     session_id: str,
     settings: Settings = Depends(get_settings),
 ) -> ReportOpinionsResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        opinions = demo_service.get_report_opinions(session_id)
+        return ReportOpinionsResponse(**opinions)
+    
     return ReportOpinionsResponse(**ConsoleService(settings).get_report_opinions(session_id))
 
 
@@ -142,6 +239,12 @@ def report_friction_map(
     session_id: str,
     settings: Settings = Depends(get_settings),
 ) -> ReportFrictionMapResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        friction = demo_service.get_friction_map(session_id)
+        return ReportFrictionMapResponse(**friction)
+    
     return ReportFrictionMapResponse(**ConsoleService(settings).get_report_friction_map(session_id))
 
 
@@ -151,6 +254,12 @@ def interaction_hub(
     agent_id: str | None = Query(default=None),
     settings: Settings = Depends(get_settings),
 ) -> InteractionHubResponse:
+    # Check if demo mode with cached data
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        hub = demo_service.get_interaction_hub(session_id, agent_id)
+        return InteractionHubResponse(**hub)
+    
     return InteractionHubResponse(**ConsoleService(settings).get_interaction_hub(session_id, agent_id=agent_id))
 
 

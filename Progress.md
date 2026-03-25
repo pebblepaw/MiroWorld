@@ -2,11 +2,20 @@
 
 ## Global Status
 **Project:** McKAInsey — AI-Powered Population Simulation Consulting Service
-**Status:** Phase A-K completed locally. Screen 2 Redesign (Waffle Chart Cohort Explorer) is fully implemented. Ready for Phase L.
+**Status:** Phase A-K completed locally. Screen 2 Redesign (Waffle Chart Cohort Explorer) is fully implemented. Demo Mode with full cache support is now complete.
 
 ## Current Operator Status
-- `./quick_start.sh --mode demo` remains the supported demo launcher path.
+- `./quick_start.sh --mode demo` is the default launcher path - serves fully cached data with **no Gemini API calls**.
 - `./quick_start.sh --mode live --real-oasis` is the supported live launcher path when the OASIS Python 3.11 sidecar is available.
+- **Demo Mode** now serves pre-cached data for all 7 screens:
+  - Screen 1: Knowledge Graph (75 entities from FY2026 Budget Statement)
+  - Screen 2: 250 agents from Nemotron dataset
+  - Screen 3: 6 rounds of simulation with 1496 interactions
+  - Screen 4: Analysis report with friction maps
+  - Screen 5: Interaction hub with demo chat responses
+- Demo cache files: `backend/data/demo-output.json` and `frontend/public/demo-output.json`
+- Demo service provides cached responses for all API endpoints without external API calls
+- Live mode continues to use real Gemini API and Zep Cloud as configured
 - Stage 1 on the Frontend V2 shell accepts real uploaded files (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.json`, `.csv`, `.yaml`, `.yml`) and persists screen-ready knowledge artifacts.
 - Screen 1 graph controls are now split into:
   - `All / Nemotron Entities / Other Entities`
@@ -215,3 +224,15 @@
 - [x] K5 Build fully responsive Flexbox-driven categorical Waffle Chart layout
 - [x] K6 Restructure UI for massively tall scrollable panes (min-h: 800px)
 - [x] K7 Parse and render exhaustive 10+ field persona tooltip (Education, Marital Status, Culture, Skills, Hobbies, etc.)
+
+### Phase L — Demo Mode with Full Cache Support
+- [x] L1 Create DemoService for serving cached data without API calls
+- [x] L2 Prepare demo cache from existing demo-snapshot.json (250 agents, 6 rounds)
+- [x] L3 Modify console routes to check demo mode and serve cached data
+- [x] L4 Implement demo chat responses (report and agent chat)
+- [x] L5 Ensure live mode continues to use real Gemini API and Zep Cloud
+- [x] L6 Create demo cache preparation script (prepare_demo_cache.py)
+- [x] L7 Create comprehensive demo cache generator (generate_comprehensive_demo_cache.py)
+- [x] L8 Document demo mode architecture and usage
+- [x] L9 Verify demo mode serves all 7 screens from cache
+- [x] L10 Verify live mode still makes real API calls when configured
