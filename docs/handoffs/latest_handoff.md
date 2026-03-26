@@ -18,6 +18,10 @@
   - The tooltip naturally displays nested lists and formats: Exact Match Score %, Semantic Selection Rationale, Occupation, Age, Sex, Marital Status, Location (Planning Area), Education, Industry, Culture, Mock Salary, parsed `skills_and_expertise`, `hobbies`, and `career_goals`.
   - Confirmed the Nemotron dataset deliberately excludes actual Agent Names for privacy, aligning with NVIDIA documentation.
 
+- **Demo Mode Phase Added**: Added Phase L documenting the demo-mode implementation (full cache, demo service, runbook). See [progress/phaseL.md](../../progress/phaseL.md).
+
+- **Phase M — Simulation & Analysis (In progress)**: Documented recent Simulation (Screen 3) and Analysis/Reports (Screen 4) fixes and redesigns, demo cache regeneration, and build verification. See [progress/phaseM.md](../../progress/phaseM.md). Phase M is marked INCOMPLETE — follow-up wiring required for cohort explorer and live report generation.
+
 ## Current Known Limits
 - Screen 4B and Screen 4C remain mock tabs (carried over from Phase J).
 - Vite build throws a large-chunk warning due to heavy React/Recharts/Leaflet dependencies. 
@@ -43,3 +47,4 @@
 - [progress/phaseK.md](../../progress/phaseK.md)
 - [frontend/src/pages/AgentConfig.tsx](../../frontend/src/pages/AgentConfig.tsx)
 - [frontend/src/components/SingaporeMap.tsx](../../frontend/src/components/SingaporeMap.tsx)
+ - [progress/phaseL.md](../../progress/phaseL.md)

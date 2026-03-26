@@ -107,6 +107,8 @@
 - [x] Phase I — Screen 2 Sampling Logic & Agent Graph — [progress/phaseI.md](progress/phaseI.md)
 - [x] Phase J — Screen 3 Live Simulation & Screen 4A Reports — [progress/phaseJ.md](progress/phaseJ.md)
 - [x] Phase K — Screen 2 Agent Configuration Redesign — [progress/phaseK.md](progress/phaseK.md)
+ - [x] Phase L — Demo Mode with Full Cache Support — [progress/phaseL.md](progress/phaseL.md)
+- [ ] Phase M — Simulation & Analysis (Screen 3 & Screen 4) — [progress/phaseM.md](progress/phaseM.md)
 
 ## Feature and Subtask Checklists
 
