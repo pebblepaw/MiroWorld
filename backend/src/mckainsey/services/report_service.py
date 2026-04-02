@@ -54,9 +54,9 @@ class ReportService:
         try:
             payload = _parse_json_object(raw)
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError("Gemini must return valid structured report JSON.") from exc
+            raise RuntimeError("The configured model must return valid structured report JSON.") from exc
         if not isinstance(payload, dict):
-            raise RuntimeError("Gemini must return valid structured report JSON.")
+            raise RuntimeError("The configured model must return valid structured report JSON.")
 
         return self._normalize_structured_report_payload(simulation_id, payload)
 
@@ -178,12 +178,6 @@ class ReportService:
             ),
             system_prompt="You are ReportAgent. Return concise strategic summary.",
         )
-        if executive_summary.startswith("LLM quota/availability fallback"):
-            top_area = top_dissenting[0]["planning_area"] if top_dissenting else "None"
-            executive_summary = (
-                f"Simulation {simulation_id} summary: approval shifted from {_approval(pre):.2f} to {_approval(post):.2f} "
-                f"(delta {_approval(post) - _approval(pre):.2f}). Highest observed friction cohort: {top_area}."
-            )
 
         recommendations = self._recommend(
             simulation_id=simulation_id,
@@ -220,18 +214,7 @@ class ReportService:
             f"User asks: {message}\n"
             "Provide a direct, data-grounded answer with concrete cohort references."
         )
-        response = self.llm.complete(prompt, system_prompt="You are McKAInsey ReportAgent.")
-        if response.startswith("LLM quota/availability fallback"):
-            rates = report.get("approval_rates", {})
-            friction = report.get("friction_by_planning_area", [])
-            top_area = friction[0]["planning_area"] if friction else "N/A"
-            return (
-                "Fallback report answer: "
-                f"approval moved from {rates.get('stage3a', 'N/A')} to {rates.get('stage3b', 'N/A')}, "
-                f"with highest friction in {top_area}. "
-                "Use recommendations tab for cohort-specific mitigation actions."
-            )
-        return response
+        return self.llm.complete_required(prompt, system_prompt="You are McKAInsey ReportAgent.")
 
     def report_chat_payload(self, simulation_id: str, message: str) -> dict[str, Any]:
         report = self.build_report(simulation_id)
@@ -251,7 +234,9 @@ class ReportService:
             "session_id": simulation_id,
             "simulation_id": simulation_id,
             "response": response,
-            "gemini_model": self.settings.gemini_model,
+            "model_provider": self.llm.provider,
+            "model_name": self.llm.model_name,
+            "gemini_model": self.llm.model_name,
             "zep_context_used": zep_context["zep_context_used"],
         }
 
@@ -292,16 +277,14 @@ class ReportService:
             "confidence must be between 0 and 1."
         )
 
-        if self.llm.is_enabled():
-            raw = self.llm.complete(
-                prompt=prompt,
-                system_prompt="You are McKAInsey ReportAgent. Return valid JSON only.",
-            )
-            parsed = self._parse_recommendations(raw)
-            if parsed:
-                return parsed
-
-        return self._algorithmic_recommendations(top_dissenting, income_metrics)
+        raw = self.llm.complete_required(
+            prompt=prompt,
+            system_prompt="You are McKAInsey ReportAgent. Return valid JSON only.",
+        )
+        parsed = self._parse_recommendations(raw)
+        if parsed:
+            return parsed
+        raise RuntimeError("Report recommendation generation failed because the model did not return valid JSON.")
 
     def _parse_recommendations(self, raw: str) -> list[dict[str, Any]]:
         cleaned = raw.strip()
@@ -464,7 +447,7 @@ class ReportService:
             "risks": _normalize_dict_list(payload.get("risks"), required_keys=("title", "summary", "severity")),
         }
         if not normalized["executive_summary"]:
-            raise RuntimeError("Gemini must return valid structured report JSON.")
+            raise RuntimeError("The configured model must return valid structured report JSON.")
         return normalized
 
 

@@ -8,8 +8,12 @@ from mckainsey.models.console import (
     ConsoleAgentChatRequest,
     ConsoleAgentChatResponse,
     ConsoleKnowledgeProcessRequest,
+    ConsoleModelProviderCatalogResponse,
+    ConsoleProviderModelsResponse,
     ConsoleReportChatRequest,
     ConsoleReportChatResponse,
+    ConsoleSessionModelConfigRequest,
+    ConsoleSessionModelConfigResponse,
     ConsoleSessionCreateRequest,
     ConsoleSessionResponse,
     InteractionHubResponse,
@@ -48,8 +52,63 @@ def create_session(
     req: ConsoleSessionCreateRequest,
     settings: Settings = Depends(get_settings),
 ) -> ConsoleSessionResponse:
-    payload = ConsoleService(settings).create_session(req.session_id, req.mode)
+    payload = ConsoleService(settings).create_session(
+        req.session_id,
+        req.mode,
+        model_provider=req.model_provider,
+        model_name=req.model_name,
+        embed_model_name=req.embed_model_name,
+        api_key=req.api_key,
+        base_url=req.base_url,
+    )
     return ConsoleSessionResponse(**payload)
+
+
+@router.get("/model/providers", response_model=ConsoleModelProviderCatalogResponse)
+def model_providers(settings: Settings = Depends(get_settings)) -> ConsoleModelProviderCatalogResponse:
+    payload = ConsoleService(settings).model_provider_catalog()
+    return ConsoleModelProviderCatalogResponse(**payload)
+
+
+@router.get("/model/providers/{provider}/models", response_model=ConsoleProviderModelsResponse)
+def provider_models(
+    provider: str,
+    api_key: str | None = Query(default=None),
+    base_url: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> ConsoleProviderModelsResponse:
+    payload = ConsoleService(settings).list_provider_models(
+        provider,
+        api_key=api_key,
+        base_url=base_url,
+    )
+    return ConsoleProviderModelsResponse(**payload)
+
+
+@router.get("/session/{session_id}/model", response_model=ConsoleSessionModelConfigResponse)
+def get_session_model(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+) -> ConsoleSessionModelConfigResponse:
+    payload = ConsoleService(settings).get_session_model_config(session_id)
+    return ConsoleSessionModelConfigResponse(**payload)
+
+
+@router.put("/session/{session_id}/model", response_model=ConsoleSessionModelConfigResponse)
+def update_session_model(
+    session_id: str,
+    req: ConsoleSessionModelConfigRequest,
+    settings: Settings = Depends(get_settings),
+) -> ConsoleSessionModelConfigResponse:
+    payload = ConsoleService(settings).update_session_model_config(
+        session_id,
+        model_provider=req.model_provider,
+        model_name=req.model_name,
+        embed_model_name=req.embed_model_name,
+        api_key=req.api_key,
+        base_url=req.base_url,
+    )
+    return ConsoleSessionModelConfigResponse(**payload)
 
 
 @router.post("/session/{session_id}/knowledge/process", response_model=KnowledgeArtifactResponse)

@@ -20,12 +20,13 @@ class RunnerInput:
     rounds: int
     personas: list[dict[str, Any]]
     model_name: str
-    gemini_api_key: str
-    openai_base_url: str
+    api_key: str
+    base_url: str
     oasis_db_path: str
     events_path: str | None = None
     elapsed_offset_seconds: int = 0
     tail_checkpoint_estimate_seconds: int = 0
+    oasis_semaphore: int = 128
 
 
 def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
@@ -116,6 +117,13 @@ def _extract_title(content: str) -> str:
     return text[:84]
 
 
+def _build_seed_post_content(policy_summary: str, index: int) -> str:
+    summary_excerpt = " ".join(str(policy_summary or "").split()).strip()[:220]
+    if not summary_excerpt:
+        summary_excerpt = "Discuss this policy and how it may affect Singapore residents."
+    return f"Policy thread kickoff {index + 1}: {summary_excerpt}"
+
+
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
@@ -172,8 +180,8 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         planned_rounds=payload.rounds,
     )
 
-    os.environ["OPENAI_API_KEY"] = payload.gemini_api_key
-    os.environ["OPENAI_BASE_URL"] = payload.openai_base_url
+    os.environ["OPENAI_API_KEY"] = payload.api_key
+    os.environ["OPENAI_BASE_URL"] = payload.base_url
 
     profiles_path = Path(payload.oasis_db_path).with_suffix(".profiles.json")
     profiles_path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,6 +231,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         agent_graph=agent_graph,
         platform=oasis.DefaultPlatformType.REDDIT,
         database_path=str(db_path),
+        semaphore=max(1, int(payload.oasis_semaphore)),
     )
 
     await env.reset()
@@ -235,10 +244,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         seed_actions[agent] = ManualAction(
             action_type=ActionType.CREATE_POST,
             action_args={
-                "content": (
-                    f"Policy thread kickoff {i+1}: FY2026 budget summary and concerns - "
-                    f"{payload.policy_summary[:220]}"
-                )
+                "content": _build_seed_post_content(payload.policy_summary, i)
             },
         )
     await env.step(seed_actions)

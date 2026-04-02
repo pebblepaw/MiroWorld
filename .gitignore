@@ -5,6 +5,8 @@
 backend/.venv311/
 __pycache__/
 *.pyc
+.playwright-mcp/
+backend/tests/
 .pytest_cache/
 .ruff_cache/
 backend/data/lightrag/
@@ -25,3 +27,4 @@ backend/log/
 stitch_frontend_reference.zip
 backend/.cache/*
 archive/*
+output/playwright/

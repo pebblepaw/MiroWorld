@@ -62,6 +62,11 @@ class SimulationStore:
                     session_id TEXT PRIMARY KEY,
                     mode TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    model_provider TEXT,
+                    model_name TEXT,
+                    embed_model_name TEXT,
+                    api_key TEXT,
+                    base_url TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
@@ -129,6 +134,18 @@ class SimulationStore:
             columns = [r[1] for r in conn.execute("PRAGMA table_info(simulations)").fetchall()]
             if "runtime" not in columns:
                 conn.execute("ALTER TABLE simulations ADD COLUMN runtime TEXT NOT NULL DEFAULT 'heuristic'")
+
+            console_columns = [r[1] for r in conn.execute("PRAGMA table_info(console_sessions)").fetchall()]
+            if "model_provider" not in console_columns:
+                conn.execute("ALTER TABLE console_sessions ADD COLUMN model_provider TEXT")
+            if "model_name" not in console_columns:
+                conn.execute("ALTER TABLE console_sessions ADD COLUMN model_name TEXT")
+            if "embed_model_name" not in console_columns:
+                conn.execute("ALTER TABLE console_sessions ADD COLUMN embed_model_name TEXT")
+            if "api_key" not in console_columns:
+                conn.execute("ALTER TABLE console_sessions ADD COLUMN api_key TEXT")
+            if "base_url" not in console_columns:
+                conn.execute("ALTER TABLE console_sessions ADD COLUMN base_url TEXT")
 
     def upsert_simulation(
         self,
@@ -250,18 +267,52 @@ class SimulationStore:
             return None
         return json.loads(row["report_json"])
 
-    def upsert_console_session(self, session_id: str, mode: str, status: str) -> None:
+    def upsert_console_session(
+        self,
+        session_id: str,
+        mode: str,
+        status: str,
+        *,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        embed_model_name: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO console_sessions(session_id, mode, status)
-                VALUES(?, ?, ?)
+                INSERT INTO console_sessions(
+                    session_id,
+                    mode,
+                    status,
+                    model_provider,
+                    model_name,
+                    embed_model_name,
+                    api_key,
+                    base_url
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     mode=excluded.mode,
                     status=excluded.status,
+                    model_provider=COALESCE(excluded.model_provider, console_sessions.model_provider),
+                    model_name=COALESCE(excluded.model_name, console_sessions.model_name),
+                    embed_model_name=COALESCE(excluded.embed_model_name, console_sessions.embed_model_name),
+                    api_key=COALESCE(excluded.api_key, console_sessions.api_key),
+                    base_url=COALESCE(excluded.base_url, console_sessions.base_url),
                     updated_at=CURRENT_TIMESTAMP
                 """,
-                (session_id, mode, status),
+                (
+                    session_id,
+                    mode,
+                    status,
+                    model_provider,
+                    model_name,
+                    embed_model_name,
+                    api_key,
+                    base_url,
+                ),
             )
 
     def get_console_session(self, session_id: str) -> dict[str, Any] | None:

@@ -168,7 +168,7 @@ Implemented locally and validated end to end in live mode. Screen 3 and Screen 4
 ## OASIS Runtime Hardening
 - Added `backend/scripts/check_oasis_runtime.py` to validate the native OASIS Python 3.11 sidecar.
 - Added `backend/requirements-oasis-runtime.txt` to pin the dedicated OASIS runtime dependency set.
-- `quick_start.sh --mode live --real-oasis` now validates the sidecar and installs the pinned runtime requirements if the import contract is broken.
+- `quick_start.sh --mode live` now validates the sidecar and installs the pinned runtime requirements if the import contract is broken.
 - Validated import contract after pinning:
   - `numpy`
   - `pyarrow`
@@ -193,7 +193,7 @@ Implemented locally and validated end to end in live mode. Screen 3 and Screen 4
   - `npm run build`
 
 ### Live
-- Verified via `./quick_start.sh --mode live --real-oasis`
+- Verified via `./quick_start.sh --mode live`
 - Real end-to-end validation flow completed:
   1. create live session
   2. upload real `CNA SHrinking Birth Rate.docx`

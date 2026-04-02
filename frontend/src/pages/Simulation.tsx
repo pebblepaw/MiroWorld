@@ -10,6 +10,7 @@ type FeedComment = {
   id: string;
   actorName: string;
   content: string;
+  roundNo: number;
 };
 
 type FeedThread = {
@@ -22,6 +23,7 @@ type FeedThread = {
   title: string;
   content: string;
   roundNo: number;
+  activityRounds: number[];
   likes: number;
   dislikes: number;
   comments: FeedComment[];
@@ -124,6 +126,7 @@ function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onC
 export default function Simulation() {
   const {
     sessionId,
+    modelProvider,
     knowledgeArtifact,
     populationArtifact,
     simulationRounds,
@@ -153,7 +156,7 @@ export default function Simulation() {
     
     // Filter by round
     if (selectedRound !== "all") {
-      threads = threads.filter(t => t.roundNo === selectedRound);
+      threads = threads.filter((thread) => thread.activityRounds.includes(selectedRound));
     }
     
     // Sort
@@ -173,7 +176,11 @@ export default function Simulation() {
   const baselineStatus = simulationState?.checkpoint_status?.baseline?.status ?? "pending";
   const finalStatus = simulationState?.checkpoint_status?.final?.status ?? "pending";
 
-  const estimatedTime = useMemo(() => estimateRuntimeSeconds(populationArtifact?.sample_count ?? 0, simulationRounds), [populationArtifact?.sample_count, simulationRounds]);
+  const runtimeEstimate = useMemo(
+    () => estimateRuntimeBreakdown(populationArtifact?.sample_count ?? 0, simulationRounds, modelProvider),
+    [modelProvider, populationArtifact?.sample_count, simulationRounds],
+  );
+  const estimatedTime = runtimeEstimate.totalSeconds;
   const hottestThread = simulationState?.top_threads?.[0] as { title?: string; engagement?: number } | undefined;
 
   const closeStream = useCallback(() => {
@@ -204,6 +211,7 @@ export default function Simulation() {
         const actorName = String(payload.actor_name ?? payload.actor_agent_id ?? "Agent");
         const actorOccupation = String(payload.actor_occupation ?? "");
         const actorAge = payload.actor_age ? Number(payload.actor_age) : undefined;
+        const roundNo = Number(payload.round_no ?? 0);
         const actorSubtitle = actorOccupation && actorAge 
           ? `${actorOccupation}, ${actorAge}` 
           : String(payload.actor_subtitle ?? payload.actor_agent_id ?? "Sampled persona");
@@ -218,7 +226,8 @@ export default function Simulation() {
             actorAge,
             title,
             content,
-            roundNo: Number(payload.round_no ?? 0),
+            roundNo,
+            activityRounds: mergeRoundActivity([], roundNo),
             likes: 0,
             dislikes: 0,
             comments: [],
@@ -233,17 +242,22 @@ export default function Simulation() {
         const postId = payload.post_id;
         return previous.map((thread) =>
           thread.postId === postId
-            ? {
-                ...thread,
-                comments: [
-                  ...thread.comments,
-                  {
-                    id: String(payload.comment_id ?? `${thread.id}-${thread.comments.length + 1}`),
-                    actorName: String(payload.actor_name ?? payload.actor_agent_id ?? "Agent"),
-                    content: String(payload.content ?? ""),
-                  },
-                ],
-              }
+            ? (() => {
+                const eventRound = Number(payload.round_no ?? thread.roundNo ?? 0);
+                return {
+                  ...thread,
+                  activityRounds: mergeRoundActivity(thread.activityRounds, eventRound),
+                  comments: [
+                    ...thread.comments,
+                    {
+                      id: String(payload.comment_id ?? `${thread.id}-${thread.comments.length + 1}`),
+                      actorName: String(payload.actor_name ?? payload.actor_agent_id ?? "Agent"),
+                      content: String(payload.content ?? ""),
+                      roundNo: eventRound,
+                    },
+                  ],
+                };
+              })()
             : thread,
         );
       });
@@ -255,8 +269,10 @@ export default function Simulation() {
         previous.map((thread) => {
           if (thread.postId !== payload.post_id) return thread;
           const reaction = String(payload.reaction ?? "");
+          const eventRound = Number(payload.round_no ?? thread.roundNo ?? 0);
           return {
             ...thread,
+            activityRounds: mergeRoundActivity(thread.activityRounds, eventRound),
             likes: thread.likes + (reaction === "like" ? 1 : 0),
             dislikes: thread.dislikes + (reaction === "dislike" ? 1 : 0),
           };
@@ -384,6 +400,9 @@ export default function Simulation() {
                     <span>~{formatSeconds(estimatedTime)}</span>
                     <span className="text-white/20">|</span>
                     <span>{populationArtifact?.sample_count ?? 250} agents × {simulationRounds} rounds</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-white/45 font-mono">
+                    Pre-run estimate: baseline {formatSeconds(runtimeEstimate.baselineCheckpointSeconds)} + OASIS {formatSeconds(runtimeEstimate.roundWindowSeconds)} + final {formatSeconds(runtimeEstimate.finalCheckpointSeconds)}
                   </div>
                 </div>
                 
@@ -670,10 +689,48 @@ function formatSeconds(value: number | null | undefined): string {
   return `${Math.round(seconds)}s`;
 }
 
-function estimateRuntimeSeconds(agentCount: number, rounds: number): number {
-  const checkpointSeconds = Math.max(8, Math.floor(agentCount * 0.18));
-  const roundSeconds = Math.max(10, Math.floor(agentCount * 0.05) + 6);
-  return (checkpointSeconds * 2) + (roundSeconds * rounds);
+function estimateRuntimeBreakdown(agentCount: number, rounds: number, provider: string): {
+  baselineCheckpointSeconds: number;
+  roundWindowSeconds: number;
+  finalCheckpointSeconds: number;
+  totalSeconds: number;
+} {
+  const normalizedProvider = String(provider || "ollama").toLowerCase();
+  const isOllama = normalizedProvider === "ollama";
+  const safeAgentCount = Math.max(0, Number(agentCount || 0));
+  const safeRounds = Math.max(1, Number(rounds || 1));
+
+  const checkpointFloor = isOllama ? 40 : 8;
+  const checkpointPerAgent = isOllama ? 3.6 : 0.22;
+  const roundFloor = isOllama ? 45 : 10;
+  const roundPerAgent = isOllama ? 6.8 : 0.06;
+  const roundOverhead = isOllama ? 20 : 6;
+
+  const baselineCheckpointSeconds = Math.max(
+    checkpointFloor,
+    Math.floor(safeAgentCount * checkpointPerAgent),
+  );
+  const finalCheckpointSeconds = baselineCheckpointSeconds;
+  const perRoundSeconds = Math.max(roundFloor, Math.floor(safeAgentCount * roundPerAgent) + roundOverhead);
+  const roundWindowSeconds = perRoundSeconds * safeRounds;
+
+  return {
+    baselineCheckpointSeconds,
+    roundWindowSeconds,
+    finalCheckpointSeconds,
+    totalSeconds: baselineCheckpointSeconds + roundWindowSeconds + finalCheckpointSeconds,
+  };
+}
+
+function mergeRoundActivity(existingRounds: number[], roundNo: number): number[] {
+  const normalizedRound = Number(roundNo);
+  if (!Number.isFinite(normalizedRound) || normalizedRound <= 0) {
+    return existingRounds;
+  }
+  if (existingRounds.includes(normalizedRound)) {
+    return existingRounds;
+  }
+  return [...existingRounds, normalizedRound].sort((left, right) => left - right);
 }
 
 function reduceSimulationState(previous: SimulationState | null, payload: Record<string, unknown>): SimulationState {

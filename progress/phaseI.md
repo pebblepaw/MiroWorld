@@ -214,7 +214,7 @@ Implemented locally and verified. Screen 2 is live on the Frontend V2 shell and 
   - `npm run build`
 
 ### Live
-- Verified through `./quick_start.sh --mode live --real-oasis`
+- Verified through `./quick_start.sh --mode live`
 - Browser flow:
   1. upload real `CNA SHrinking Birth Rate.docx`
   2. complete Screen 1 extraction

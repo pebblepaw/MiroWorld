@@ -33,7 +33,7 @@ Replace the inherited dashboard with the real McKAInsey console, align the UI to
 - Demo boot:
   - `./quick_start.sh --mode demo`
 - Live boot:
-  - `./quick_start.sh --mode live --real-oasis`
+  - `./quick_start.sh --mode live`
 - Refresh demo artifacts before launch:
   - `./quick_start.sh --refresh-demo --mode demo`
 

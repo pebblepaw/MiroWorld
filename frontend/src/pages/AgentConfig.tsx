@@ -99,11 +99,12 @@ export default function AgentConfig() {
     }
 
     const requestedSeed = nextSeed(sampleSeed);
+    const requestedAgentCount = Math.max(2, agentCount);
     try {
       setPopulationLoading(true);
       setPopulationError(null);
       const artifact = await previewPopulation(sessionId, {
-        agent_count: agentCount,
+        agent_count: requestedAgentCount,
         sample_mode: sampleMode,
         sampling_instructions: samplingInstructions.trim() || undefined,
         seed: requestedSeed,
@@ -261,14 +262,17 @@ export default function AgentConfig() {
           <Slider
             value={[agentCount]}
             onValueChange={handleCountChange}
-            min={100}
+            min={0}
             max={500}
-            step={50}
+            step={2}
             className="w-full mb-2"
           />
           <div className="flex justify-between text-[11px] text-muted-foreground font-mono mb-6">
-            <span>100</span><span>500</span>
+            <span>0</span><span>500</span>
           </div>
+          <p className="text-[11px] text-muted-foreground/80 mb-6">
+            Runtime minimum is 2 agents. Values below 2 are automatically executed as 2.
+          </p>
 
           <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3">Sampling Strategy</div>
           <div className="flex flex-col sm:flex-row gap-2">

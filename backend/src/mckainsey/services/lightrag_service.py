@@ -219,6 +219,10 @@ COMMON_SKILLS = {
 }
 HOBBY_SLUGS = {_constant_slugify(name): name for name in COMMON_HOBBIES}
 SKILL_SLUGS = {_constant_slugify(name): name for name in COMMON_SKILLS}
+EMBEDDING_TEXT_MAX_CHARS = 1200
+OLLAMA_INGEST_DOC_MAX_CHARS = 9000
+OLLAMA_FALLBACK_GRAPH_DOC_MAX_CHARS = 4500
+OLLAMA_GUIDING_PROMPT_MAX_CHARS = 400
 GENERIC_PLACEHOLDER_LABELS = {
     "company",
     "concept",
@@ -369,11 +373,12 @@ class LightRAGService:
 
             api_key = self._settings.resolved_gemini_key
             if not api_key:
-                raise RuntimeError("GEMINI_API_KEY (or GEMINI_API) is required for LightRAG")
+                raise RuntimeError("A provider API key is required for LightRAG operations.")
 
             async def embedding_func(texts: list[str]) -> np.ndarray:
+                sanitized_texts = [text[:EMBEDDING_TEXT_MAX_CHARS] for text in texts]
                 return await openai_embed.func(
-                    texts,
+                    sanitized_texts,
                     model=self._settings.gemini_embed_model,
                     api_key=api_key,
                     base_url=self._settings.gemini_openai_base_url,
@@ -410,25 +415,56 @@ class LightRAGService:
         document_id = f"doc-{uuid.uuid4()}"
         file_paths = [source_path] if source_path else None
 
-        await self._rag.ainsert([document_text], ids=[document_id], file_paths=file_paths)
+        provider = str(self._settings.llm_provider or "").strip().lower()
+        ingestion_text = document_text
+        fallback_graph_text = document_text
+        normalized_guiding_prompt = guiding_prompt.strip() if guiding_prompt else None
+        summary_mode = "mix"
+        demographic_mode = "hybrid"
+        processing_logs: list[str] = []
+
+        if provider == "ollama":
+            # Local Ollama runs can become unstable on large extraction payloads.
+            ingestion_text = _truncate_for_runtime(document_text, OLLAMA_INGEST_DOC_MAX_CHARS)
+            fallback_graph_text = _truncate_for_runtime(document_text, OLLAMA_FALLBACK_GRAPH_DOC_MAX_CHARS)
+            if normalized_guiding_prompt:
+                normalized_guiding_prompt = normalized_guiding_prompt[:OLLAMA_GUIDING_PROMPT_MAX_CHARS].strip()
+            summary_mode = "hybrid"
+            demographic_mode = "local"
+            processing_logs.append("Applied lightweight Ollama ingestion profile.")
+            if len(ingestion_text) < len(document_text):
+                processing_logs.append(
+                    f"Trimmed ingestion text from {len(document_text)} to {len(ingestion_text)} chars for local runtime stability"
+                )
+            if len(fallback_graph_text) < len(document_text):
+                processing_logs.append(
+                    f"Trimmed fallback extraction text from {len(document_text)} to {len(fallback_graph_text)} chars"
+                )
+
+        await self._rag.ainsert([ingestion_text], ids=[document_id], file_paths=file_paths)
 
         summary_prompt = "Summarize this policy document with key entities and relationships."
-        if guiding_prompt:
-            summary_prompt = f"{summary_prompt} Focus especially on: {guiding_prompt}"
+        if provider == "ollama":
+            summary_prompt = (
+                "Summarize the policy in 5 concise bullets covering objective, implementing entities, "
+                "target cohorts, geographic scope, and expected social impact."
+            )
+        if normalized_guiding_prompt:
+            summary_prompt = f"{summary_prompt} Focus especially on: {normalized_guiding_prompt}"
         summary = await self._rag.aquery(
             summary_prompt,
-            param=QueryParam(mode="mix"),
+            param=QueryParam(mode=summary_mode),
         )
 
         demographic_context = None
         if demographic_focus:
             demographic_context = await self._rag.aquery(
                 f"Extract only content most relevant to this demographic: {demographic_focus}",
-                param=QueryParam(mode="hybrid"),
+                param=QueryParam(mode=demographic_mode),
             )
 
         graph_origin = "lightrag_native"
-        processing_logs = [f"Inserted document {document_id} into LightRAG"]
+        processing_logs.insert(0, f"Inserted document {document_id} into LightRAG")
         native_graph = await _load_document_native_graph(self._rag, document_id)
         if native_graph and (native_graph.nodes or native_graph.edges):
             graph_payload = _adapt_native_lightrag_graph(native_graph)
@@ -438,10 +474,10 @@ class LightRAGService:
                 f"Adapted LightRAG entity graph ({len(entity_nodes)} nodes, {len(relationship_edges)} edges)"
             )
         else:
-            graph_origin = "fallback_gemini_extract"
+            graph_origin = "fallback_model_extract"
             entity_nodes, relationship_edges = await _build_graph_from_text(
-                document_text=document_text,
-                guiding_prompt=guiding_prompt,
+                document_text=fallback_graph_text,
+                guiding_prompt=normalized_guiding_prompt,
                 settings=self._settings,
             )
             processing_logs.append(
@@ -971,10 +1007,14 @@ async def _extract_graph_payload(
     *,
     settings: Settings,
 ) -> dict[str, Any]:
-    prompt = _build_graph_extraction_prompt(document_text, guiding_prompt)
+    prompt = _build_graph_extraction_prompt(
+        document_text,
+        guiding_prompt,
+        provider=settings.llm_provider,
+    )
     api_key = settings.resolved_gemini_key
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY (or GEMINI_API) is required for graph extraction")
+        raise RuntimeError("A provider API key is required for graph extraction.")
 
     raw_response = openai_complete_if_cache(
         settings.gemini_model,
@@ -989,13 +1029,27 @@ async def _extract_graph_payload(
     return _parse_graph_payload(str(raw_response))
 
 
-def _build_graph_extraction_prompt(document_text: str, guiding_prompt: str | None) -> str:
+def _build_graph_extraction_prompt(
+    document_text: str,
+    guiding_prompt: str | None,
+    *,
+    provider: str | None = None,
+) -> str:
+    normalized_provider = str(provider or "").strip().lower()
     prompt_lines = [
         "Document text:",
         document_text.strip(),
     ]
     if guiding_prompt:
         prompt_lines.extend(["", "Guiding prompt:", guiding_prompt.strip()])
+    if normalized_provider == "ollama":
+        prompt_lines.extend(
+            [
+                "",
+                "Keep extraction compact: at most 30 nodes and 45 edges.",
+                "Prefer high-signal entities only; omit weakly relevant details.",
+            ]
+        )
     prompt_lines.extend(
         [
             "",
@@ -1003,6 +1057,17 @@ def _build_graph_extraction_prompt(document_text: str, guiding_prompt: str | Non
         ]
     )
     return "\n".join(prompt_lines)
+
+
+def _truncate_for_runtime(text: str, max_chars: int) -> str:
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return stripped
+    candidate = stripped[:max_chars]
+    newline = candidate.rfind("\n")
+    if newline > int(max_chars * 0.7):
+        candidate = candidate[:newline]
+    return candidate.strip()
 
 
 def _parse_graph_payload(raw_text: str) -> dict[str, Any]:

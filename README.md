@@ -11,22 +11,21 @@ The platform deploys **multi-agent LLM simulations** where dozens of these perso
 Use the launcher from repo root:
 
 ```bash
-./quick_start.sh --mode auto
+./quick_start.sh --mode demo
 ```
 
 You can also call it explicitly with Bash:
 
 ```bash
-bash ./quick_start.sh --mode auto
+bash ./quick_start.sh --mode demo
 ```
 
 `bash` is the shell interpreter that runs the script file. In this project, `./quick_start.sh ...` and `bash ./quick_start.sh ...` are equivalent.
 
 ### Mode Behavior
 
-- `--mode auto` (default): live backend first, then demo-cache fallback.
-- `--mode demo`: demo-cache first, then live fallback.
-- `--mode live`: live backend first, then demo-cache fallback.
+- `--mode demo` (default): demo-cache-first startup.
+- `--mode live`: native OASIS live runtime startup.
 
 Both forms are supported:
 
@@ -36,7 +35,25 @@ Both forms are supported:
 ### Optional Flags
 
 - `--refresh-demo`: regenerate demo cache before boot.
-- `--real-oasis`: enable native OASIS sidecar runtime paths.
+
+### Live Mode OASIS Setup (Beginner-Friendly)
+
+Live mode uses a Python 3.11 sidecar for `camel-oasis`.
+
+1. Install Python 3.11 (once).
+2. Run:
+
+```bash
+./quick_start.sh --mode live
+```
+
+The launcher now auto-creates `backend/.venv311` when missing, installs pinned OASIS runtime dependencies, and validates imports before booting.
+
+If your Python 3.11 is in a custom path, set:
+
+```bash
+OASIS_PY_BIN=/absolute/path/to/python3.11 ./quick_start.sh --mode live
+```
 
 ### Common Startup Issue (Ports In Use)
 

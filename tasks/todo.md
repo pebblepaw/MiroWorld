@@ -1,32 +1,59 @@
-# Task Plan - Phase A Implementation
+# Task Plan - Phase N Stabilization
 
 ## Goal
-Deliver Phase A end-to-end for local development mode (HuggingFace streaming + DuckDB on HF parquet) with LightRAG processing and Zep Cloud logging.
+Complete the remaining Phase N stabilization work by improving runtime reliability and error transparency for Screen 1 across provider-based model execution.
 
 ## Constraints
-- Use Mode 1 from BRD data access strategy.
-- Keep documentation synchronized (`Progress.md`, `progress/index.md`, `progress/phaseA.md`, handoff).
-- Attempt git push after phase completion.
+- Keep provider-aware architecture and session model config behavior intact.
+- Do not reintroduce deterministic placeholder fallbacks.
+- Prefer minimal-impact edits focused on Stage 1 ingestion and error surfacing.
 
 ## Assumptions
-- `.env` contains valid Gemini and Zep Cloud credentials.
-- Python 3.11+ environment is available.
+- Existing provider/model session routes are already functional.
+- Remaining issues are operational: limited OpenAI quota and Ollama local throughput.
 
 ## Checklist
-- [x] Scaffold backend package structure
-- [x] Implement persona sampling service (stream + duckdb modes)
-- [x] Implement LightRAG service for policy ingestion and demographic context retrieval
-- [x] Implement Zep Cloud event logging hook
-- [x] Expose Phase A API endpoints via FastAPI
-- [x] Add tests for health and sampler filtering
-- [ ] Install dependencies and run tests locally
-- [ ] Update phase documentation with evidence
-- [ ] Commit and push Phase A deliverables
+- [x] Add backend provider-aware error detail propagation for Screen 1 ingestion failures.
+- [x] Add Ollama-oriented lightweight ingestion profile for Stage 1 extraction.
+- [x] Update frontend Screen 1 error rendering to display backend detail messages.
+- [x] Run targeted backend tests covering console/lightrag flows.
+- [x] Build frontend and verify no TypeScript/build regressions.
+- [x] Update progress docs with stabilization status and verification evidence.
 
 ## Verification Plan
-- Run `pytest -q` in backend.
-- Manual API smoke:
-  - `GET /health`
-  - `POST /api/v1/phase-a/personas/sample`
-  - `POST /api/v1/phase-a/knowledge/process`
-- Capture command outputs in `progress/phaseA.md` evidence section.
+- Backend:
+  - `pytest -q backend/tests/test_console_routes.py backend/tests/test_lightrag_service.py`
+- Frontend:
+  - `npm run build` in `frontend`
+- Manual:
+  - Trigger Screen 1 failure path and confirm UI shows provider-specific error message text from backend response.
+
+## Verification Results
+- Backend:
+  - `pytest -q tests/test_console_routes.py tests/test_lightrag_service.py`
+  - Result: `16 passed`
+- Frontend:
+  - `npm run build`
+  - Result: successful production build.
+- Manual:
+  - Screen 1 now reports backend `detail` messages directly when available.
+  - Generic network failure text is replaced with provider/model-aware runtime guidance.
+
+## Extended Verification (Autonomous Pass)
+- Full backend suite:
+  - `cd backend && pytest -q`
+  - Result: `48 passed`
+- Full frontend suite:
+  - `cd frontend && npm run test -- --run`
+  - Result: `5 files passed, 10 tests passed`
+- Frontend production build:
+  - `cd frontend && npm run build`
+  - Result: successful build (chunk-size warning only)
+- Playwright provider matrix on Screen 1:
+  - Ollama default verified in settings (`qwen3:4b-instruct-2507-q4_K_M`) and extraction returned HTTP `200`.
+  - Gemini (Google provider, `gemini-2.5-flash-lite`) configured via settings with API key from `.env`; extraction returned HTTP `200`.
+  - OpenAI (`gpt-5-mini`) configured via settings with API key from `.env`; extraction returned HTTP `502` with `RateLimitError` (expected quota behavior).
+  - Screenshots and artifacts captured under `output/playwright/`.
+- Audit step:
+  - Requested `gemini/skills/audit/skill.md` / `.gemini/skills/audit/SKILL.md` paths were not present in this workspace.
+  - Performed manual screenshot audit over provider settings + extraction outcomes before finalization.

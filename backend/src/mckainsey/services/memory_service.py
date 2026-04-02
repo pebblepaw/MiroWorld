@@ -173,11 +173,6 @@ class MemoryService:
             "Respond in-character in 3-5 sentences."
         )
         response = self.llm.complete(prompt, system_prompt="You are a simulated Singapore persona agent.")
-        if response.startswith("LLM quota/availability fallback"):
-            response = (
-                f"As {agent_id}, my recent interactions indicate mixed reactions in my planning-area cohort. "
-                "I adjusted my stance based on affordability concerns, peer comments, and perceived policy support details."
-            )
         return {
             "simulation_id": simulation_id,
             "agent_id": agent_id,
@@ -220,7 +215,9 @@ class MemoryService:
             "agent_id": agent_id,
             "response": response,
             "memory_used": bool(memories or zep_context["episodes"]),
-            "gemini_model": self._settings.gemini_model,
+            "model_provider": self.llm.provider,
+            "model_name": self.llm.model_name,
+            "gemini_model": self.llm.model_name,
             "zep_context_used": zep_context["zep_context_used"],
         }
 
@@ -228,4 +225,4 @@ class MemoryService:
         if self.client is None:
             raise RuntimeError("Zep Cloud is required for Stage 5 chat but no ZEP_API_KEY/ZEP_CLOUD is configured.")
         if not self.llm.is_enabled():
-            raise RuntimeError("Gemini is required for Stage 5 chat but no GEMINI_API_KEY/GEMINI_API is configured.")
+            raise RuntimeError("A valid model provider API key is required for Stage 5 chat.")

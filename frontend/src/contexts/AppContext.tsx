@@ -1,11 +1,16 @@
 import React, { createContext, useCallback, useContext, useMemo, useState, ReactNode } from 'react';
 import { Agent, SimPost } from '@/data/mockData';
-import { KnowledgeArtifact, PopulationArtifact } from '@/lib/console-api';
+import { KnowledgeArtifact, ModelProviderId, PopulationArtifact } from '@/lib/console-api';
 
 interface AppState {
   currentStep: number;
   completedSteps: number[];
   sessionId: string | null;
+  modelProvider: ModelProviderId;
+  modelName: string;
+  embedModelName: string;
+  modelApiKey: string;
+  modelBaseUrl: string;
   uploadedFile: File | null;
   guidingPrompt: string;
   knowledgeGraphReady: boolean;
@@ -31,6 +36,11 @@ interface AppContextType extends AppState {
   setCurrentStep: (step: number) => void;
   completeStep: (step: number) => void;
   setSessionId: (sessionId: string | null) => void;
+  setModelProvider: (provider: ModelProviderId) => void;
+  setModelName: (modelName: string) => void;
+  setEmbedModelName: (embedModelName: string) => void;
+  setModelApiKey: (modelApiKey: string) => void;
+  setModelBaseUrl: (modelBaseUrl: string) => void;
   setUploadedFile: (file: File | null) => void;
   setGuidingPrompt: (prompt: string) => void;
   setKnowledgeGraphReady: (ready: boolean) => void;
@@ -59,13 +69,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     currentStep: 1,
     completedSteps: [],
     sessionId: null,
+    modelProvider: 'ollama',
+    modelName: 'qwen3:4b-instruct-2507-q4_K_M',
+    embedModelName: 'nomic-embed-text',
+    modelApiKey: '',
+    modelBaseUrl: 'http://127.0.0.1:11434/v1/',
     uploadedFile: null,
     guidingPrompt: '',
     knowledgeGraphReady: false,
     knowledgeArtifact: null,
     knowledgeLoading: false,
     knowledgeError: null,
-    agentCount: 500,
+    agentCount: 0,
     sampleMode: 'affected_groups',
     samplingInstructions: '',
     sampleSeed: null,
@@ -86,6 +101,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     completedSteps: s.completedSteps.includes(step) ? s.completedSteps : [...s.completedSteps, step],
   })), []);
   const setSessionId = useCallback((sessionId: string | null) => setState(s => ({ ...s, sessionId })), []);
+  const setModelProvider = useCallback((modelProvider: ModelProviderId) => setState(s => ({ ...s, modelProvider })), []);
+  const setModelName = useCallback((modelName: string) => setState(s => ({ ...s, modelName })), []);
+  const setEmbedModelName = useCallback((embedModelName: string) => setState(s => ({ ...s, embedModelName })), []);
+  const setModelApiKey = useCallback((modelApiKey: string) => setState(s => ({ ...s, modelApiKey })), []);
+  const setModelBaseUrl = useCallback((modelBaseUrl: string) => setState(s => ({ ...s, modelBaseUrl })), []);
   const setUploadedFile = useCallback((file: File | null) => setState(s => ({ ...s, uploadedFile: file })), []);
   const setGuidingPrompt = useCallback((prompt: string) => setState(s => ({ ...s, guidingPrompt: prompt })), []);
   const setKnowledgeGraphReady = useCallback((ready: boolean) => setState(s => ({ ...s, knowledgeGraphReady: ready })), []);
@@ -119,6 +139,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentStep,
     completeStep,
     setSessionId,
+    setModelProvider,
+    setModelName,
+    setEmbedModelName,
+    setModelApiKey,
+    setModelBaseUrl,
     setUploadedFile,
     setGuidingPrompt,
     setKnowledgeGraphReady,
@@ -143,6 +168,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentStep,
     completeStep,
     setSessionId,
+    setModelProvider,
+    setModelName,
+    setEmbedModelName,
+    setModelApiKey,
+    setModelBaseUrl,
     setUploadedFile,
     setGuidingPrompt,
     setKnowledgeGraphReady,

@@ -6,12 +6,66 @@ from pydantic import BaseModel, ConfigDict, Field
 class ConsoleSessionCreateRequest(BaseModel):
     session_id: str | None = None
     mode: Literal["demo", "live"] = "demo"
+    model_provider: Literal["google", "openrouter", "openai", "ollama"] | None = None
+    model_name: str | None = None
+    embed_model_name: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
 
 
 class ConsoleSessionResponse(BaseModel):
     session_id: str
     mode: Literal["demo", "live"]
     status: str
+    model_provider: Literal["google", "openrouter", "openai", "ollama"]
+    model_name: str
+    embed_model_name: str
+    base_url: str
+    api_key_configured: bool
+    api_key_masked: str | None = None
+
+
+class ConsoleSessionModelConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_provider: Literal["google", "openrouter", "openai", "ollama"]
+    model_name: str
+    embed_model_name: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+class ConsoleSessionModelConfigResponse(BaseModel):
+    session_id: str
+    model_provider: Literal["google", "openrouter", "openai", "ollama"]
+    model_name: str
+    embed_model_name: str
+    base_url: str
+    api_key_configured: bool
+    api_key_masked: str | None = None
+
+
+class ConsoleModelProviderResponse(BaseModel):
+    id: Literal["google", "openrouter", "openai", "ollama"]
+    label: str
+    default_model: str
+    default_embed_model: str
+    default_base_url: str
+    requires_api_key: bool
+
+
+class ConsoleModelProviderCatalogResponse(BaseModel):
+    providers: list[ConsoleModelProviderResponse]
+
+
+class ConsoleModelOptionResponse(BaseModel):
+    id: str
+    label: str
+
+
+class ConsoleProviderModelsResponse(BaseModel):
+    provider: Literal["google", "openrouter", "openai", "ollama"]
+    models: list[ConsoleModelOptionResponse]
 
 
 class ConsoleKnowledgeProcessRequest(BaseModel):
@@ -127,7 +181,9 @@ class ConsoleReportChatRequest(BaseModel):
 class ConsoleReportChatResponse(BaseModel):
     session_id: str
     response: str
-    gemini_model: str
+    model_provider: str
+    model_name: str
+    gemini_model: str | None = None
     zep_context_used: bool
 
 
@@ -141,5 +197,7 @@ class ConsoleAgentChatResponse(BaseModel):
     agent_id: str
     response: str
     memory_used: bool
-    gemini_model: str
+    model_provider: str
+    model_name: str
+    gemini_model: str | None = None
     zep_context_used: bool

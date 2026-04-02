@@ -50,9 +50,32 @@ type GraphLinkDatum = {
   summary?: string | null;
 };
 
+function resolveKnowledgeExtractionError(
+  error: unknown,
+  context: { provider: string; model: string },
+): string {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (message && message.toLowerCase() !== 'failed to fetch') {
+      return message;
+    }
+  }
+
+  return (
+    `Could not reach the backend during Screen 1 extraction while using ` +
+    `${context.provider}/${context.model}. ` +
+    `Check that the backend is running and that the selected provider runtime is reachable.`
+  );
+}
+
 export default function PolicyUpload() {
   const {
     sessionId,
+    modelProvider,
+    modelName,
+    embedModelName,
+    modelApiKey,
+    modelBaseUrl,
     uploadedFile,
     guidingPrompt,
     knowledgeGraphReady,
@@ -153,7 +176,15 @@ export default function PolicyUpload() {
       setKnowledgeLoading(true);
       setKnowledgeError(null);
 
-      const resolvedSessionId = sessionId ?? (await createConsoleSession()).session_id;
+      const resolvedSessionId = sessionId ?? (
+        await createConsoleSession(undefined, {
+          model_provider: modelProvider,
+          model_name: modelName,
+          embed_model_name: embedModelName,
+          api_key: modelApiKey.trim() || undefined,
+          base_url: modelBaseUrl.trim() || undefined,
+        })
+      ).session_id;
       if (!sessionId) {
         setSessionId(resolvedSessionId);
       }
@@ -162,7 +193,10 @@ export default function PolicyUpload() {
       setKnowledgeArtifact(artifact);
       setKnowledgeGraphReady(true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Knowledge extraction failed.';
+      const message = resolveKnowledgeExtractionError(error, {
+        provider: modelProvider,
+        model: modelName,
+      });
       setKnowledgeGraphReady(false);
       setKnowledgeArtifact(null);
       setKnowledgeError(message);
@@ -177,6 +211,11 @@ export default function PolicyUpload() {
   }, [
     uploadedFile,
     sessionId,
+    modelProvider,
+    modelName,
+    embedModelName,
+    modelApiKey,
+    modelBaseUrl,
     guidingPrompt,
     setKnowledgeLoading,
     setKnowledgeError,

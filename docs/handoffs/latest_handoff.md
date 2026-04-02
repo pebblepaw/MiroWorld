@@ -34,7 +34,7 @@
 ## Runbook
 1. Live mode
    - ensure `.env` contains valid Gemini and Zep credentials
-   - run `./quick_start.sh --mode live --real-oasis`
+  - run `./quick_start.sh --mode live`
    - upload a document in Screen 1
    - generate agents in Screen 2
    - experience the Waffle Chart visualization

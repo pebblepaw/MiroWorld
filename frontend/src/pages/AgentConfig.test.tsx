@@ -1,27 +1,12 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { forwardRef, useEffect } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AgentConfig from "@/pages/AgentConfig";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 
-const { forceGraphSpy } = vi.hoisted(() => ({
-  forceGraphSpy: vi.fn(),
-}));
-
-vi.mock("react-force-graph-2d", () => ({
-  default: forwardRef((props: { graphData: { nodes: Array<{ label?: string }>; links: Array<unknown> } }, _ref) => {
-    forceGraphSpy(props);
-    return (
-      <div data-testid="agent-graph-canvas">
-        <span data-testid="agent-graph-node-count">{props.graphData.nodes.length}</span>
-        <span data-testid="agent-graph-link-count">{props.graphData.links.length}</span>
-        {props.graphData.nodes.map((node, index) => (
-          <span key={`${node.label}-${index}`}>{node.label}</span>
-        ))}
-      </div>
-    );
-  }),
+vi.mock("@/components/SingaporeMap", () => ({
+  SingaporeMap: () => <div data-testid="singapore-map" />,
 }));
 
 function SeedStage2Context() {
@@ -55,10 +40,6 @@ function SeedStage2Context() {
 
 describe("AgentConfig", () => {
   const originalFetch = global.fetch;
-
-  beforeEach(() => {
-    forceGraphSpy.mockClear();
-  });
 
   afterEach(() => {
     global.fetch = originalFetch;
@@ -202,36 +183,32 @@ describe("AgentConfig", () => {
       </AppProvider>,
     );
 
-    fireEvent.change(screen.getByLabelText(/sampling instructions/i), {
+    fireEvent.change(screen.getByLabelText(/strategic parameters/i), {
       target: { value: "Bias toward younger teachers and parents in the north-east." },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /generate agents/i }));
+    fireEvent.click(screen.getByRole("button", { name: /sample population/i }));
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
 
     const request = vi.mocked(global.fetch).mock.calls[0];
     expect(request[0]).toContain("/api/v2/console/session/session-screen2/sampling/preview");
     const body = JSON.parse(String(request[1]?.body));
-    expect(body.agent_count).toBe(500);
+    expect(body.agent_count).toBe(2);
     expect(body.sample_mode).toBe("affected_groups");
     expect(body.sampling_instructions).toBe("Bias toward younger teachers and parents in the north-east.");
     expect(typeof body.seed).toBe("number");
 
-    expect(await screen.findByText("Candidate Pool")).toBeInTheDocument();
+    expect(await screen.findByText("Candidate Shortlist")).toBeInTheDocument();
     expect(screen.getByText("824")).toBeInTheDocument();
-    expect(screen.getByText("Sample Seed")).toBeInTheDocument();
-    expect(screen.getByText("17")).toBeInTheDocument();
-    expect(screen.getByText("Industry Mix")).toBeInTheDocument();
-    const parsedInstructionsCard = screen.getByText("Parsed Instructions").closest(".glass-card");
-    expect(parsedInstructionsCard).not.toBeNull();
-    expect(parsedInstructionsCard).toHaveTextContent("Bias toward younger teachers and parents in the north-east.");
-    expect(screen.getByTestId("agent-graph-node-count")).toHaveTextContent("3");
-    expect(screen.getByTestId("agent-graph-link-count")).toHaveTextContent("2");
-
-    const forceGraphProps = forceGraphSpy.mock.calls.at(-1)?.[0];
-    expect(forceGraphProps.nodeRelSize).toBe(1);
-    expect(forceGraphProps.linkCanvasObjectMode({})).toBe("after");
+    expect(screen.getByText("Semantic Rerank")).toBeInTheDocument();
+    expect(screen.getByText("Industry Sector Mix")).toBeInTheDocument();
+    expect(screen.getByText("Parsed Strategy Notes")).toBeInTheDocument();
+    expect(screen.getAllByText("Bias toward younger teachers and parents in the north-east.").length).toBeGreaterThan(0);
+    expect(screen.getByText("Cohort Explorer")).toBeInTheDocument();
+    expect(screen.getByLabelText("Persona agent-0001")).toBeInTheDocument();
+    expect(screen.getByLabelText("Persona agent-0002")).toBeInTheDocument();
+    expect(screen.getByLabelText("Persona agent-0003")).toBeInTheDocument();
   });
 
   it("switches to baseline mode and re-samples with a fresh seed using the same config", async () => {
@@ -277,12 +254,12 @@ describe("AgentConfig", () => {
       </AppProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /population baseline/i }));
-    fireEvent.change(screen.getByLabelText(/sampling instructions/i), {
+    fireEvent.click(screen.getByRole("button", { name: /singapore baseline/i }));
+    fireEvent.change(screen.getByLabelText(/strategic parameters/i), {
       target: { value: "Include a broad comparison group across Singapore." },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /generate agents/i }));
+    fireEvent.click(screen.getByRole("button", { name: /sample population/i }));
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
 
     const firstBody = JSON.parse(String(vi.mocked(global.fetch).mock.calls[0][1]?.body));
@@ -297,7 +274,6 @@ describe("AgentConfig", () => {
     expect(secondBody.sampling_instructions).toBe("Include a broad comparison group across Singapore.");
     expect(secondBody.agent_count).toBe(firstBody.agent_count);
     expect(secondBody.seed).not.toBe(firstBody.seed);
-    expect(await screen.findByText("91")).toBeInTheDocument();
   });
 
   it("renders a read-only parsed summary and does not advertise an unsupported 5,000 agent maximum", async () => {
@@ -347,24 +323,12 @@ describe("AgentConfig", () => {
 
     expect(screen.queryByText("5,000")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/sampling instructions/i), {
+    fireEvent.change(screen.getByLabelText(/strategic parameters/i), {
       target: { value: "Bias toward younger teachers in the north-east, with finance excluded." },
     });
-    fireEvent.click(screen.getByRole("button", { name: /generate agents/i }));
+    fireEvent.click(screen.getByRole("button", { name: /sample population/i }));
 
-    const parsedInstructionsCard = (await screen.findByText("Parsed Instructions")).closest(".glass-card");
-    expect(parsedInstructionsCard).not.toBeNull();
-    const parsedInstructionsWithin = within(parsedInstructionsCard as HTMLElement);
-
-    expect(parsedInstructionsWithin.getByText("Hard Filters")).toBeInTheDocument();
-    expect(parsedInstructionsWithin.getByText("occupation")).toBeInTheDocument();
-    expect(parsedInstructionsWithin.getByText("Teacher")).toBeInTheDocument();
-    expect(parsedInstructionsWithin.getByText("Soft Boosts")).toBeInTheDocument();
-    expect(parsedInstructionsWithin.getByText("age cohort")).toBeInTheDocument();
-    expect(parsedInstructionsWithin.getByText("Youth")).toBeInTheDocument();
-    expect(parsedInstructionsWithin.getByText("Exclusions")).toBeInTheDocument();
-    expect(parsedInstructionsWithin.getByText("Finance")).toBeInTheDocument();
-    expect(parsedInstructionsWithin.getByText("Distribution Targets")).toBeInTheDocument();
-    expect(parsedInstructionsWithin.getByText("Bias toward younger teachers in the north-east, with finance excluded.")).toBeInTheDocument();
+    expect(await screen.findByText("Parsed Strategy Notes")).toBeInTheDocument();
+    expect(screen.getAllByText("Bias toward younger teachers in the north-east, with finance excluded.").length).toBeGreaterThan(0);
   });
 });

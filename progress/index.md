@@ -13,5 +13,6 @@
 | I | [Phase I](phaseI.md) | Complete | Screen 2 Sampling Logic & Agent Graph |
 | J | [Phase J](phaseJ.md) | Complete | Screen 3 Live Simulation & Screen 4A Reports |
 | K | [Phase K](phaseK.md) | In Progress | Screen 2 Redesign |
+| N | [Phase N](phaseN.md) | In Progress | Provider-Aware Model Selector & Runtime Routing |
 
 ## Quick Links

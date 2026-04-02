@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+import re
 from pathlib import Path
 import random
 from typing import Any
@@ -16,6 +17,14 @@ from mckainsey.services.demo_service import DemoService
 from mckainsey.services.document_parser import extract_document_text
 from mckainsey.services.lightrag_service import LightRAGService
 from mckainsey.services.memory_service import MemoryService
+from mckainsey.services.model_provider_service import (
+    ensure_ollama_models_available,
+    mask_api_key,
+    normalize_provider,
+    provider_catalog,
+    resolve_model_selection,
+    selection_to_settings_update,
+)
 from mckainsey.services.persona_relevance_service import PersonaRelevanceService
 from mckainsey.services.persona_sampler import PersonaSampler
 from mckainsey.services.report_service import ReportService
@@ -33,28 +42,223 @@ class ConsoleService:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.store = SimulationStore(settings.simulation_db_path)
-        self.lightrag = LightRAGService(settings)
         self.sampler = PersonaSampler(
             settings.nemotron_dataset,
             settings.nemotron_split,
             cache_dir=settings.nemotron_cache_dir,
             download_workers=settings.nemotron_download_workers,
         )
-        self.relevance = PersonaRelevanceService(settings)
-        self.simulation = SimulationService(settings)
         self.streams = SimulationStreamService(settings)
-        self.memory = MemoryService(settings)
-        self.report = ReportService(settings)
         self.demo = DemoService(settings)
 
-    def create_session(self, requested_session_id: str | None = None, mode: str = "demo") -> dict[str, Any]:
-        # If demo mode and demo cache is available, use demo service
+    def _session_record(self, session_id: str) -> dict[str, Any] | None:
+        return self.store.get_console_session(session_id)
+
+    def _session_model_overrides(self, session: dict[str, Any] | None) -> dict[str, Any]:
+        if not session:
+            return {}
+        return {
+            "provider": session.get("model_provider"),
+            "model_name": session.get("model_name"),
+            "embed_model_name": session.get("embed_model_name"),
+            "api_key": session.get("api_key"),
+            "base_url": session.get("base_url"),
+        }
+
+    def _runtime_settings_for_session(self, session_id: str) -> Settings:
+        session = self._session_record(session_id)
+        selection = resolve_model_selection(
+            self.settings,
+            **self._session_model_overrides(session),
+        )
+        updates = selection_to_settings_update(selection)
+        updates["lightrag_workdir"] = self._session_lightrag_workdir(
+            session_id,
+            provider=selection.provider,
+            embed_model_name=selection.embed_model_name,
+        )
+        return self.settings.model_copy(update=updates)
+
+    def _session_lightrag_workdir(self, session_id: str, *, provider: str, embed_model_name: str) -> str:
+        base = Path(self.settings.lightrag_workdir)
+        provider_slug = re.sub(r"[^a-zA-Z0-9]+", "_", provider.lower()).strip("_") or "provider"
+        embed_slug = re.sub(r"[^a-zA-Z0-9]+", "_", embed_model_name.lower()).strip("_") or "embed"
+        return str((base / "sessions" / session_id / f"{provider_slug}_{embed_slug}").resolve())
+
+    def _session_model_payload(self, session_id: str) -> dict[str, Any]:
+        session = self._session_record(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+        selection = resolve_model_selection(
+            self.settings,
+            **self._session_model_overrides(session),
+        )
+        return {
+            "session_id": session_id,
+            "model_provider": selection.provider,
+            "model_name": selection.model_name,
+            "embed_model_name": selection.embed_model_name,
+            "base_url": selection.base_url,
+            "api_key_configured": selection.api_key_configured,
+            "api_key_masked": mask_api_key(selection.api_key),
+        }
+
+    def _format_runtime_failure_detail(self, session_id: str, exc: Exception, *, action: str) -> str:
+        try:
+            runtime_settings = self._runtime_settings_for_session(session_id)
+            provider = runtime_settings.llm_provider
+            model_name = runtime_settings.llm_model
+        except Exception:  # noqa: BLE001
+            provider = self.settings.llm_provider
+            model_name = self.settings.llm_model
+
+        raw_message = str(exc).strip() or exc.__class__.__name__
+        lowered = raw_message.lower()
+        hint = ""
+
+        if "insufficient_quota" in lowered or "quota" in lowered:
+            hint = "Provider quota or billing limits were hit for the configured API key."
+        elif provider == "ollama" and any(token in lowered for token in ("timed out", "timeout", "connection", "refused")):
+            hint = "Local Ollama runtime appears unavailable or overloaded."
+
+        detail = f"{action} failed for provider '{provider}' model '{model_name}': {raw_message}"
+        if hint:
+            detail = f"{detail}. {hint}"
+        return detail
+
+    def model_provider_catalog(self) -> dict[str, Any]:
+        return {"providers": provider_catalog(self.settings)}
+
+    def list_provider_models(
+        self,
+        provider: str,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> dict[str, Any]:
+        normalized = normalize_provider(provider)
+        from mckainsey.services.model_provider_service import list_models_for_provider
+
+        models = list_models_for_provider(
+            self.settings,
+            provider=normalized,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        return {
+            "provider": normalized,
+            "models": models,
+        }
+
+    def get_session_model_config(self, session_id: str) -> dict[str, Any]:
+        return self._session_model_payload(session_id)
+
+    def update_session_model_config(
+        self,
+        session_id: str,
+        *,
+        model_provider: str,
+        model_name: str,
+        embed_model_name: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> dict[str, Any]:
+        session = self._session_record(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+        selection = resolve_model_selection(
+            self.settings,
+            provider=model_provider,
+            model_name=model_name,
+            embed_model_name=embed_model_name,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        if selection.provider == "ollama":
+            ensure_ollama_models_available(self.settings, selection)
+
+        self.store.upsert_console_session(
+            session_id=session_id,
+            mode=session.get("mode", "demo"),
+            status=session.get("status", "created"),
+            model_provider=selection.provider,
+            model_name=selection.model_name,
+            embed_model_name=selection.embed_model_name,
+            api_key=selection.api_key,
+            base_url=selection.base_url,
+        )
+        return self._session_model_payload(session_id)
+
+    def create_session(
+        self,
+        requested_session_id: str | None = None,
+        mode: str = "demo",
+        *,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        embed_model_name: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> dict[str, Any]:
+        selection = resolve_model_selection(
+            self.settings,
+            provider=model_provider,
+            model_name=model_name,
+            embed_model_name=embed_model_name,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        if selection.provider == "ollama" and mode == "live":
+            ensure_ollama_models_available(self.settings, selection)
+
+        # If demo mode and demo cache is available, use demo service.
         if mode == "demo" and self.demo.is_demo_available():
-            return self.demo.create_demo_session(requested_session_id)
-        
+            demo_payload = self.demo.create_demo_session(requested_session_id)
+            session_id = str(demo_payload["session_id"])
+            self.store.upsert_console_session(
+                session_id=session_id,
+                mode=mode,
+                status=str(demo_payload.get("status", "created")),
+                model_provider=selection.provider,
+                model_name=selection.model_name,
+                embed_model_name=selection.embed_model_name,
+                api_key=selection.api_key,
+                base_url=selection.base_url,
+            )
+            return {
+                **demo_payload,
+                "model_provider": selection.provider,
+                "model_name": selection.model_name,
+                "embed_model_name": selection.embed_model_name,
+                "base_url": selection.base_url,
+                "api_key_configured": selection.api_key_configured,
+                "api_key_masked": mask_api_key(selection.api_key),
+            }
+
         session_id = requested_session_id or f"session-{uuid.uuid4().hex[:8]}"
-        self.store.upsert_console_session(session_id=session_id, mode=mode, status="created")
-        return {"session_id": session_id, "mode": mode, "status": "created"}
+        self.store.upsert_console_session(
+            session_id=session_id,
+            mode=mode,
+            status="created",
+            model_provider=selection.provider,
+            model_name=selection.model_name,
+            embed_model_name=selection.embed_model_name,
+            api_key=selection.api_key,
+            base_url=selection.base_url,
+        )
+        return {
+            "session_id": session_id,
+            "mode": mode,
+            "status": "created",
+            "model_provider": selection.provider,
+            "model_name": selection.model_name,
+            "embed_model_name": selection.embed_model_name,
+            "base_url": selection.base_url,
+            "api_key_configured": selection.api_key_configured,
+            "api_key_masked": mask_api_key(selection.api_key),
+        }
 
     async def process_knowledge(
         self,
@@ -83,13 +287,26 @@ class ConsoleService:
         if not resolved_text:
             raise HTTPException(status_code=422, detail="document_text or use_default_demo_document is required")
 
-        artifact = await self.lightrag.process_document(
-            simulation_id=session_id,
-            document_text=resolved_text,
-            source_path=resolved_source,
-            guiding_prompt=guiding_prompt,
-            demographic_focus=demographic_focus,
-        )
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        lightrag = LightRAGService(runtime_settings)
+        try:
+            artifact = await lightrag.process_document(
+                simulation_id=session_id,
+                document_text=resolved_text,
+                source_path=resolved_source,
+                guiding_prompt=guiding_prompt,
+                demographic_focus=demographic_focus,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            detail = self._format_runtime_failure_detail(
+                session_id,
+                exc,
+                action="Screen 1 knowledge extraction",
+            )
+            raise HTTPException(status_code=502, detail=detail) from exc
+
         artifact["session_id"] = session_id
         artifact["guiding_prompt"] = guiding_prompt
         self.store.save_knowledge_artifact(session_id, artifact)
@@ -135,10 +352,23 @@ class ConsoleService:
         if not knowledge:
             raise HTTPException(status_code=404, detail=f"Knowledge artifact not found for session {session_id}")
 
-        parsed_instructions = self.relevance.parse_sampling_instructions(
-            request.sampling_instructions,
-            knowledge_artifact=knowledge,
-        )
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        relevance = PersonaRelevanceService(runtime_settings)
+
+        try:
+            parsed_instructions = relevance.parse_sampling_instructions(
+                request.sampling_instructions,
+                knowledge_artifact=knowledge,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            detail = self._format_runtime_failure_detail(
+                session_id,
+                exc,
+                action="Screen 2 agent sampling",
+            )
+            raise HTTPException(status_code=502, detail=detail) from exc
         effective_seed = int(request.seed if request.seed is not None else random.randint(1, 2_147_483_647))
         if request.sample_mode == "population_baseline":
             candidate_limit = min(
@@ -166,7 +396,7 @@ class ConsoleService:
         if not personas:
             raise HTTPException(status_code=422, detail="No personas matched the current sampling configuration.")
 
-        artifact = self.relevance.build_population_artifact(
+        artifact = relevance.build_population_artifact(
             session_id,
             personas=personas,
             knowledge_artifact=knowledge,
@@ -186,9 +416,8 @@ class ConsoleService:
         session = self.store.get_console_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+        runtime_settings = self._runtime_settings_for_session(session_id)
         effective_mode = mode or session.get("mode", "demo")
-        if effective_mode == "live" and not self.settings.enable_real_oasis:
-            raise HTTPException(status_code=409, detail="Live mode requires ENABLE_REAL_OASIS=true")
 
         population = self.store.get_population_artifact(session_id)
         if not population:
@@ -199,7 +428,7 @@ class ConsoleService:
         if not sampled_rows:
             raise HTTPException(status_code=422, detail="No sampled personas available for simulation start")
 
-        events_dir = Path(self.settings.oasis_db_dir).parent / "events"
+        events_dir = Path(runtime_settings.oasis_db_dir).parent / "events"
         events_dir.mkdir(parents=True, exist_ok=True)
         events_path = events_dir / f"{session_id}.ndjson"
         if events_path.exists():
@@ -212,13 +441,17 @@ class ConsoleService:
         self.store.clear_checkpoint_records(session_id)
         self.store.clear_interaction_transcripts(session_id)
         self.store.reset_memory_sync_state(session_id)
-        initial_estimate = self._estimate_initial_runtime(agent_count=len(sampled_rows), rounds=rounds)
+        initial_estimate = self._estimate_initial_runtime(
+            agent_count=len(sampled_rows),
+            rounds=rounds,
+            provider=runtime_settings.llm_provider,
+        )
         self.store.save_simulation_state_snapshot(
             session_id,
             {
                 "session_id": session_id,
                 "status": "running",
-                "platform": self.settings.simulation_platform,
+                "platform": runtime_settings.simulation_platform,
                 "planned_rounds": rounds,
                 "event_count": 0,
                 "last_round": 0,
@@ -284,8 +517,10 @@ class ConsoleService:
         # Check if demo mode
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
             return self.demo.get_report_opinions(session_id)
-        
-        report = self.report.build_report(session_id)
+
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        report_service = ReportService(runtime_settings)
+        report = report_service.build_report(session_id)
         feed = self.store.get_interactions(session_id)[-50:]
         return {
             "session_id": session_id,
@@ -297,8 +532,10 @@ class ConsoleService:
         # Check if demo mode
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
             return self.demo.get_friction_map(session_id)
-        
-        report = self.report.build_report(session_id)
+
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        report_service = ReportService(runtime_settings)
+        report = report_service.build_report(session_id)
         friction = report.get("friction_by_planning_area", [])
         top = friction[0]["planning_area"] if friction else "N/A"
         return {
@@ -311,11 +548,18 @@ class ConsoleService:
         # Check if demo mode
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
             return self.demo.get_interaction_hub(session_id, agent_id)
-        
-        report = self.report.build_report(session_id)
+
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        report_service = ReportService(runtime_settings)
+        report = report_service.build_report(session_id)
         influential = report.get("influential_agents", [])
         selected_agent_id = agent_id or (str(influential[0].get("agent_id")) if influential else None)
-        selected = self._build_selected_agent_state(session_id, selected_agent_id, influential)
+        selected = self._build_selected_agent_state(
+            session_id,
+            selected_agent_id,
+            influential,
+            runtime_settings=runtime_settings,
+        )
         report_transcript = self.store.list_interaction_transcript(session_id, channel="report_agent", limit=12)
         return {
             "session_id": session_id,
@@ -331,12 +575,21 @@ class ConsoleService:
     def report_chat(self, session_id: str, message: str) -> dict[str, Any]:
         # Check if demo mode
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            payload = self.demo.generate_demo_report_chat(session_id, message)
+            model_payload = self._session_model_payload(session_id)
+            payload = {
+                **self.demo.generate_demo_report_chat(session_id, message),
+                "session_id": session_id,
+                "model_provider": model_payload["model_provider"],
+                "model_name": model_payload["model_name"],
+                "gemini_model": model_payload["model_name"],
+            }
             self.store.append_interaction_transcript(session_id, "report_agent", "user", message)
             self.store.append_interaction_transcript(session_id, "report_agent", "assistant", payload["response"])
             return payload
-        
-        payload = self.report.report_chat_payload(session_id, message)
+
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        report_service = ReportService(runtime_settings)
+        payload = report_service.report_chat_payload(session_id, message)
         self.store.append_interaction_transcript(session_id, "report_agent", "user", message)
         self.store.append_interaction_transcript(session_id, "report_agent", "assistant", payload["response"])
         return payload
@@ -344,12 +597,23 @@ class ConsoleService:
     def agent_chat(self, session_id: str, agent_id: str, message: str) -> dict[str, Any]:
         # Check if demo mode
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            payload = self.demo.generate_demo_agent_chat(session_id, agent_id, message)
+            model_payload = self._session_model_payload(session_id)
+            payload = {
+                **self.demo.generate_demo_agent_chat(session_id, agent_id, message),
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "memory_used": True,
+                "model_provider": model_payload["model_provider"],
+                "model_name": model_payload["model_name"],
+                "gemini_model": model_payload["model_name"],
+            }
             self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
             self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)
             return payload
-        
-        payload = self.memory.agent_chat_realtime(session_id, agent_id, message)
+
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        memory_service = MemoryService(runtime_settings)
+        payload = memory_service.agent_chat_realtime(session_id, agent_id, message)
         self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
         self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)
         return payload
@@ -359,6 +623,8 @@ class ConsoleService:
         session_id: str,
         agent_id: str | None,
         influential_agents: list[dict[str, Any]],
+        *,
+        runtime_settings: Settings,
     ) -> dict[str, Any] | None:
         if not agent_id:
             return None
@@ -366,7 +632,8 @@ class ConsoleService:
         by_agent_id = {str(agent["agent_id"]): agent for agent in self.store.get_agents(session_id)}
         influential = next((agent for agent in influential_agents if str(agent.get("agent_id")) == agent_id), None)
         stored = by_agent_id.get(agent_id)
-        recent_memory = self.memory.get_agent_memory(session_id, agent_id)[-8:]
+        memory_service = MemoryService(runtime_settings)
+        recent_memory = memory_service.get_agent_memory(session_id, agent_id)[-8:]
         transcript = self.store.list_interaction_transcript(session_id, "agent_chat", agent_id=agent_id, limit=12)
         persona = stored.get("persona", {}) if stored else {}
         merged = dict(influential or {})
@@ -391,14 +658,23 @@ class ConsoleService:
         mode: str,
     ) -> None:
         try:
+            runtime_settings = self._runtime_settings_for_session(session_id)
+            simulation_service = SimulationService(runtime_settings)
             knowledge = self.store.get_knowledge_artifact(session_id) or {}
-            context_bundles = self.simulation.build_context_bundles(
+            context_bundles = simulation_service.build_context_bundles(
                 simulation_id=session_id,
                 policy_summary=policy_summary,
                 knowledge_artifact=knowledge,
                 sampled_personas=sampled_rows,
             )
-            checkpoint_estimate = self._estimate_checkpoint_runtime(agent_count=len(sampled_rows))
+            checkpoint_estimate = self._estimate_checkpoint_runtime(
+                agent_count=len(sampled_rows),
+                provider=runtime_settings.llm_provider,
+            )
+            round_estimate = self._estimate_round_runtime(
+                agent_count=len(sampled_rows),
+                provider=runtime_settings.llm_provider,
+            )
             baseline_started_at = time.monotonic()
             self.streams.append_events(
                 session_id,
@@ -411,7 +687,7 @@ class ConsoleService:
                     }
                 ],
             )
-            baseline = self.simulation.run_opinion_checkpoint(
+            baseline = simulation_service.run_opinion_checkpoint(
                 simulation_id=session_id,
                 checkpoint_kind="baseline",
                 policy_summary=policy_summary,
@@ -434,8 +710,8 @@ class ConsoleService:
                         "session_id": session_id,
                         "round_no": 0,
                         "elapsed_seconds": baseline_elapsed,
-                        "estimated_total_seconds": baseline_elapsed + (rounds * max(10, int(len(sampled_rows) * 0.05) + 6)) + checkpoint_estimate,
-                        "estimated_remaining_seconds": (rounds * max(10, int(len(sampled_rows) * 0.05) + 6)) + checkpoint_estimate,
+                        "estimated_total_seconds": baseline_elapsed + (rounds * round_estimate) + checkpoint_estimate,
+                        "estimated_remaining_seconds": (rounds * round_estimate) + checkpoint_estimate,
                         "counters": {"posts": 0, "comments": 0, "reactions": 0, "active_authors": 0},
                         "discussion_momentum": {"approval_delta": 0.0, "dominant_stance": "mixed"},
                         "top_threads": [],
@@ -444,14 +720,19 @@ class ConsoleService:
                 ],
             )
             enriched_personas = self._enrich_personas_for_simulation(personas, sampled_rows, context_bundles)
-            simulation_result = self.simulation.run_with_personas(
+
+            def _ingest_progress(path: Path, elapsed: int) -> None:
+                del elapsed
+                self.streams.ingest_events_incremental(session_id, path)
+
+            simulation_result = simulation_service.run_with_personas(
                 simulation_id=session_id,
                 policy_summary=policy_summary,
                 rounds=rounds,
                 personas=enriched_personas,
                 events_path=events_path,
                 force_live=(mode == "live"),
-                on_progress=lambda path, elapsed: self.streams.ingest_events_incremental(session_id, path),
+                on_progress=_ingest_progress,
                 elapsed_offset_seconds=baseline_elapsed,
                 tail_checkpoint_estimate_seconds=checkpoint_estimate,
             )
@@ -469,7 +750,7 @@ class ConsoleService:
                     }
                 ],
             )
-            final = self.simulation.run_opinion_checkpoint(
+            final = simulation_service.run_opinion_checkpoint(
                 simulation_id=session_id,
                 checkpoint_kind="final",
                 policy_summary=policy_summary,
@@ -537,7 +818,9 @@ class ConsoleService:
 
     def _run_report_generation_background(self, session_id: str) -> None:
         try:
-            payload = self.report.generate_structured_report(session_id)
+            runtime_settings = self._runtime_settings_for_session(session_id)
+            report_service = ReportService(runtime_settings)
+            payload = report_service.generate_structured_report(session_id)
             self.store.save_report_state(session_id, payload)
         except Exception as exc:  # noqa: BLE001
             failed = self._empty_report_state(session_id, status="failed")
@@ -549,6 +832,14 @@ class ConsoleService:
 
         min_age = request.min_age
         max_age = request.max_age
+
+        hard_min_age = self._parse_age_filter_value(hard_filters.get("min_age", []))
+        hard_max_age = self._parse_age_filter_value(hard_filters.get("max_age", []))
+        if hard_min_age is not None:
+            min_age = hard_min_age if min_age is None else max(min_age, hard_min_age)
+        if hard_max_age is not None:
+            max_age = hard_max_age if max_age is None else min(max_age, hard_max_age)
+
         requested_age_cohorts = hard_filters.get("age_cohort", [])
         if requested_age_cohorts:
             age_bounds = [self._age_bounds_for_cohort(cohort) for cohort in requested_age_cohorts]
@@ -558,6 +849,9 @@ class ConsoleService:
                 derived_max = max(bounds[1] for bounds in age_bounds)
                 min_age = derived_min if min_age is None else max(min_age, derived_min)
                 max_age = derived_max if max_age is None else min(max_age, derived_max)
+
+        if min_age is not None and max_age is not None and min_age > max_age:
+            raise HTTPException(status_code=422, detail="Sampling constraints are contradictory: min_age exceeds max_age.")
 
         return {
             "min_age": min_age,
@@ -589,6 +883,15 @@ class ConsoleService:
 
     def _age_bounds_for_cohort(self, cohort: str) -> tuple[int, int] | None:
         normalized = str(cohort).strip().lower()
+        range_match = re.match(r"^(\d{1,3})_(\d{1,3})$", normalized)
+        if range_match:
+            lower = max(0, min(120, int(range_match.group(1))))
+            upper = max(0, min(120, int(range_match.group(2))))
+            return (min(lower, upper), max(lower, upper))
+        plus_match = re.match(r"^(\d{1,3})_plus$", normalized)
+        if plus_match:
+            lower = max(0, min(120, int(plus_match.group(1))))
+            return (lower, 120)
         if normalized == "youth":
             return (18, 24)
         if normalized == "adult":
@@ -597,13 +900,31 @@ class ConsoleService:
             return (60, 100)
         return None
 
-    def _estimate_initial_runtime(self, *, agent_count: int, rounds: int) -> int:
-        checkpoint_seconds = self._estimate_checkpoint_runtime(agent_count=agent_count)
-        round_seconds = max(10, int(agent_count * 0.05) + 6)
+    def _parse_age_filter_value(self, values: Any) -> int | None:
+        candidates = values if isinstance(values, list) else [values]
+        for value in candidates:
+            match = re.search(r"\d{1,3}", str(value))
+            if not match:
+                continue
+            return max(0, min(120, int(match.group(0))))
+        return None
+
+    def _estimate_initial_runtime(self, *, agent_count: int, rounds: int, provider: str) -> int:
+        checkpoint_seconds = self._estimate_checkpoint_runtime(agent_count=agent_count, provider=provider)
+        round_seconds = self._estimate_round_runtime(agent_count=agent_count, provider=provider)
         return (checkpoint_seconds * 2) + (round_seconds * rounds)
 
-    def _estimate_checkpoint_runtime(self, *, agent_count: int) -> int:
-        return max(8, int(agent_count * 0.18))
+    def _estimate_checkpoint_runtime(self, *, agent_count: int, provider: str) -> int:
+        normalized_provider = str(provider or "ollama").strip().lower()
+        if normalized_provider == "ollama":
+            return max(40, int(agent_count * 3.6))
+        return max(8, int(agent_count * 0.22))
+
+    def _estimate_round_runtime(self, *, agent_count: int, provider: str) -> int:
+        normalized_provider = str(provider or "ollama").strip().lower()
+        if normalized_provider == "ollama":
+            return max(45, int(agent_count * 6.8) + 20)
+        return max(10, int(agent_count * 0.06) + 6)
 
     def _empty_report_state(self, session_id: str, *, status: str) -> dict[str, Any]:
         return {

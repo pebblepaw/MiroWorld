@@ -37,14 +37,17 @@ Setup:
 
 1. `cd backend`
 2. `python3.11 -m venv .venv311`
-3. `.venv311/bin/pip install -U pip camel-oasis`
+3. `.venv311/bin/pip install -U pip`
+4. `.venv311/bin/pip install -r requirements-oasis-runtime.txt`
 
 Enable native OASIS for simulation runs:
 
-- Set `ENABLE_REAL_OASIS=true`
-- Ensure `GEMINI_API_KEY` or `GEMINI_API` is set (used as OpenAI-compatible key)
+- Run launcher in live mode: `./quick_start.sh --mode live`
+- Ensure a valid provider key is configured (`GEMINI_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY`) when using cloud providers
 
 The service will execute `backend/scripts/oasis_reddit_runner.py` via `.venv311/bin/python` and ingest OASIS outputs into the project simulation store.
+
+If `.venv311` or OASIS imports are missing, `quick_start.sh --mode live` now auto-creates the sidecar and installs pinned runtime deps before boot.
 
 ## Demo Default Document
 
@@ -73,7 +76,6 @@ From repo root, use `./quick_start.sh` to start backend + frontend together.
 
 Examples:
 
-- `./quick_start.sh --mode auto` (default): live dashboard first, then static demo fallback.
-- `./quick_start.sh --mode demo`: static demo-first boot behavior.
-- `./quick_start.sh --mode live`: live backend-first boot behavior.
-- `./quick_start.sh --refresh-demo --real-oasis --mode demo`: regenerate cached demo artifacts with native OASIS and boot demo-first.
+- `./quick_start.sh --mode demo` (default): demo-first boot behavior.
+- `./quick_start.sh --mode live`: live backend boot with native OASIS.
+- `./quick_start.sh --refresh-demo --mode demo`: regenerate cached demo artifacts before demo-first boot.

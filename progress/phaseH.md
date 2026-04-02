@@ -134,7 +134,7 @@ Completed and live-verified on branch `codex/frontend-v2-screen1`.
 
 ## Live Verification Evidence
 - Live launcher:
-  - `./quick_start.sh --mode live --real-oasis`
+  - `./quick_start.sh --mode live`
 - Real Screen 1 upload sample:
   - `Sample_Inputs/CNA SHrinking Birth Rate.docx`
 - Verified live artifact:

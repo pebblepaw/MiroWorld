@@ -69,6 +69,8 @@ SUPPORTED_INSTRUCTION_FIELDS = {
     "planning_area",
     "sex",
     "age_cohort",
+    "min_age",
+    "max_age",
     "education_level",
     "marital_status",
     "occupation",
@@ -124,22 +126,31 @@ class PersonaRelevanceService:
             return dict(EMPTY_PARSED_INSTRUCTIONS)
 
         cleaned = instructions.strip()
-        if self.llm.is_enabled():
-            prompt = self._build_instruction_prompt(cleaned, knowledge_artifact or {})
-            try:
-                raw = self.llm.complete_required(
-                    prompt,
-                    system_prompt="You parse sampling instructions for a Singapore population-sampling system. Return valid JSON only.",
-                )
-                parsed = self._extract_json_object(raw)
-                if parsed:
-                    normalized = self._normalize_parsed_instructions(parsed, source="gemini")
-                    if self._has_actionable_instruction_signal(normalized):
-                        return normalized
-            except Exception:
-                pass
+        if not self.llm.is_enabled():
+            raise RuntimeError("Sampling instruction parsing requires a configured model provider.")
 
-        return self._fallback_parse_sampling_instructions(cleaned)
+        prompt = self._build_instruction_prompt(cleaned, knowledge_artifact or {})
+        raw = self.llm.complete_required(
+            prompt,
+            system_prompt="You parse sampling instructions for a Singapore population-sampling system. Return valid JSON only.",
+        )
+        parsed = self._extract_json_object(raw)
+        if not parsed:
+            fallback = self._augment_with_deterministic_constraints(
+                cleaned,
+                self._fallback_parse_sampling_instructions(cleaned),
+            )
+            if not fallback.get("notes_for_ui"):
+                fallback["notes_for_ui"] = [cleaned]
+            return fallback
+
+        normalized = self._normalize_parsed_instructions(parsed, source=self.llm.provider)
+        normalized = self._augment_with_deterministic_constraints(cleaned, normalized)
+        if self._has_actionable_instruction_signal(normalized):
+            return normalized
+        if not normalized.get("notes_for_ui"):
+            normalized["notes_for_ui"] = [cleaned]
+        return normalized
 
     def score_personas(
         self,
@@ -565,25 +576,14 @@ class PersonaRelevanceService:
         candidate_texts = [self._persona_long_doc(persona) for persona in personas]
         if not personas:
             return []
+        if not self.embeddings.is_enabled():
+            raise RuntimeError("Semantic reranking requires a configured embedding model.")
 
-        if self.embeddings.is_enabled():
-            try:
-                vectors = self.embeddings.embed_texts([query_text, *candidate_texts])
-                if len(vectors) == len(candidate_texts) + 1:
-                    query_vector = vectors[0]
-                    return [round(self._cosine_similarity(query_vector, vector), 4) for vector in vectors[1:]]
-            except Exception:
-                pass
-
-        query_tokens = self._tokens(query_text)
-        scores: list[float] = []
-        for text in candidate_texts:
-            text_tokens = self._tokens(text)
-            if not text_tokens:
-                scores.append(0.0)
-                continue
-            scores.append(round(len(query_tokens & text_tokens) / len(query_tokens | text_tokens), 4))
-        return scores
+        vectors = self.embeddings.embed_texts([query_text, *candidate_texts])
+        if len(vectors) != len(candidate_texts) + 1:
+            raise RuntimeError("Semantic reranking failed because the embedding response size was invalid.")
+        query_vector = vectors[0]
+        return [round(self._cosine_similarity(query_vector, vector), 4) for vector in vectors[1:]]
 
     def _geographic_relevance(self, issue_profile: dict[str, Any], persona: dict[str, Any]) -> float:
         area = str(persona.get("planning_area", "")).strip().lower()
@@ -1018,12 +1018,91 @@ class PersonaRelevanceService:
             text = str(value).strip()
             if not text:
                 continue
+            if field_name in {"min_age", "max_age"}:
+                age_value = self._coerce_age_value(text)
+                if age_value is None:
+                    continue
+                normalized.append(str(age_value))
+                continue
             if field_name == "planning_area":
                 if region_values := REGION_ALIASES.get(self._slug(text)):
                     normalized.extend(self._slug(item) for item in region_values)
                     continue
             normalized.append(self._slug(text))
         return sorted(dict.fromkeys(normalized))
+
+    def _coerce_age_value(self, value: Any) -> int | None:
+        text = str(value).strip()
+        match = re.search(r"\d{1,3}", text)
+        if not match:
+            return None
+        age = int(match.group(0))
+        return max(0, min(120, age))
+
+    def _augment_with_deterministic_constraints(self, instructions: str, parsed: dict[str, Any]) -> dict[str, Any]:
+        normalized = self._normalize_parsed_instructions(parsed, source=str(parsed.get("source", "runtime")))
+        hard_filters = dict(normalized.get("hard_filters") or {})
+        notes = list(normalized.get("notes_for_ui") or [])
+
+        extracted = self._extract_age_constraints(instructions)
+        if extracted.get("min_age") is not None:
+            hard_filters["min_age"] = [str(extracted["min_age"])]
+            notes.append(f"Hard age floor applied: age >= {extracted['min_age']}.")
+        if extracted.get("max_age") is not None:
+            hard_filters["max_age"] = [str(extracted["max_age"])]
+            notes.append(f"Hard age ceiling applied: age <= {extracted['max_age']}.")
+
+        if notes:
+            notes = list(dict.fromkeys(note for note in notes if note))
+            normalized["notes_for_ui"] = notes
+        normalized["hard_filters"] = hard_filters
+        return normalized
+
+    def _extract_age_constraints(self, instructions: str) -> dict[str, int | None]:
+        lower = instructions.lower()
+        min_age: int | None = None
+        max_age: int | None = None
+
+        range_match = re.search(r"\b(?:age(?:d)?\s*)?(\d{1,3})\s*(?:-|to)\s*(\d{1,3})\b", lower)
+        if range_match:
+            a = int(range_match.group(1))
+            b = int(range_match.group(2))
+            min_age = max(0, min(120, min(a, b)))
+            max_age = max(0, min(120, max(a, b)))
+
+        hard_max_patterns: list[tuple[str, bool]] = [
+            (r"\bno\s+one\s+over(?:\s+the\s+age\s+of)?\s*(\d{1,3})\b", False),
+            (r"\bno\s+one\s+above\s*(\d{1,3})\b", False),
+            (r"\bunder\s*(\d{1,3})\b", True),
+            (r"\bbelow\s*(\d{1,3})\b", True),
+            (r"\bat\s+most\s*(\d{1,3})\b", False),
+            (r"\bmax(?:imum)?(?:\s+age)?(?:\s+of)?\s*(\d{1,3})\b", False),
+        ]
+        for pattern, strict_less_than in hard_max_patterns:
+            match = re.search(pattern, lower)
+            if not match:
+                continue
+            value = int(match.group(1))
+            candidate = value - 1 if strict_less_than else value
+            candidate = max(0, min(120, candidate))
+            max_age = candidate if max_age is None else min(max_age, candidate)
+
+        hard_min_patterns = [
+            r"\bno\s+one\s+under\s*(\d{1,3})\b",
+            r"\bat\s+least\s*(\d{1,3})\b",
+            r"\bminimum(?:\s+age)?(?:\s+of)?\s*(\d{1,3})\b",
+        ]
+        for pattern in hard_min_patterns:
+            match = re.search(pattern, lower)
+            if not match:
+                continue
+            candidate = max(0, min(120, int(match.group(1))))
+            min_age = candidate if min_age is None else max(min_age, candidate)
+
+        if min_age is not None and max_age is not None and min_age > max_age:
+            return {"min_age": None, "max_age": None}
+
+        return {"min_age": min_age, "max_age": max_age}
 
     def _has_actionable_instruction_signal(self, parsed: dict[str, Any]) -> bool:
         for key in ("hard_filters", "soft_boosts", "soft_penalties", "exclusions", "distribution_targets"):

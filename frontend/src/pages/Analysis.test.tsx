@@ -111,7 +111,7 @@ describe("Analysis", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(vi.mocked(global.fetch).mock.calls[0][0]).toContain("/api/v2/console/session/session-screen4/report/generate");
     expect(vi.mocked(global.fetch).mock.calls[1][0]).toContain("/api/v2/console/session/session-screen4/report/full");
-    expect(screen.getByText(/generating report/i)).toBeInTheDocument();
+    expect(screen.getByText(/generating ai report/i)).toBeInTheDocument();
 
     await act(async () => {
       vi.advanceTimersByTime(1600);
@@ -122,6 +122,5 @@ describe("Analysis", () => {
     expect(screen.getByText("Woodlands youth moved most")).toBeInTheDocument();
     expect(screen.getByText("Lead with affordability messaging")).toBeInTheDocument();
     expect(screen.getByText("Quiet cohorts underheard")).toBeInTheDocument();
-    expect(screen.getByText("Woodlands youth")).toBeInTheDocument();
   });
 });

@@ -1,4 +1,58 @@
 export type ConsoleMode = "demo" | "live";
+export type ModelProviderId = "google" | "openrouter" | "openai" | "ollama";
+
+export interface ConsoleSessionModelConfigRequest {
+  model_provider: ModelProviderId;
+  model_name: string;
+  embed_model_name?: string;
+  api_key?: string;
+  base_url?: string;
+}
+
+export interface ConsoleSessionModelConfigResponse {
+  session_id: string;
+  model_provider: ModelProviderId;
+  model_name: string;
+  embed_model_name: string;
+  base_url: string;
+  api_key_configured: boolean;
+  api_key_masked?: string | null;
+}
+
+export interface ConsoleModelProvider {
+  id: ModelProviderId;
+  label: string;
+  default_model: string;
+  default_embed_model: string;
+  default_base_url: string;
+  requires_api_key: boolean;
+}
+
+export interface ConsoleModelProviderCatalogResponse {
+  providers: ConsoleModelProvider[];
+}
+
+export interface ConsoleModelOption {
+  id: string;
+  label: string;
+}
+
+export interface ConsoleProviderModelsResponse {
+  provider: ModelProviderId;
+  models: ConsoleModelOption[];
+}
+
+export interface ConsoleSessionResponse {
+  session_id: string;
+  mode: ConsoleMode;
+  status: string;
+  model_provider: ModelProviderId;
+  model_name: string;
+  embed_model_name: string;
+  base_url: string;
+  api_key_configured: boolean;
+  api_key_masked?: string | null;
+}
 
 export interface KnowledgeNode {
   id: string;
@@ -192,7 +246,15 @@ async function parseJson<T>(response: Response): Promise<T> {
     let detail = `${response.status} ${response.statusText}`;
     try {
       const body = await response.json();
-      detail = body.detail || JSON.stringify(body);
+      if (typeof body?.detail === "string") {
+        detail = body.detail;
+      } else if (body?.detail !== undefined) {
+        detail = JSON.stringify(body.detail);
+      } else if (typeof body?.message === "string") {
+        detail = body.message;
+      } else {
+        detail = JSON.stringify(body);
+      }
     } catch {
       const text = await response.text();
       if (text) {
@@ -204,11 +266,53 @@ async function parseJson<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function createConsoleSession(mode: ConsoleMode = DEFAULT_MODE): Promise<{ session_id: string; mode: ConsoleMode; status: string }> {
+export async function createConsoleSession(
+  mode: ConsoleMode = DEFAULT_MODE,
+  modelConfig: Partial<ConsoleSessionModelConfigRequest> = {},
+): Promise<ConsoleSessionResponse> {
   const response = await fetch(`${API_BASE}/api/v2/console/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({ mode, ...modelConfig }),
+  });
+  return parseJson(response);
+}
+
+export async function getModelProviderCatalog(): Promise<ConsoleModelProviderCatalogResponse> {
+  const response = await fetch(`${API_BASE}/api/v2/console/model/providers`);
+  return parseJson(response);
+}
+
+export async function listProviderModels(
+  provider: ModelProviderId,
+  options: { api_key?: string; base_url?: string } = {},
+): Promise<ConsoleProviderModelsResponse> {
+  const params = new URLSearchParams();
+  if (options.api_key) {
+    params.set('api_key', options.api_key);
+  }
+  if (options.base_url) {
+    params.set('base_url', options.base_url);
+  }
+  const query = params.toString();
+  const suffix = query ? `?${query}` : '';
+  const response = await fetch(`${API_BASE}/api/v2/console/model/providers/${provider}/models${suffix}`);
+  return parseJson(response);
+}
+
+export async function getSessionModelConfig(sessionId: string): Promise<ConsoleSessionModelConfigResponse> {
+  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/model`);
+  return parseJson(response);
+}
+
+export async function updateSessionModelConfig(
+  sessionId: string,
+  payload: ConsoleSessionModelConfigRequest,
+): Promise<ConsoleSessionModelConfigResponse> {
+  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/model`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   });
   return parseJson(response);
 }

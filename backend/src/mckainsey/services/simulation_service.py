@@ -177,7 +177,10 @@ class SimulationService:
                 adjacency.setdefault(target, set()).add(source)
 
         bundles: dict[str, dict[str, Any]] = {}
-        knowledge_summary = str(knowledge_artifact.get("summary", "")).strip()
+        knowledge_summary = " ".join(str(knowledge_artifact.get("summary", "")).split()).strip()
+        knowledge_digest = knowledge_summary
+        if len(knowledge_digest) > 320:
+            knowledge_digest = f"{knowledge_digest[:320].rstrip()}..."
         for row in sampled_personas:
             agent_id = str(row.get("agent_id"))
             persona = dict(row.get("persona") or {})
@@ -224,16 +227,30 @@ class SimulationService:
                         file_paths.append(text)
 
             salient_labels = ", ".join(context_labels[:4]) or "general policy context"
+            persona_highlights = {
+                "planning_area": persona.get("planning_area"),
+                "occupation": persona.get("occupation"),
+                "age": persona.get("age"),
+                "income_bracket": persona.get("income_bracket"),
+                "household_type": persona.get("household_type"),
+            }
+            compact_dossier = str(persona.get("mckainsey_context") or "").strip()
+            if not compact_dossier:
+                compact_dossier = str(reason.get("semantic_summary") or "").strip()
+            if len(compact_dossier) > 180:
+                compact_dossier = f"{compact_dossier[:180].rstrip()}..."
+            matched_facet_text = ", ".join(matched_context_nodes[:4]) or "none"
             brief = (
-                f"Simulation {simulation_id} policy summary: {policy_summary.strip()} "
-                f"Document context: {knowledge_summary} "
-                f"Relevant nodes: {salient_labels}. "
-                f"Persona profile: {json.dumps(persona, ensure_ascii=False)}."
+                f"Persona highlights: {json.dumps(persona_highlights, ensure_ascii=False)}. "
+                f"Matched facets: {matched_facet_text}. "
+                f"Relevant knowledge nodes: {salient_labels}. "
+                f"Policy relevance note: {compact_dossier or 'not provided'}."
             ).strip()
             bundles[agent_id] = {
                 "agent_id": agent_id,
                 "persona": persona,
                 "brief": brief,
+                "knowledge_digest": knowledge_digest,
                 "matched_context_nodes": matched_context_nodes,
                 "graph_node_ids": expanded_ids,
                 "provenance": {
@@ -254,37 +271,81 @@ class SimulationService:
     ) -> list[dict[str, Any]]:
         if not agent_context_bundles:
             return []
-        batch_size = 25
+        batch_size = self._resolve_checkpoint_batch_size(total_agents=len(agent_context_bundles))
+        max_attempts = 3
         records: list[dict[str, Any]] = []
         agent_ids = list(agent_context_bundles.keys())
         for start in range(0, len(agent_ids), batch_size):
             chunk_ids = agent_ids[start : start + batch_size]
-            bundle_chunk = [agent_context_bundles[agent_id] for agent_id in chunk_ids]
-            prompt = self._build_checkpoint_prompt(
-                simulation_id=simulation_id,
-                checkpoint_kind=checkpoint_kind,
-                policy_summary=policy_summary,
-                bundle_chunk=bundle_chunk,
+            pending_ids = list(chunk_ids)
+            chunk_records_by_agent: dict[str, dict[str, Any]] = {}
+
+            for _attempt in range(max_attempts):
+                if not pending_ids:
+                    break
+                bundle_chunk = [agent_context_bundles[agent_id] for agent_id in pending_ids]
+                prompt = self._build_checkpoint_prompt(
+                    simulation_id=simulation_id,
+                    checkpoint_kind=checkpoint_kind,
+                    policy_summary=policy_summary,
+                    bundle_chunk=bundle_chunk,
+                )
+                response_format = {"type": "json_object"} if self.settings.llm_provider == "ollama" else None
+                try:
+                    raw = self.llm.complete_required(
+                        prompt,
+                        system_prompt=(
+                            "You classify the opinions of simulated Singapore residents about a policy. "
+                            "Return valid JSON only."
+                        ),
+                        response_format=response_format,
+                    )
+                    parsed = _parse_json_payload(raw)
+                    if isinstance(parsed, dict):
+                        parsed = parsed.get("records")
+                    if not isinstance(parsed, list):
+                        raise RuntimeError("The configured model must return a JSON array for opinion checkpoints.")
+
+                    chunk_records = self._normalize_checkpoint_records(
+                        simulation_id=simulation_id,
+                        checkpoint_kind=checkpoint_kind,
+                        parsed_records=parsed,
+                        bundle_chunk=bundle_chunk,
+                        allow_missing=True,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    if _attempt + 1 >= max_attempts:
+                        raise RuntimeError(
+                            "Opinion checkpoint failed after retries. "
+                            f"provider={self.settings.llm_provider} model={self.settings.llm_model} "
+                            f"checkpoint={checkpoint_kind} pending_agents={len(pending_ids)}: {exc}"
+                        ) from exc
+                    continue
+
+                for record in chunk_records:
+                    chunk_records_by_agent[record["agent_id"]] = record
+
+                pending_ids = [agent_id for agent_id in pending_ids if agent_id not in chunk_records_by_agent]
+
+            if pending_ids:
+                raise RuntimeError(f"Opinion checkpoint response omitted agents: {', '.join(pending_ids[:5])}")
+
+            records.extend(
+                chunk_records_by_agent[agent_id]
+                for agent_id in chunk_ids
+                if agent_id in chunk_records_by_agent
             )
-            raw = self.llm.complete_required(
-                prompt,
-                system_prompt=(
-                    "You classify the opinions of simulated Singapore residents about a policy. "
-                    "Return valid JSON only."
-                ),
-            )
-            parsed = _parse_json_payload(raw)
-            if not isinstance(parsed, list):
-                raise RuntimeError("Gemini must return a JSON array for opinion checkpoints.")
-            chunk_records = self._normalize_checkpoint_records(
-                simulation_id=simulation_id,
-                checkpoint_kind=checkpoint_kind,
-                parsed_records=parsed,
-                bundle_chunk=bundle_chunk,
-            )
-            records.extend(chunk_records)
 
         return records
+
+    def _resolve_checkpoint_batch_size(self, *, total_agents: int) -> int:
+        provider = str(self.settings.llm_provider or "").strip().lower()
+        if provider == "ollama":
+            configured = max(1, int(self.settings.ollama_checkpoint_batch_size))
+            if total_agents <= 20:
+                return max(configured, 4)
+            return configured
+        return max(1, int(self.settings.default_checkpoint_batch_size))
 
     def _run_oasis(self, req: SimulationRunRequest, personas: list[dict[str, Any]]) -> dict[str, Any]:
         return self._run_oasis_with_inputs(
@@ -322,9 +383,9 @@ class SimulationService:
                 "Create backend/.venv311 and install camel-oasis first."
             )
 
-        gemini_key = self.settings.resolved_gemini_key
-        if not gemini_key:
-            raise RuntimeError("GEMINI_API_KEY/GEMINI_API is required for real OASIS runtime.")
+        provider_key = self.settings.resolved_gemini_key
+        if not provider_key:
+            raise RuntimeError("A provider API key is required for real OASIS runtime.")
 
         oasis_db_root = Path(self.settings.oasis_db_dir)
         if not oasis_db_root.is_absolute():
@@ -337,6 +398,8 @@ class SimulationService:
         run_log_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         run_log_path = run_log_dir / f"{simulation_id}-{ts}.log"
+        timeout_seconds = self._resolve_oasis_timeout_seconds(rounds=rounds, persona_count=len(personas))
+        oasis_semaphore = self._resolve_oasis_semaphore()
 
         payload = {
             "simulation_id": simulation_id,
@@ -344,12 +407,13 @@ class SimulationService:
             "rounds": rounds,
             "personas": personas,
             "model_name": self.settings.gemini_model,
-            "gemini_api_key": gemini_key,
-            "openai_base_url": self.settings.gemini_openai_base_url,
+            "api_key": provider_key,
+            "base_url": self.settings.gemini_openai_base_url,
             "oasis_db_path": str(oasis_db),
             "events_path": str(events_path) if events_path else None,
             "elapsed_offset_seconds": elapsed_offset_seconds,
             "tail_checkpoint_estimate_seconds": tail_checkpoint_estimate_seconds,
+            "oasis_semaphore": oasis_semaphore,
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -366,6 +430,9 @@ class SimulationService:
             with run_log_path.open("w", encoding="utf-8") as log_file:
                 log_file.write(f"command={cmd}\n")
                 log_file.write(f"simulation_id={simulation_id}\n")
+                log_file.write(f"provider={self.settings.llm_provider} model={self.settings.llm_model}\n")
+                log_file.write(f"timeout_seconds={timeout_seconds}\n")
+                log_file.write(f"oasis_semaphore={oasis_semaphore}\n")
                 log_file.write(f"started_at={datetime.now(UTC).isoformat()}\n")
                 log_file.flush()
 
@@ -394,12 +461,13 @@ class SimulationService:
                             )
                         break
 
-                    if elapsed > self.settings.oasis_timeout_seconds:
+                    if elapsed > timeout_seconds:
                         proc.kill()
                         tail = _tail_file(run_log_path, lines=40)
                         raise RuntimeError(
                             "Real OASIS simulation timed out. "
-                            f"timeout_seconds={self.settings.oasis_timeout_seconds} "
+                            f"provider={self.settings.llm_provider} model={self.settings.llm_model} "
+                            f"timeout_seconds={timeout_seconds} "
                             f"run_log={run_log_path} tail={tail}"
                         )
 
@@ -415,6 +483,26 @@ class SimulationService:
 
             return json.loads(output_path.read_text(encoding="utf-8"))
 
+    def _resolve_oasis_timeout_seconds(self, *, rounds: int, persona_count: int) -> int:
+        configured_timeout = max(120, int(self.settings.oasis_timeout_seconds))
+        provider = str(self.settings.llm_provider or "").strip().lower()
+        if provider == "ollama":
+            per_agent_round_seconds = max(4, int(self.settings.oasis_ollama_timeout_per_agent_round_seconds))
+            base_buffer = 300
+        else:
+            per_agent_round_seconds = max(1, int(self.settings.oasis_default_timeout_per_agent_round_seconds))
+            base_buffer = 120
+        estimated_timeout = base_buffer + (max(1, persona_count) * max(1, rounds) * per_agent_round_seconds)
+        if provider == "ollama":
+            estimated_timeout += 120 * max(1, rounds)
+        return max(configured_timeout, estimated_timeout)
+
+    def _resolve_oasis_semaphore(self) -> int:
+        provider = str(self.settings.llm_provider or "").strip().lower()
+        if provider == "ollama":
+            return max(1, int(self.settings.oasis_ollama_semaphore))
+        return max(1, int(self.settings.oasis_default_semaphore))
+
     def _build_checkpoint_prompt(
         self,
         *,
@@ -423,21 +511,26 @@ class SimulationService:
         policy_summary: str,
         bundle_chunk: list[dict[str, Any]],
     ) -> str:
+        knowledge_digest = ""
+        if bundle_chunk:
+            knowledge_digest = str(bundle_chunk[0].get("knowledge_digest") or "").strip()
         payload = [
             {
                 "agent_id": bundle["agent_id"],
                 "brief": bundle["brief"],
-                "matched_context_nodes": bundle.get("matched_context_nodes", []),
+                "matched_context_nodes": list(bundle.get("matched_context_nodes", []))[:8],
             }
             for bundle in bundle_chunk
         ]
+        context_line = f"Shared document context: {knowledge_digest}\n" if knowledge_digest else ""
         return (
             f"Simulation: {simulation_id}\n"
             f"Checkpoint kind: {checkpoint_kind}\n"
-            f"Policy summary: {policy_summary}\n\n"
+            f"Policy summary: {policy_summary}\n"
+            f"{context_line}\n"
             "For each agent, assess their stance on the policy and return JSON only using this schema:\n"
-            "[{\"agent_id\": str, \"stance_score\": number, \"stance_class\": \"approve|neutral|dissent\", "
-            "\"confidence\": number, \"primary_driver\": str, \"matched_context_nodes\": [str]}]\n\n"
+            "{\"records\":[{\"agent_id\": str, \"stance_score\": number, \"stance_class\": \"approve|neutral|dissent\", "
+            "\"confidence\": number, \"primary_driver\": str, \"matched_context_nodes\": [str]}]}\n\n"
             f"Agents:\n{json.dumps(payload, ensure_ascii=False)}"
         )
 
@@ -448,6 +541,7 @@ class SimulationService:
         checkpoint_kind: str,
         parsed_records: list[dict[str, Any]],
         bundle_chunk: list[dict[str, Any]],
+        allow_missing: bool = False,
     ) -> list[dict[str, Any]]:
         bundle_lookup = {bundle["agent_id"]: bundle for bundle in bundle_chunk}
         normalized: list[dict[str, Any]] = []
@@ -478,10 +572,19 @@ class SimulationService:
                 }
             )
 
-        missing = [bundle["agent_id"] for bundle in bundle_chunk if bundle["agent_id"] not in {record["agent_id"] for record in normalized}]
-        if missing:
+        missing = self._missing_checkpoint_agent_ids(bundle_chunk=bundle_chunk, records=normalized)
+        if missing and not allow_missing:
             raise RuntimeError(f"Opinion checkpoint response omitted agents: {', '.join(missing[:5])}")
         return normalized
+
+    def _missing_checkpoint_agent_ids(
+        self,
+        *,
+        bundle_chunk: list[dict[str, Any]],
+        records: list[dict[str, Any]],
+    ) -> list[str]:
+        present = {record.get("agent_id") for record in records}
+        return [bundle["agent_id"] for bundle in bundle_chunk if bundle["agent_id"] not in present]
 
     def snapshot(self, simulation_id: str) -> dict[str, Any]:
         simulation = self.store.get_simulation(simulation_id)

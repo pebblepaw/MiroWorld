@@ -2,11 +2,11 @@
 
 ## Global Status
 **Project:** McKAInsey — AI-Powered Population Simulation Consulting Service
-**Status:** Phase A-K completed locally. Screen 2 Redesign (Waffle Chart Cohort Explorer) is fully implemented. Demo Mode with full cache support is now complete.
+**Status:** Phase A-L completed locally. Phase N (Provider-Aware Model Selector & Runtime Routing) is in progress with Google live validation complete and provider runtime constraints under active follow-up.
 
 ## Current Operator Status
 - `./quick_start.sh --mode demo` is the default launcher path - serves fully cached data with **no Gemini API calls**.
-- `./quick_start.sh --mode live --real-oasis` is the supported live launcher path when the OASIS Python 3.11 sidecar is available.
+- `./quick_start.sh --mode live` is the supported live launcher path when the OASIS Python 3.11 sidecar is available.
 - **Demo Mode** now serves pre-cached data for all 7 screens:
   - Screen 1: Knowledge Graph (75 entities from FY2026 Budget Statement)
   - Screen 2: 250 agents from Nemotron dataset
@@ -15,7 +15,7 @@
   - Screen 5: Interaction hub with demo chat responses
 - Demo cache files: `backend/data/demo-output.json` and `frontend/public/demo-output.json`
 - Demo service provides cached responses for all API endpoints without external API calls
-- Live mode continues to use real Gemini API and Zep Cloud as configured
+- Live mode now uses provider-aware runtime routing (Google/OpenRouter/OpenAI/Ollama) plus Zep Cloud as configured.
 - Stage 1 on the Frontend V2 shell accepts real uploaded files (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.json`, `.csv`, `.yaml`, `.yml`) and persists screen-ready knowledge artifacts.
 - Screen 1 graph controls are now split into:
   - `All / Nemotron Entities / Other Entities`
@@ -58,7 +58,7 @@
 - Screen 3 completion now waits for the final checkpoint instead of ending immediately after the public rounds.
 - Screen 4A `Reports & Insights` is now live against structured Gemini output and async background generation.
 - Screen 4B and Screen 4C remain visible mock tabs in this phase.
-- `quick_start.sh --mode live --real-oasis` now validates and pins the dedicated Python 3.11 OASIS runtime before launching live mode.
+- `quick_start.sh --mode live` now validates and pins the dedicated Python 3.11 OASIS runtime before launching live mode.
 - Stage 5 report chat and agent chat now make real Gemini and Zep Cloud API calls. No placeholder UI handlers remain.
 
 ## Recently Completed Console Rebuild
@@ -109,6 +109,7 @@
 - [x] Phase K — Screen 2 Agent Configuration Redesign — [progress/phaseK.md](progress/phaseK.md)
  - [x] Phase L — Demo Mode with Full Cache Support — [progress/phaseL.md](progress/phaseL.md)
 - [ ] Phase M — Simulation & Analysis (Screen 3 & Screen 4) — [progress/phaseM.md](progress/phaseM.md)
+- [ ] Phase N — Provider-Aware Model Selector & Runtime Routing — [progress/phaseN.md](progress/phaseN.md)
 
 ## Feature and Subtask Checklists
 
@@ -238,3 +239,16 @@
 - [x] L8 Document demo mode architecture and usage
 - [x] L9 Verify demo mode serves all 7 screens from cache
 - [x] L10 Verify live mode still makes real API calls when configured
+
+### Phase N — Provider-Aware Model Selector & Runtime Routing
+- [x] N1 Add frontend settings modal in sidebar footer (provider, model, API key)
+- [x] N2 Add frontend API client support for provider/model/session model config endpoints
+- [x] N3 Persist session-level model config in backend storage and response contracts
+- [x] N4 Add backend provider catalog/model listing and session model update routes
+- [x] N5 Route runtime services (LightRAG/report/memory/simulation) via per-session model settings
+- [x] N6 Set live default to Ollama (`qwen3:4b-instruct-2507-q4_K_M`) in launcher preflight
+- [x] N7 Validate Google provider Screen 1 live output end-to-end
+- [x] N8 Surface provider/model-specific backend detail for Screen 1 extraction failures
+- [x] N9 Add lightweight Ollama Stage 1 ingestion profile (truncation + compact fallback prompt)
+- [ ] N10 Validate OpenAI provider Screen 1 live output end-to-end (blocked by `insufficient_quota`)
+- [ ] N11 Validate Ollama provider Screen 1 live output end-to-end (blocked by local runtime latency/timeouts)
