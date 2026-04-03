@@ -112,7 +112,7 @@ export default function AgentConfig() {
       setPopulationArtifact(artifact);
       setSampleSeed(artifact.sample_seed);
       setAgentsGenerated(true);
-      setAgents(artifact.sampled_personas.map((row, index) => sampledPersonaToMockAgent(row, index)));
+      setAgents(artifact.sampled_personas.map((row) => sampledPersonaToMockAgent(row)));
       setSimulationComplete(false);
       setSimPosts([]);
       if (mode === 'resample') {
@@ -524,6 +524,7 @@ const CustomBarTooltip = ({ active, payload }: any) => {
 
 function WaffleTooltipContent({ data }: { data: any }) {
   const persona = data.persona;
+  const displayName = resolvePersonaDisplayName(data);
   
   // Parse lists or unstructured text
   const rawSkills = String(persona.skills_and_expertise_list || persona.skills_and_expertise || '');
@@ -537,11 +538,14 @@ function WaffleTooltipContent({ data }: { data: any }) {
       <div className="bg-[#1A1A1A] p-4 border-b border-white/5">
         <div className="flex justify-between items-start mb-1">
           <div className="font-semibold text-white text-[13px] tracking-tight leading-snug pr-2">
-            {formatLabel(String(persona.occupation ?? 'Resident'))}
+            {displayName}
           </div>
           <span className="bg-primary/20 text-primary px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap">
             Match: {(data.score * 100).toFixed(0)}%
           </span>
+        </div>
+        <div className="text-[11px] text-white/70">
+          {formatLabel(String(persona.occupation ?? 'Resident'))}
         </div>
         <div className="text-[11px] text-muted-foreground mt-1">
           {persona.age} yrs • {persona.sex} • {formatLabel(String(persona.marital_status ?? 'Single'))}
@@ -662,15 +666,16 @@ function nextSeed(previousSeed: number | null) {
 function sampledPersonaToMockAgent(
   row: {
     agent_id: string;
+    display_name?: string;
     persona: Record<string, unknown>;
     selection_reason: { score: number };
   },
-  index: number,
 ): any {
   const approvalScore = Math.round(Number(row.selection_reason?.score ?? 0.5) * 100);
+  const displayName = resolvePersonaDisplayName(row);
   return {
     id: row.agent_id,
-    name: `${formatLabel(String(row.persona.occupation ?? 'Resident'))} ${index + 1}`,
+    name: displayName,
     age: Number(row.persona.age ?? 0),
     gender: String(row.persona.sex ?? 'Unknown'),
     ethnicity: String(row.persona.country ?? 'Singapore'),
@@ -681,4 +686,18 @@ function sampledPersonaToMockAgent(
     sentiment: approvalScore >= 67 ? 'positive' : approvalScore >= 40 ? 'neutral' : 'negative',
     approvalScore,
   };
+}
+
+function resolvePersonaDisplayName(row: {
+  display_name?: string;
+  persona?: Record<string, unknown>;
+  agent_id?: string;
+}): string {
+  const direct = String(row.display_name ?? '').trim();
+  if (direct) return direct;
+
+  const personaName = String(row.persona?.display_name ?? row.persona?.name ?? '').trim();
+  if (personaName) return personaName;
+
+  return formatLabel(String(row.persona?.occupation ?? row.agent_id ?? 'Resident'));
 }

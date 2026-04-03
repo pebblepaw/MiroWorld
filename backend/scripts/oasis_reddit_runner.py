@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import random
+import re
 import sqlite3
 import sys
 import time
@@ -29,10 +31,39 @@ class RunnerInput:
     oasis_semaphore: int = 128
 
 
+NAME_FIELD_PATTERN = re.compile(r"(?:^|\b)(?:name|full name|persona)\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})")
+NAME_WITH_VERB_PATTERN = re.compile(
+    r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+(?:grew|works|is|was|lives|resides|studies|believes|prefers)\b"
+)
+CAPITALIZED_NAME_PATTERN = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b")
+TITLE_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9']+")
+TITLE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "be",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "with",
+}
+
+
 def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
     age = int(persona.get("age") or random.randint(21, 70))
     username = f"sg_agent_{idx + 1}"
-    name = str(persona.get("name") or persona.get("full_name") or f"SG Agent {idx + 1}")
+    name = _extract_persona_display_name(persona, idx)
     planning_area = str(persona.get("planning_area") or "Singapore")
     occupation = str(persona.get("occupation") or "Resident")
     industry = str(persona.get("industry") or "")
@@ -70,6 +101,7 @@ def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
         "name": name,
         "display_name": name,
         "subtitle": subtitle,
+        "occupation": occupation,
         "bio": persona_text,
         "persona": persona_text,
         "age": age,
@@ -109,12 +141,24 @@ def _extract_title(content: str) -> str:
     text = " ".join(str(content or "").split()).strip()
     if not text:
         return "New discussion thread"
-    for separator in [". ", "! ", "? ", "\n"]:
-        if separator in text:
-            candidate = text.split(separator, 1)[0].strip()
-            if len(candidate) >= 18:
-                return candidate[:84]
-    return text[:84]
+
+    normalized = re.sub(r"^As an? [^,]{1,80},\s*", "", text, flags=re.IGNORECASE)
+    segments = [
+        segment.strip(" .,!?:;\"")
+        for segment in re.split(r"[.!?]\s+", normalized)
+        if segment.strip()
+    ]
+    candidate = next((segment for segment in segments if len(segment.split()) >= 5), normalized)
+    tokens = TITLE_TOKEN_PATTERN.findall(candidate)
+    informative = [token for token in tokens if token.lower() not in TITLE_STOPWORDS]
+    chosen = informative if len(informative) >= 4 else tokens
+    if not chosen:
+        return normalized[:84]
+
+    title = " ".join(chosen[:10]).strip(" .,!?:;")
+    if not title:
+        return normalized[:84]
+    return title[:1].upper() + title[1:84]
 
 
 def _build_seed_post_content(policy_summary: str, index: int) -> str:
@@ -122,6 +166,168 @@ def _build_seed_post_content(policy_summary: str, index: int) -> str:
     if not summary_excerpt:
         summary_excerpt = "Discuss this policy and how it may affect Singapore residents."
     return f"Policy thread kickoff {index + 1}: {summary_excerpt}"
+
+
+def _extract_persona_display_name(persona: dict[str, Any], idx: int) -> str:
+    direct_keys = ("display_name", "name", "full_name", "realname", "user_name")
+    for key in direct_keys:
+        value = str(persona.get(key) or "").strip()
+        if _is_valid_display_name(value):
+            return value
+
+    text_fields = (
+        str(persona.get("persona") or ""),
+        str(persona.get("professional_persona") or ""),
+        str(persona.get("mckainsey_context") or ""),
+    )
+    for text in text_fields:
+        if not text:
+            continue
+        explicit = NAME_FIELD_PATTERN.search(text)
+        if explicit:
+            value = explicit.group(1).strip()
+            if _is_valid_display_name(value):
+                return value
+
+        contextual = NAME_WITH_VERB_PATTERN.search(text)
+        if contextual:
+            value = contextual.group(1).strip()
+            if _is_valid_display_name(value):
+                return value
+
+        for implicit in CAPITALIZED_NAME_PATTERN.findall(text[:260]):
+            value = implicit.strip()
+            if _is_valid_display_name(value):
+                return value
+
+    return f"Resident {idx + 1}"
+
+
+def _is_valid_display_name(value: str) -> bool:
+    if not value:
+        return False
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    if len(cleaned) < 3 or len(cleaned) > 40:
+        return False
+    lowered = cleaned.lower()
+    blocked_tokens = {
+        "sg",
+        "agent",
+        "resident",
+        "user",
+        "unknown",
+        "manager",
+        "official",
+        "engineer",
+        "teacher",
+        "student",
+        "consultant",
+        "professional",
+        "retired",
+        "service",
+        "worker",
+        "director",
+        "executive",
+        "officer",
+        "and",
+        "or",
+    }
+    if "year old" in lowered or "persona" in lowered or "singapore" in lowered:
+        return False
+    words = set(lowered.split())
+    if words & blocked_tokens:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*){1,2}", cleaned))
+
+
+def _build_activity_profile(persona: dict[str, Any], user_id: int) -> dict[str, Any]:
+    age = int(persona.get("age") or 35)
+    occupation = str(persona.get("occupation") or "").lower()
+    relevance = float(persona.get("mckainsey_relevance_score") or 0.5)
+
+    active_hours = list(range(8, 23))
+    if age >= 60 or "retired" in occupation:
+        active_hours = list(range(7, 21))
+    elif "student" in occupation:
+        active_hours = list(range(9, 24))
+    elif any(token in occupation for token in ("nurse", "service", "driver", "shift", "security")):
+        active_hours = list(range(0, 24))
+
+    activity_level = max(0.25, min(0.95, 0.35 + (relevance * 0.55)))
+    if any(token in occupation for token in ("manager", "executive", "consultant")):
+        activity_level = min(0.97, activity_level + 0.05)
+
+    return {
+        "agent_id": user_id,
+        "active_hours": active_hours,
+        "activity_level": activity_level,
+    }
+
+
+def _simulated_hour_for_round(round_index: int) -> int:
+    start_hour = 8
+    minutes_per_round = 30
+    simulated_minutes = round_index * minutes_per_round
+    return (start_hour + (simulated_minutes // 60)) % 24
+
+
+def _get_active_agents_for_round(
+    env,
+    *,
+    activity_profiles: dict[int, dict[str, Any]],
+    current_hour: int,
+    round_no: int,
+) -> list[tuple[int, Any]]:
+    total_agents = max(1, len(activity_profiles))
+    base_min = max(1, int(total_agents * 0.12))
+    base_max = max(base_min, int(total_agents * 0.42))
+
+    peak_hours = {9, 10, 11, 14, 15, 20, 21, 22}
+    off_peak_hours = {0, 1, 2, 3, 4, 5}
+    if current_hour in peak_hours:
+        multiplier = 1.4
+    elif current_hour in off_peak_hours:
+        multiplier = 0.45
+    else:
+        multiplier = 1.0
+    if round_no == 1:
+        multiplier = max(multiplier, 1.25)
+
+    target_count = max(1, int(random.uniform(base_min, base_max) * multiplier))
+
+    candidates: list[int] = []
+    active_hour_pool: list[int] = []
+    for agent_id, profile in activity_profiles.items():
+        hours = {int(value) for value in (profile.get("active_hours") or list(range(8, 23)))}
+        if current_hour not in hours:
+            continue
+        active_hour_pool.append(agent_id)
+        if random.random() < float(profile.get("activity_level", 0.5)):
+            candidates.append(agent_id)
+
+    selection_pool = candidates or active_hour_pool or list(activity_profiles.keys())
+    if not selection_pool:
+        return []
+
+    selected_count = min(target_count, len(selection_pool))
+    if round_no == 1:
+        selected_count = max(selected_count, min(len(selection_pool), max(1, int(total_agents * 0.7))))
+    selected_ids = random.sample(selection_pool, selected_count)
+
+    active_agents: list[tuple[int, Any]] = []
+    for agent_id in selected_ids:
+        try:
+            agent = env.agent_graph.get_agent(agent_id)
+            active_agents.append((agent_id, agent))
+        except Exception:
+            continue
+
+    if not active_agents:
+        fallback_agents = [agent for _, agent in env.agent_graph.get_agents()]
+        if fallback_agents:
+            active_agents.append((-1, random.choice(fallback_agents)))
+
+    return active_agents
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -186,11 +392,17 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
     profiles_path = Path(payload.oasis_db_path).with_suffix(".profiles.json")
     profiles_path.parent.mkdir(parents=True, exist_ok=True)
     profiles = [_to_profile(p, idx) for idx, p in enumerate(ordered_personas)]
+    activity_profiles = {
+        int(profile["user_id"]): _build_activity_profile(ordered_personas[int(profile["user_id"])], int(profile["user_id"]))
+        for profile in profiles
+    }
     profile_lookup = {
         int(profile["user_id"]): {
             "agent_id": str(profile["agent_id"]),
             "display_name": str(profile.get("display_name") or profile["name"]),
             "subtitle": str(profile.get("subtitle") or "Sampled persona"),
+            "occupation": str(profile.get("occupation") or "Resident"),
+            "age": int(profile.get("age") or 0),
         }
         for profile in profiles
     }
@@ -239,7 +451,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
 
     # Seed the policy into the discussion thread before autonomous rounds.
     seed_actions: dict[Any, Any] = {}
-    seed_agents = [agent for _, agent in env.agent_graph.get_agents()][: min(5, len(profiles))]
+    seed_agents = [agent for _, agent in env.agent_graph.get_agents()][: min(1, len(profiles))]
     for i, agent in enumerate(seed_agents):
         seed_actions[agent] = ManualAction(
             action_type=ActionType.CREATE_POST,
@@ -249,7 +461,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         )
     await env.step(seed_actions)
     print("[oasis-runner] seed posts injected", flush=True)
-    emit_event("seed_post_created", round_no=0, count=len(seed_actions))
+    emit_event("seed_post_created", round_no=1, count=len(seed_actions))
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -259,7 +471,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         profile_lookup=profile_lookup,
         user_map=None,
         last_seen=last_seen,
-        round_no=0,
+        round_no=1,
         emit_event=emit_event,
         started_at=start_monotonic,
         planned_rounds=payload.rounds,
@@ -268,23 +480,75 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
     )
 
     for i in range(payload.rounds):
-        emit_event("round_started", round_no=i + 1)
-        actions = {agent: LLMAction() for _, agent in env.agent_graph.get_agents()}
-        await env.step(actions)
-        _emit_incremental_db_events(
-            conn,
-            profile_lookup=profile_lookup,
-            user_map=None,
-            last_seen=last_seen,
-            round_no=i + 1,
-            emit_event=emit_event,
-            started_at=start_monotonic,
-            planned_rounds=payload.rounds,
-            elapsed_offset_seconds=payload.elapsed_offset_seconds,
-            tail_checkpoint_estimate_seconds=payload.tail_checkpoint_estimate_seconds,
+        round_no = i + 1
+        simulated_hour = _simulated_hour_for_round(i)
+        active_agents = _get_active_agents_for_round(
+            env,
+            activity_profiles=activity_profiles,
+            current_hour=simulated_hour,
+            round_no=round_no,
         )
-        emit_event("round_completed", round_no=i + 1)
-        print(f"[oasis-runner] completed round {i + 1}/{payload.rounds}", flush=True)
+
+        emit_event(
+            "round_started",
+            round_no=round_no,
+            simulated_hour=simulated_hour,
+            active_agents=len(active_agents),
+        )
+
+        if not active_agents:
+            _emit_incremental_db_events(
+                conn,
+                profile_lookup=profile_lookup,
+                user_map=None,
+                last_seen=last_seen,
+                round_no=round_no,
+                emit_event=emit_event,
+                started_at=start_monotonic,
+                planned_rounds=payload.rounds,
+                elapsed_offset_seconds=payload.elapsed_offset_seconds,
+                tail_checkpoint_estimate_seconds=payload.tail_checkpoint_estimate_seconds,
+            )
+            emit_event("round_completed", round_no=round_no, active_agents=0, batch_count=0)
+            continue
+
+        batch_size = max(1, min(25, int(len(active_agents) * 0.10) or 1))
+        batch_count = int(math.ceil(len(active_agents) / batch_size))
+        for batch_index in range(batch_count):
+            start = batch_index * batch_size
+            end = start + batch_size
+            batch = active_agents[start:end]
+            actions = {agent: LLMAction() for _, agent in batch}
+            await env.step(actions)
+
+            _emit_incremental_db_events(
+                conn,
+                profile_lookup=profile_lookup,
+                user_map=None,
+                last_seen=last_seen,
+                round_no=round_no,
+                emit_event=emit_event,
+                started_at=start_monotonic,
+                planned_rounds=payload.rounds,
+                elapsed_offset_seconds=payload.elapsed_offset_seconds,
+                tail_checkpoint_estimate_seconds=payload.tail_checkpoint_estimate_seconds,
+            )
+
+            emit_event(
+                "round_batch_flushed",
+                round_no=round_no,
+                batch_index=batch_index + 1,
+                batch_count=batch_count,
+                batch_size=len(batch),
+                active_agents=len(active_agents),
+            )
+
+        emit_event("round_completed", round_no=round_no, active_agents=len(active_agents), batch_count=batch_count)
+        print(
+            f"[oasis-runner] completed round {round_no}/{payload.rounds} "
+            f"hour={simulated_hour:02d} active_agents={len(active_agents)} batches={batch_count}",
+            flush=True,
+        )
 
     await env.close()
     print("[oasis-runner] env closed, collecting artifacts", flush=True)
@@ -457,13 +721,16 @@ def _emit_incremental_db_events(
     for row in post_rows:
         user_id = int(row["user_id"])
         last_seen["post"] = max(last_seen["post"], int(row["post_id"]))
+        profile = profile_lookup.get(user_id, {})
         emit_event(
             "post_created",
             round_no=round_no,
             post_id=int(row["post_id"]),
             actor_agent_id=resolved_user_map.get(user_id, f"agent-{user_id + 1:04d}"),
-            actor_name=profile_lookup.get(user_id, {}).get("display_name", f"Agent {user_id + 1}"),
-            actor_subtitle=profile_lookup.get(user_id, {}).get("subtitle", "Sampled persona"),
+            actor_name=profile.get("display_name", f"Agent {user_id + 1}"),
+            actor_subtitle=profile.get("subtitle", "Sampled persona"),
+            actor_occupation=profile.get("occupation", "Resident"),
+            actor_age=profile.get("age", 0),
             title=_extract_title(str(row["content"])),
             content=row["content"],
             created_at=row["created_at"],
@@ -476,14 +743,17 @@ def _emit_incremental_db_events(
     for row in comment_rows:
         user_id = int(row["user_id"])
         last_seen["comment"] = max(last_seen["comment"], int(row["comment_id"]))
+        profile = profile_lookup.get(user_id, {})
         emit_event(
             "comment_created",
             round_no=round_no,
             comment_id=int(row["comment_id"]),
             post_id=int(row["post_id"]),
             actor_agent_id=resolved_user_map.get(user_id, f"agent-{user_id + 1:04d}"),
-            actor_name=profile_lookup.get(user_id, {}).get("display_name", f"Agent {user_id + 1}"),
-            actor_subtitle=profile_lookup.get(user_id, {}).get("subtitle", "Sampled persona"),
+            actor_name=profile.get("display_name", f"Agent {user_id + 1}"),
+            actor_subtitle=profile.get("subtitle", "Sampled persona"),
+            actor_occupation=profile.get("occupation", "Resident"),
+            actor_age=profile.get("age", 0),
             content=row["content"],
             created_at=row["created_at"],
         )
@@ -495,12 +765,15 @@ def _emit_incremental_db_events(
     for row in like_rows:
         user_id = int(row["user_id"])
         last_seen["like"] = max(last_seen["like"], int(row["like_id"]))
+        profile = profile_lookup.get(user_id, {})
         emit_event(
             "reaction_added",
             round_no=round_no,
             actor_agent_id=resolved_user_map.get(user_id, f"agent-{user_id + 1:04d}"),
-            actor_name=profile_lookup.get(user_id, {}).get("display_name", f"Agent {user_id + 1}"),
-            actor_subtitle=profile_lookup.get(user_id, {}).get("subtitle", "Sampled persona"),
+            actor_name=profile.get("display_name", f"Agent {user_id + 1}"),
+            actor_subtitle=profile.get("subtitle", "Sampled persona"),
+            actor_occupation=profile.get("occupation", "Resident"),
+            actor_age=profile.get("age", 0),
             reaction="like",
             post_id=int(row["post_id"]),
         )
@@ -512,12 +785,15 @@ def _emit_incremental_db_events(
     for row in dislike_rows:
         user_id = int(row["user_id"])
         last_seen["dislike"] = max(last_seen["dislike"], int(row["dislike_id"]))
+        profile = profile_lookup.get(user_id, {})
         emit_event(
             "reaction_added",
             round_no=round_no,
             actor_agent_id=resolved_user_map.get(user_id, f"agent-{user_id + 1:04d}"),
-            actor_name=profile_lookup.get(user_id, {}).get("display_name", f"Agent {user_id + 1}"),
-            actor_subtitle=profile_lookup.get(user_id, {}).get("subtitle", "Sampled persona"),
+            actor_name=profile.get("display_name", f"Agent {user_id + 1}"),
+            actor_subtitle=profile.get("subtitle", "Sampled persona"),
+            actor_occupation=profile.get("occupation", "Resident"),
+            actor_age=profile.get("age", 0),
             reaction="dislike",
             post_id=int(row["post_id"]),
         )

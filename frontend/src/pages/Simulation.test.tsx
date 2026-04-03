@@ -160,8 +160,12 @@ describe("Simulation", () => {
       source.emit("checkpoint_started", { event_type: "checkpoint_started", checkpoint_kind: "baseline", total_agents: 3 });
       source.emit("checkpoint_completed", { event_type: "checkpoint_completed", checkpoint_kind: "baseline", completed_agents: 3, total_agents: 3 });
       source.emit("round_started", { event_type: "round_started", round_no: 1 });
+      source.emit("round_batch_flushed", { event_type: "round_batch_flushed", round_no: 1, batch_index: 1, batch_count: 2 });
       source.emit("post_created", { event_type: "post_created", round_no: 1, actor_agent_id: "agent-0001", actor_name: "Amir", actor_subtitle: "Woodlands · Student", post_id: 1, title: "Sports access matters", content: "The subsidy would make weekly training affordable." });
       source.emit("comment_created", { event_type: "comment_created", round_no: 1, actor_agent_id: "agent-0002", actor_name: "Rachel", actor_subtitle: "Woodlands · Coach", post_id: 1, comment_id: 4, content: "This also helps team retention." });
+      source.emit("comment_created", { event_type: "comment_created", round_no: 1, actor_agent_id: "agent-0002", actor_name: "Rachel", actor_subtitle: "Woodlands · Coach", post_id: 1, comment_id: 5, content: "Parents can plan activities earlier." });
+      source.emit("comment_created", { event_type: "comment_created", round_no: 1, actor_agent_id: "agent-0003", actor_name: "Joel", actor_subtitle: "Yishun · Accountant", post_id: 1, comment_id: 6, content: "Affordability affects participation." });
+      source.emit("comment_created", { event_type: "comment_created", round_no: 1, actor_agent_id: "agent-0003", actor_name: "Joel", actor_subtitle: "Yishun · Accountant", post_id: 1, comment_id: 7, content: "Transport support should be bundled too." });
       source.emit("reaction_added", { event_type: "reaction_added", round_no: 1, actor_agent_id: "agent-0003", reaction: "like", post_id: 1 });
       source.emit("metrics_updated", {
         event_type: "metrics_updated",
@@ -180,6 +184,10 @@ describe("Simulation", () => {
     expect(threadTitles.length).toBeGreaterThan(0);
     expect(screen.getByText("The subsidy would make weekly training affordable.")).toBeInTheDocument();
     expect(screen.getByText("This also helps team retention.")).toBeInTheDocument();
+    expect(screen.queryByText("Transport support should be bundled too.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /view 1 more replies/i }));
+    expect(screen.getByText("Transport support should be bundled too.")).toBeInTheDocument();
+    expect(screen.getByText("Process Timeline")).toBeInTheDocument();
     expect(screen.getByText("15s")).toBeInTheDocument();
     expect(screen.getByText("Generate Report")).toBeInTheDocument();
     expect(screen.getAllByText("1").length).toBeGreaterThan(1);

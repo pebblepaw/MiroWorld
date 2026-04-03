@@ -135,6 +135,7 @@ export interface PopulationSelectionReason {
 
 export interface SampledPersona {
   agent_id: string;
+  display_name?: string;
   persona: Record<string, unknown>;
   selection_reason: PopulationSelectionReason;
 }

@@ -14,5 +14,6 @@
 | J | [Phase J](phaseJ.md) | Complete | Screen 3 Live Simulation & Screen 4A Reports |
 | K | [Phase K](phaseK.md) | In Progress | Screen 2 Redesign |
 | N | [Phase N](phaseN.md) | In Progress | Provider-Aware Model Selector & Runtime Routing |
+| O | [Phase O](phaseO.md) | Complete | OASIS Engine performance, streaming cadence, and Screen 3 UX hardening |
 
 ## Quick Links

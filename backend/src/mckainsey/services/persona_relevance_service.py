@@ -104,6 +104,14 @@ EDUCATION_WORKER_ALIASES = (
     "school staff",
     "school workers",
 )
+NAME_FIELD_PATTERN = re.compile(
+    r"(?:\bname\b|\bfull name\b|\bpersona name\b|\bcharacter name\b)\s*[:\-]\s*([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,3})",
+    flags=re.IGNORECASE,
+)
+NAME_WITH_VERB_PATTERN = re.compile(
+    r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+(?:grew|works|is|was|lives|resides|studies|believes|prefers)\b"
+)
+CAPITALIZED_NAME_PATTERN = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b")
 
 
 @dataclass
@@ -452,10 +460,14 @@ class PersonaRelevanceService:
 
         sampled_personas: list[dict[str, Any]] = []
         for index, row in enumerate(sampled):
+            persona_payload = dict(row["persona"])
+            display_name = self._extract_persona_display_name(persona_payload)
+            persona_payload["display_name"] = display_name
             sampled_personas.append(
                 {
                     "agent_id": f"agent-{index + 1:04d}",
-                    "persona": row["persona"],
+                    "display_name": display_name,
+                    "persona": persona_payload,
                     "selection_reason": {
                         "score": row["score"],
                         "selection_score": row["score"],
@@ -657,11 +669,12 @@ class PersonaRelevanceService:
         for row in sampled_personas:
             persona = row["persona"]
             agent_id = row["agent_id"]
+            display_name = str(row.get("display_name") or persona.get("display_name") or agent_id)
             nodes.append(
                 {
                     "id": agent_id,
-                    "label": str(persona.get("occupation") or agent_id),
-                    "subtitle": f"{persona.get('planning_area', 'Unknown')} · {persona.get('industry', 'Unknown')}",
+                    "label": display_name,
+                    "subtitle": f"{persona.get('planning_area', 'Unknown')} · {persona.get('occupation', 'Resident')}",
                     "planning_area": str(persona.get("planning_area", "Unknown")),
                     "industry": str(persona.get("industry", "Unknown")),
                     "node_type": "sampled_persona",
@@ -695,6 +708,82 @@ class PersonaRelevanceService:
                     }
                 )
         return {"nodes": nodes, "links": links}
+
+    def _extract_persona_display_name(self, persona: dict[str, Any]) -> str:
+        for key in ("display_name", "name", "full_name"):
+            value = persona.get(key)
+            if isinstance(value, str):
+                candidate = value.strip()
+                if self._is_valid_display_name(candidate):
+                    return candidate
+
+        persona_text = "\n".join(
+            str(persona.get(field, ""))
+            for field in (
+                "professional_persona",
+                "persona",
+                "cultural_background",
+            )
+            if persona.get(field)
+        )
+
+        match = NAME_FIELD_PATTERN.search(persona_text)
+        if match:
+            candidate = match.group(1).strip()
+            if self._is_valid_display_name(candidate):
+                return candidate
+
+        contextual_match = NAME_WITH_VERB_PATTERN.search(persona_text)
+        if contextual_match:
+            candidate = contextual_match.group(1).strip()
+            if self._is_valid_display_name(candidate):
+                return candidate
+
+        for candidate in CAPITALIZED_NAME_PATTERN.findall(persona_text):
+            normalized = candidate.strip()
+            if self._is_valid_display_name(normalized):
+                return normalized
+
+        occupation = str(persona.get("occupation") or "Resident").strip().title()
+        planning_area = str(persona.get("planning_area") or "Singapore").strip().title()
+        return f"{occupation} ({planning_area})"
+
+    def _is_valid_display_name(self, value: str) -> bool:
+        if not value:
+            return False
+        cleaned = re.sub(r"\s+", " ", value).strip()
+        if len(cleaned) < 3 or len(cleaned) > 40:
+            return False
+        lowered = cleaned.lower()
+        blocked_terms = {
+            "singapore",
+            "resident",
+            "persona",
+            "male",
+            "female",
+            "year old",
+            "manager",
+            "official",
+            "engineer",
+            "teacher",
+            "student",
+            "consultant",
+            "professional",
+            "retired",
+            "service",
+            "worker",
+            "director",
+            "executive",
+            "officer",
+            "and",
+            "or",
+        }
+        words = set(re.split(r"\s+", lowered))
+        if any(term in lowered for term in {"year old", "persona", "singapore"}):
+            return False
+        if words & blocked_terms:
+            return False
+        return bool(re.fullmatch(r"[A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*){0,3}", cleaned))
 
     def _collect_matches(
         self,

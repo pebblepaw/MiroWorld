@@ -57,6 +57,13 @@ function getOccupationColor(occupation?: string): { bg: string; text: string; bo
 }
 
 type SortOption = "new" | "popular";
+type StageStatus = "pending" | "running" | "completed";
+type ProcessStage = {
+  id: string;
+  title: string;
+  detail: string;
+  status: StageStatus;
+};
 
 // Custom styled slider with marks
 function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) {
@@ -142,6 +149,7 @@ export default function Simulation() {
   const [error, setError] = useState<string | null>(null);
   const [selectedRound, setSelectedRound] = useState<number | "all">("all");
   const [sortBy, setSortBy] = useState<SortOption>("new");
+  const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
   const streamRef = useRef<EventSource | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
 
@@ -192,8 +200,76 @@ export default function Simulation() {
 
   useEffect(() => {
     if (!feedRef.current) return;
-    feedRef.current.scrollTop = feedRef.current.scrollHeight;
+    const scrollDistanceFromBottom = feedRef.current.scrollHeight - feedRef.current.scrollTop - feedRef.current.clientHeight;
+    if (scrollDistanceFromBottom < 120) {
+      feedRef.current.scrollTop = feedRef.current.scrollHeight;
+    }
   }, [feedThreads.length]);
+
+  const processStages = useMemo<ProcessStage[]>(() => {
+    const hasRun = simulationState !== null;
+    const baseline = simulationState?.checkpoint_status?.baseline?.status ?? "pending";
+    const final = simulationState?.checkpoint_status?.final?.status ?? "pending";
+    const currentRound = Number(simulationState?.current_round ?? 0);
+    const plannedRounds = Number(simulationState?.planned_rounds ?? simulationRounds);
+
+    const recentEvents = Array.isArray(simulationState?.recent_events) ? simulationState?.recent_events : [];
+    const latestBatchEvent = [...recentEvents].reverse().find(
+      (event) => typeof event?.event_type === "string" && event.event_type === "round_batch_flushed",
+    ) as Record<string, unknown> | undefined;
+
+    const roundsStatus: StageStatus = completed
+      ? "completed"
+      : running && currentRound > 0
+        ? "running"
+        : "pending";
+    const streamingStatus: StageStatus = completed
+      ? "completed"
+      : latestBatchEvent
+        ? "running"
+        : "pending";
+
+    return [
+      {
+        id: "run-start",
+        title: "Initialize OASIS runtime",
+        detail: hasRun ? "Runner bootstrapped and event stream connected" : "Waiting for simulation start",
+        status: hasRun ? "completed" : "pending",
+      },
+      {
+        id: "baseline",
+        title: "Baseline checkpoint",
+        detail: `Status: ${baseline}`,
+        status: baseline === "completed" ? "completed" : baseline === "running" ? "running" : "pending",
+      },
+      {
+        id: "round-execution",
+        title: "Round execution",
+        detail: `Round ${Math.max(0, currentRound)} of ${Math.max(1, plannedRounds)}`,
+        status: roundsStatus,
+      },
+      {
+        id: "batch-stream",
+        title: "Batch event streaming",
+        detail: latestBatchEvent
+          ? `Batch ${Number(latestBatchEvent.batch_index ?? 0)} of ${Number(latestBatchEvent.batch_count ?? 0)} in round ${Number(latestBatchEvent.round_no ?? currentRound)}`
+          : "No flushed batches yet",
+        status: streamingStatus,
+      },
+      {
+        id: "final-checkpoint",
+        title: "Final checkpoint",
+        detail: `Status: ${final}`,
+        status: final === "completed" ? "completed" : final === "running" ? "running" : "pending",
+      },
+      {
+        id: "artifact-finalization",
+        title: "Finalize artifacts",
+        detail: completed ? "Simulation artifacts ready for report generation" : "Awaiting completion",
+        status: completed ? "completed" : "pending",
+      },
+    ];
+  }, [completed, running, simulationRounds, simulationState]);
 
   const handleSimulationEvent = useCallback((payload: Record<string, unknown>) => {
     const eventType = String(payload.event_type ?? "");
@@ -241,7 +317,7 @@ export default function Simulation() {
       setFeedThreads((previous) => {
         const postId = payload.post_id;
         return previous.map((thread) =>
-          thread.postId === postId
+          isSamePostId(thread.postId, postId)
             ? (() => {
                 const eventRound = Number(payload.round_no ?? thread.roundNo ?? 0);
                 return {
@@ -267,7 +343,7 @@ export default function Simulation() {
     if (eventType === "reaction_added") {
       setFeedThreads((previous) =>
         previous.map((thread) => {
-          if (thread.postId !== payload.post_id) return thread;
+          if (!isSamePostId(thread.postId, payload.post_id)) return thread;
           const reaction = String(payload.reaction ?? "");
           const eventRound = Number(payload.round_no ?? thread.roundNo ?? 0);
           return {
@@ -300,6 +376,7 @@ export default function Simulation() {
       "checkpoint_started",
       "checkpoint_completed",
       "round_started",
+      "round_batch_flushed",
       "post_created",
       "comment_created",
       "reaction_added",
@@ -327,6 +404,7 @@ export default function Simulation() {
     setLoading(true);
     setError(null);
     setFeedThreads([]);
+    setExpandedReplies({});
     setSimulationComplete(false);
     try {
       const state = await startSimulation(sessionId, {
@@ -478,6 +556,8 @@ export default function Simulation() {
               <div ref={feedRef} className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
                 {displayedThreads.map((thread) => {
                   const colors = getOccupationColor(thread.actorOccupation);
+                  const isExpanded = Boolean(expandedReplies[thread.id]);
+                  const visibleComments = isExpanded ? thread.comments : thread.comments.slice(0, 3);
                   return (
                     <GlassCard key={thread.id} className="p-4 bg-white/[0.02] border border-white/10 hover:bg-white/[0.04] transition-all duration-200 group">
                       <div className="flex items-start justify-between gap-4 mb-3">
@@ -500,7 +580,7 @@ export default function Simulation() {
                       </div>
                       
                       <h4 className="text-sm font-semibold text-foreground mb-2 leading-tight">{thread.title}</h4>
-                      <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{thread.content}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{thread.content}</p>
                       
                       <div className="flex items-center gap-5 mt-4 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer">
@@ -520,21 +600,32 @@ export default function Simulation() {
                       
                       {thread.comments.length > 0 && (
                         <div className="mt-4 space-y-2.5 border-l-2 border-white/[0.08] pl-3">
-                          {thread.comments.slice(0, 3).map((comment) => (
+                          {visibleComments.map((comment) => (
                             <div key={comment.id} className="text-xs flex items-start gap-2">
                               <div className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-[9px] font-bold text-white/40 flex-shrink-0">
                                 {comment.actorName.split(' ').map(n => n[0]).join('').slice(0, 1).toUpperCase()}
                               </div>
                               <div className="flex-1 min-w-0">
                                 <span className="font-medium text-foreground/80 text-[11px]">{comment.actorName}</span>
-                                <span className="text-muted-foreground ml-2 line-clamp-2">{comment.content}</span>
+                                <span className="text-muted-foreground ml-2 whitespace-pre-wrap">{comment.content}</span>
                               </div>
                             </div>
                           ))}
                           {thread.comments.length > 3 && (
-                            <div className="text-[10px] text-muted-foreground pl-7">
-                              +{thread.comments.length - 3} more replies
-                            </div>
+                            <button
+                              type="button"
+                              className="text-[10px] text-primary/80 hover:text-primary pl-7 transition-colors"
+                              onClick={() =>
+                                setExpandedReplies((previous) => ({
+                                  ...previous,
+                                  [thread.id]: !previous[thread.id],
+                                }))
+                              }
+                            >
+                              {isExpanded
+                                ? "Show fewer replies"
+                                : `View ${thread.comments.length - 3} more replies`}
+                            </button>
                           )}
                         </div>
                       )}
@@ -611,6 +702,29 @@ export default function Simulation() {
               )}
             </GlassCard>
 
+            <GlassCard className="p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Zap className="w-4 h-4 text-violet-400" />
+                <h4 className="text-xs uppercase tracking-wider text-violet-400 font-semibold">Process Timeline</h4>
+              </div>
+
+              <div className="max-h-56 overflow-y-auto pr-1 space-y-2.5 scrollbar-thin">
+                {processStages.map((stage) => (
+                  <div key={stage.id} className="p-2.5 rounded-lg border border-white/8 bg-white/[0.02]">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-medium text-foreground">{stage.title}</div>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-medium border capitalize ${stageStatusClass(stage.status)}`}
+                      >
+                        {stage.status}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">{stage.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </GlassCard>
+
             {/* Expanded Metrics */}
             <GlassCard className="p-4 flex-1">
               <div className="flex items-center gap-2 mb-4">
@@ -684,6 +798,16 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function stageStatusClass(status: StageStatus): string {
+  if (status === "completed") {
+    return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+  }
+  if (status === "running") {
+    return "bg-amber-500/10 text-amber-400 border-amber-500/20";
+  }
+  return "bg-white/5 text-white/40 border-white/10";
+}
+
 function formatSeconds(value: number | null | undefined): string {
   const seconds = Math.max(0, Number(value ?? 0));
   return `${Math.round(seconds)}s`;
@@ -731,6 +855,13 @@ function mergeRoundActivity(existingRounds: number[], roundNo: number): number[]
     return existingRounds;
   }
   return [...existingRounds, normalizedRound].sort((left, right) => left - right);
+}
+
+function isSamePostId(left: string | number, right: unknown): boolean {
+  if (right === null || right === undefined) {
+    return false;
+  }
+  return String(left) === String(right);
 }
 
 function reduceSimulationState(previous: SimulationState | null, payload: Record<string, unknown>): SimulationState {
