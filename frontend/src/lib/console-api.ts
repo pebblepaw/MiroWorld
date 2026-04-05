@@ -358,6 +358,7 @@ export async function startSimulation(
   payload: {
     policy_summary: string;
     rounds: number;
+    controversy_boost?: number;
     mode?: ConsoleMode;
   },
 ): Promise<SimulationState> {

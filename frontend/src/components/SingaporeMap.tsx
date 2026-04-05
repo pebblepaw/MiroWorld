@@ -80,7 +80,7 @@ export function SingaporeMap({ areaData }: SingaporeMapProps) {
         style={{ background: '#0A0A0A' }}
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
           opacity={0.6}
         />
         <GeoJSON

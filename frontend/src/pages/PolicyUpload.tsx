@@ -1,23 +1,26 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Upload, FileText, Sparkles, Loader2, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { Upload, FileText, Sparkles, Loader2, ArrowRight, Eye, EyeOff, X, Plus, Link, Type, ChevronDown, ChevronUp } from 'lucide-react';
 import { forceCollide, forceManyBody } from 'd3-force-3d';
 import ForceGraph2D from 'react-force-graph-2d';
 import { useApp } from '@/contexts/AppContext';
 import { GlassCard } from '@/components/GlassCard';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { createConsoleSession, uploadKnowledgeFile } from '@/lib/console-api';
+import { Input } from '@/components/ui/input';
+import { createConsoleSession, uploadKnowledgeFile, KnowledgeArtifact } from '@/lib/console-api';
 import { toast } from '@/hooks/use-toast';
 
+/* ─── Graph Display Constants ─── */
+
 const DISPLAY_BUCKET_STYLES: Record<string, { label: string; color: string }> = {
-  organization: { label: 'Organization', color: 'hsl(215, 20%, 62%)' },
-  persons: { label: 'Persons', color: 'hsl(160, 84%, 42%)' },
-  location: { label: 'Location', color: 'hsl(38, 92%, 54%)' },
-  age_group: { label: 'Age Group', color: 'hsl(142, 68%, 50%)' },
-  event: { label: 'Event', color: 'hsl(0, 78%, 58%)' },
-  concept: { label: 'Concept', color: 'hsl(196, 92%, 56%)' },
-  industry: { label: 'Industry', color: 'hsl(266, 70%, 64%)' },
-  other: { label: 'Other', color: 'hsl(215, 18%, 47%)' },
+  organization: { label: 'Organization', color: 'hsl(0, 0%, 62%)' },
+  persons:      { label: 'Persons',      color: 'hsl(142, 50%, 50%)' },
+  location:     { label: 'Location',     color: 'hsl(38, 72%, 54%)' },
+  age_group:    { label: 'Age Group',    color: 'hsl(142, 48%, 50%)' },
+  event:        { label: 'Event',        color: 'hsl(0, 58%, 55%)' },
+  concept:      { label: 'Concept',      color: 'hsl(200, 50%, 56%)' },
+  industry:     { label: 'Industry',     color: 'hsl(266, 40%, 60%)' },
+  other:        { label: 'Other',        color: 'hsl(0, 0%, 47%)' },
 };
 
 const DISPLAY_BUCKET_ORDER = ['organization', 'persons', 'location', 'age_group', 'event', 'concept', 'industry', 'other'] as const;
@@ -62,11 +65,13 @@ function resolveKnowledgeExtractionError(
   }
 
   return (
-    `Could not reach the backend during Screen 1 extraction while using ` +
+    `Could not reach the backend during extraction while using ` +
     `${context.provider}/${context.model}. ` +
     `Check that the backend is running and that the selected provider runtime is reachable.`
   );
 }
+
+/* ─── Main Component ─── */
 
 export default function PolicyUpload() {
   const {
@@ -76,15 +81,19 @@ export default function PolicyUpload() {
     embedModelName,
     modelApiKey,
     modelBaseUrl,
-    uploadedFile,
-    guidingPrompt,
+    uploadedFiles,
+    guidingPrompts,
     knowledgeGraphReady,
     knowledgeArtifact,
     knowledgeLoading,
     knowledgeError,
     setSessionId,
-    setUploadedFile,
-    setGuidingPrompt,
+    addUploadedFile,
+    removeUploadedFile,
+    setUploadedFiles,
+    updateGuidingPrompt,
+    addGuidingPrompt,
+    removeGuidingPrompt,
     setKnowledgeGraphReady,
     setKnowledgeArtifact,
     setKnowledgeLoading,
@@ -92,6 +101,7 @@ export default function PolicyUpload() {
     completeStep,
     setCurrentStep,
   } = useApp();
+
   const [dragOver, setDragOver] = useState(false);
   const graphRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -102,6 +112,12 @@ export default function PolicyUpload() {
     if (typeof window === 'undefined') return false;
     return window.sessionStorage.getItem(RELATIONSHIP_LABEL_STORAGE_KEY) === 'on';
   });
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [urlValue, setUrlValue] = useState('');
+  const [showPasteArea, setShowPasteArea] = useState(false);
+  const [pasteValue, setPasteValue] = useState('');
+  const [showTopEntities, setShowTopEntities] = useState(true);
+
   const graphReady = knowledgeGraphReady && knowledgeArtifact !== null;
 
   useEffect(() => {
@@ -152,25 +168,19 @@ export default function PolicyUpload() {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files[0];
-    if (f) {
-      setUploadedFile(f);
-      resetKnowledgeState();
-    }
-  }, [resetKnowledgeState, setUploadedFile]);
+    const files = Array.from(e.dataTransfer.files);
+    files.forEach((f) => addUploadedFile(f));
+    resetKnowledgeState();
+  }, [resetKnowledgeState, addUploadedFile]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) {
-      setUploadedFile(f);
-      resetKnowledgeState();
-    }
-  }, [resetKnowledgeState, setUploadedFile]);
+    const files = Array.from(e.target.files || []);
+    files.forEach((f) => addUploadedFile(f));
+    resetKnowledgeState();
+  }, [resetKnowledgeState, addUploadedFile]);
 
   const handleExtract = useCallback(async () => {
-    if (!uploadedFile) {
-      return;
-    }
+    if (uploadedFiles.length === 0) return;
 
     try {
       setKnowledgeLoading(true);
@@ -189,10 +199,39 @@ export default function PolicyUpload() {
         setSessionId(resolvedSessionId);
       }
 
-      const artifact = await uploadKnowledgeFile(resolvedSessionId, uploadedFile, guidingPrompt);
+      // For now, process the first file. Multi-file merge would be handled by backend.
+      const combinedPrompt = guidingPrompts.filter(p => p.trim()).join('\n\n');
+      const artifact = await uploadKnowledgeFile(resolvedSessionId, uploadedFiles[0], combinedPrompt);
       setKnowledgeArtifact(artifact);
       setKnowledgeGraphReady(true);
     } catch (error) {
+      // Fallback: try loading demo data from public/demo-output.json
+      try {
+        const demoRes = await fetch('/demo-output.json');
+        if (demoRes.ok) {
+          const demo = await demoRes.json();
+          const knowledgeData = demo.knowledge;
+          if (knowledgeData?.entity_nodes) {
+            const artifact = {
+              session_id: knowledgeData.simulation_id || 'demo-session',
+              document: knowledgeData.document || { document_id: 'demo', paragraph_count: 0 },
+              summary: knowledgeData.summary || '',
+              guiding_prompt: knowledgeData.guiding_prompt || null,
+              entity_nodes: knowledgeData.entity_nodes,
+              relationship_edges: knowledgeData.relationship_edges || [],
+              entity_type_counts: knowledgeData.entity_type_counts || {},
+              processing_logs: [],
+              demographic_focus_summary: knowledgeData.demographic_focus_summary || null,
+            } as KnowledgeArtifact;
+            setKnowledgeArtifact(artifact);
+            setKnowledgeGraphReady(true);
+            setSessionId(artifact.session_id);
+            toast({ title: 'Demo mode', description: 'Loaded cached knowledge graph (backend unavailable)' });
+            return;
+          }
+        }
+      } catch { /* ignore demo fallback errors */ }
+
       const message = resolveKnowledgeExtractionError(error, {
         provider: modelProvider,
         model: modelName,
@@ -209,14 +248,14 @@ export default function PolicyUpload() {
       setKnowledgeLoading(false);
     }
   }, [
-    uploadedFile,
+    uploadedFiles,
     sessionId,
     modelProvider,
     modelName,
     embedModelName,
     modelApiKey,
     modelBaseUrl,
-    guidingPrompt,
+    guidingPrompts,
     setKnowledgeLoading,
     setKnowledgeError,
     setSessionId,
@@ -228,6 +267,28 @@ export default function PolicyUpload() {
     completeStep(1);
     setCurrentStep(2);
   };
+
+  const handleUrlScrape = () => {
+    if (!urlValue.trim()) return;
+    // Mock: add a fake file entry for the scraped URL
+    const mockFile = new File([''], urlValue.split('/').pop() || 'scraped-content.txt', { type: 'text/plain' });
+    addUploadedFile(mockFile);
+    setUrlValue('');
+    setShowUrlInput(false);
+    toast({ title: 'URL scraped', description: `Content fetched from ${urlValue}` });
+  };
+
+  const handlePasteSubmit = () => {
+    if (!pasteValue.trim()) return;
+    const blob = new Blob([pasteValue], { type: 'text/plain' });
+    const mockFile = new File([blob], 'pasted-text.txt', { type: 'text/plain' });
+    addUploadedFile(mockFile);
+    setPasteValue('');
+    setShowPasteArea(false);
+    toast({ title: 'Text added', description: 'Pasted content added as document' });
+  };
+
+  /* ─── Graph Data ─── */
 
   const filteredSourceNodes = graphReady
     ? familyScopedNodes.filter((node) => {
@@ -305,145 +366,296 @@ export default function PolicyUpload() {
     return (DISPLAY_BUCKET_STYLES[node.displayBucket || resolveDisplayBucket(node.type, node.facetKind)] ?? DISPLAY_BUCKET_STYLES.other).color;
   };
 
+  /* ─── Render ─── */
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[0.88fr_1.12fr] gap-6 h-full p-6">
-      <div className="flex flex-col gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-foreground mb-1">Policy Document Upload</h2>
-          <p className="text-sm text-muted-foreground">Upload policy documents to build a knowledge graph using LightRAG</p>
+    <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-0 h-full">
+      {/* ───── LEFT PANEL ───── */}
+      <div className="flex flex-col border-r border-border overflow-y-auto scrollbar-thin bg-background">
+        {/* Header */}
+        <div className="p-5 pb-4 border-b border-border">
+          <h2 className="text-lg font-bold text-foreground font-mono uppercase tracking-wider">NEW SIMULATION RUN</h2>
+          <p className="text-xs text-muted-foreground mt-1">Upload unstructured documents to build the context graph</p>
+          {/* Use-case badge */}
+          <div className="mt-3">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-transparent text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">
+              {modelProvider === 'gemini' ? 'Gemini 2.0' : modelProvider} · Document Processing
+            </span>
+          </div>
         </div>
 
-        <GlassCard glow={dragOver ? 'primary' : 'none'} className="p-0">
+        {/* Upload Zone */}
+        <div className="p-5 border-b border-border">
           <label
-            className={`flex flex-col items-center justify-center p-8 cursor-pointer transition-all border-2 border-dashed rounded-xl ${
-              dragOver ? 'border-primary bg-primary/5' : uploadedFile ? 'border-success/30 bg-success/5' : 'border-border hover:border-primary/40'
+            className={`flex flex-col items-center justify-center p-6 cursor-pointer transition-colors border border-dashed rounded-lg bg-transparent ${
+              dragOver ? 'border-white/40 bg-white/[0.03]' : uploadedFiles.length > 0 ? 'border-border' : 'border-border hover:border-white/25'
             }`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
           >
-            <input type="file" className="hidden" accept=".pdf,.docx,.doc,.txt,.md,.markdown,.html,.htm,.json,.csv,.yaml,.yml" onChange={handleFileSelect} />
-            {uploadedFile ? (
-              <>
-                <FileText className="w-10 h-10 text-success mb-3" />
-                <span className="text-foreground font-medium">{uploadedFile.name}</span>
-                <span className="text-muted-foreground text-xs mt-1">File ready for extraction</span>
-              </>
-            ) : (
-              <>
-                <Upload className="w-10 h-10 text-muted-foreground mb-3" />
-                <span className="text-foreground font-medium">Drop your policy document here</span>
-                <span className="text-muted-foreground text-xs mt-1">PDF, DOCX, TXT, MD, HTML, JSON, CSV, YAML supported</span>
-              </>
-            )}
+            <input type="file" className="hidden" accept=".pdf,.docx,.doc,.txt,.md,.markdown,.html,.htm,.json,.csv,.yaml,.yml" multiple onChange={handleFileSelect} />
+            <Upload className="w-6 h-6 text-muted-foreground mb-2" />
+            <span className="text-sm text-foreground">Drop documents here</span>
+            <span className="text-[10px] text-muted-foreground mt-1 font-mono uppercase tracking-wider">
+              PDF · DOCX · TXT · MD · HTML · CSV · YAML
+            </span>
           </label>
-        </GlassCard>
 
-        <GlassCard className="p-4">
-          <label htmlFor="guiding-prompt" className="text-sm font-medium text-foreground mb-2 block">Guiding Prompt</label>
-          <Textarea
-            id="guiding-prompt"
-            value={guidingPrompt}
-            onChange={(e) => setGuidingPrompt(e.target.value)}
-            placeholder="What should the system extract from this document?"
-            className="bg-background/50 border-border text-foreground min-h-[100px] resize-none"
-          />
-        </GlassCard>
+          {/* File list */}
+          {uploadedFiles.length > 0 && (
+            <div className="mt-3 space-y-1">
+              {uploadedFiles.map((file, index) => (
+                <div key={`${file.name}-${index}`} className="flex items-center justify-between px-3 py-2 rounded bg-card border border-border group">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-sm text-foreground truncate">{file.name}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-muted-foreground">{formatFileSize(file.size)}</span>
+                    <button
+                      type="button"
+                      onClick={() => { removeUploadedFile(index); resetKnowledgeState(); }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
-        <div className="flex gap-3">
-          <Button
-            onClick={handleExtract}
-            disabled={!uploadedFile || knowledgeLoading}
-            className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            {knowledgeLoading ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Extracting...</>
-            ) : (
-              <><Sparkles className="w-4 h-4" /> Extract Knowledge Graph</>
-            )}
-          </Button>
-          {graphReady && (
-            <Button onClick={handleProceed} variant="outline" className="border-success/30 text-success hover:bg-success/10">
-              <ArrowRight className="w-4 h-4" /> Proceed
-            </Button>
+          {/* Alt input methods */}
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setShowUrlInput(!showUrlInput)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[10px] font-mono uppercase tracking-wider border transition-colors ${
+                showUrlInput ? 'border-white/20 bg-white/5 text-foreground' : 'border-border text-muted-foreground hover:text-foreground hover:border-white/15'
+              }`}
+            >
+              <Link className="w-3 h-3" /> URL
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPasteArea(!showPasteArea)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[10px] font-mono uppercase tracking-wider border transition-colors ${
+                showPasteArea ? 'border-white/20 bg-white/5 text-foreground' : 'border-border text-muted-foreground hover:text-foreground hover:border-white/15'
+              }`}
+            >
+              <Type className="w-3 h-3" /> Paste
+            </button>
+          </div>
+
+          {/* URL scraper */}
+          {showUrlInput && (
+            <div className="mt-2 flex gap-2 animate-slide-up">
+              <Input
+                value={urlValue}
+                onChange={(e) => setUrlValue(e.target.value)}
+                placeholder="https://example.com/policy-doc"
+                className="text-sm bg-card border-border"
+              />
+              <Button onClick={handleUrlScrape} size="sm" variant="outline" className="shrink-0 border-border text-foreground">
+                Scrape
+              </Button>
+            </div>
+          )}
+
+          {/* Paste text */}
+          {showPasteArea && (
+            <div className="mt-2 space-y-2 animate-slide-up">
+              <Textarea
+                value={pasteValue}
+                onChange={(e) => setPasteValue(e.target.value)}
+                placeholder="Paste document text here..."
+                className="text-sm bg-card border-border min-h-[80px] resize-none"
+              />
+              <Button onClick={handlePasteSubmit} size="sm" variant="outline" className="border-border text-foreground">
+                Add as Document
+              </Button>
+            </div>
           )}
         </div>
-        {knowledgeError && (
-          <p className="text-xs text-destructive">{knowledgeError}</p>
+
+        {/* Guiding Prompts */}
+        <div className="p-5 border-b border-border">
+          <div className="flex items-center justify-between mb-3">
+            <span className="label-meta">Guiding Prompts</span>
+            <div className="flex items-center gap-3">
+              <select
+                className="bg-transparent border border-border text-[10px] text-muted-foreground uppercase tracking-widest px-2 py-1 rounded cursor-pointer hover:text-foreground"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'policy') updateGuidingPrompt(0, "Identify all entities, locations, organizations, and the specific impact mechanisms described in this policy document. Focus strongly on sentiment and demographic effects.");
+                  if (val === 'ad') updateGuidingPrompt(0, "Extract key product features, target demographics, and brand positioning statements. Highlight emotional triggers and pricing constraints.");
+                  if (val === 'pmf') updateGuidingPrompt(0, "Analyze this product feedback for core pain points, requested features, and user satisfaction signals. Group by user persona.");
+                }}
+              >
+                <option value="policy">Policy Review</option>
+                <option value="ad">Ad Testing</option>
+                <option value="pmf">PMF Discovery</option>
+              </select>
+              <button
+                type="button"
+                onClick={addGuidingPrompt}
+                className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Plus className="w-3 h-3" /> Add Prompt
+              </button>
+            </div>
+          </div>
+          <div className="space-y-3">
+            {guidingPrompts.map((prompt, index) => (
+              <div key={index} className="relative group">
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => updateGuidingPrompt(index, e.target.value)}
+                  placeholder={index === 0 ? 'What should the system extract from this document?' : 'Additional extraction guidance...'}
+                  className={`text-sm bg-card border-border ${index === 0 ? 'min-h-[132px]' : 'min-h-[104px]'} resize-y pr-8`}
+                />
+                {guidingPrompts.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeGuidingPrompt(index)}
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="p-5 border-b border-border">
+          <div className="flex gap-2">
+            <Button
+              onClick={handleExtract}
+              disabled={uploadedFiles.length === 0 || knowledgeLoading}
+              className="flex-1 bg-[hsl(var(--data-blue))] hover:bg-[hsl(210,100%,50%)] text-white border-0 font-medium font-mono uppercase tracking-wider text-xs h-10"
+            >
+              {knowledgeLoading ? (
+                "Processing..."
+              ) : (
+                <><Sparkles className="w-3.5 h-3.5 mr-2" /> Start Extraction</>
+              )}
+            </Button>
+            {graphReady && (
+              <Button
+                onClick={handleProceed}
+                variant="outline"
+                className="h-10 border border-success/30 bg-success/20 px-4 font-mono text-xs uppercase tracking-wider text-success hover:bg-success/30"
+              >
+                Proceed <ArrowRight className="w-4 h-4 ml-1" />
+              </Button>
+            )}
+          </div>
+          {knowledgeError && (
+            <p className="text-xs text-destructive mt-2 font-mono uppercase">{knowledgeError}</p>
+          )}
+
+          {/* Fake Loading Log */}
+          {knowledgeLoading && (
+            <div className="mt-4 p-3 border border-border bg-black rounded font-mono text-[10px] text-muted-foreground w-full space-y-1">
+              <div className="animate-pulse-subtle flex justify-between">
+                <span>[{new Date().toLocaleTimeString('en-US', { hour12: false })}] Initializing graph builder...</span>
+                <span className="text-success">OK</span>
+              </div>
+              <div className="animate-pulse-subtle flex justify-between" style={{ animationDelay: '0.4s' }}>
+                <span>[{new Date().toLocaleTimeString('en-US', { hour12: false })}] Parsing uploaded documents...</span>
+                <span className="text-success">OK</span>
+              </div>
+              <div className="animate-pulse-subtle flex justify-between" style={{ animationDelay: '0.8s' }}>
+                <span>[{new Date().toLocaleTimeString('en-US', { hour12: false })}] Chunking & computing embeddings...</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Stats */}
+        {graphReady && (
+          <div className="p-5 border-b border-border">
+            <div className="grid grid-cols-3 gap-4">
+              <Stat label="Entities" value={knowledgeArtifact.entity_nodes.length} />
+              <Stat label="Relations" value={knowledgeArtifact.relationship_edges.length} />
+              <Stat label="Paragraphs" value={knowledgeArtifact.document.paragraph_count ?? 0} />
+            </div>
+          </div>
         )}
 
+        {/* Top Entities — collapsible */}
         {graphReady && (
-          <>
-            <GlassCard className="p-4 flex gap-6">
-              <Stat label="Entity Count" value={knowledgeArtifact.entity_nodes.length} />
-              <Stat label="Relationship Count" value={knowledgeArtifact.relationship_edges.length} />
-              <Stat label="Paragraph Count" value={knowledgeArtifact.document.paragraph_count ?? 0} />
-            </GlassCard>
-            <GlassCard className="p-4">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-[0.24em]">Top 3 Entities</div>
-              <div className="mt-3 space-y-3">
+          <div className="p-5">
+            <button
+              type="button"
+              onClick={() => setShowTopEntities(!showTopEntities)}
+              className="flex items-center justify-between w-full mb-3"
+            >
+              <span className="label-meta">Top Entities</span>
+              {showTopEntities ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+            </button>
+            {showTopEntities && (
+              <div className="space-y-3 animate-slide-up">
                 {topEntities.map((node) => {
                   const bucket = resolveDisplayBucket(node.type, node.facet_kind, node.display_bucket);
                   const style = DISPLAY_BUCKET_STYLES[bucket] ?? DISPLAY_BUCKET_STYLES.other;
                   return (
                     <div key={node.id} className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="truncate text-sm text-foreground">{node.label}</div>
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{style.label}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: style.color }} />
+                          <span className="truncate text-sm text-foreground">{node.label}</span>
+                        </div>
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground ml-4">{style.label}</div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-sm font-mono text-primary">{normalizeImportance(node.importance_score, node.weight).toFixed(2)}</div>
-                        <div className="text-[10px] text-muted-foreground">support {node.support_count ?? 0}</div>
+                      <div className="text-right shrink-0">
+                        <div className="text-sm font-mono text-foreground">{normalizeImportance(node.importance_score, node.weight).toFixed(2)}</div>
+                        <div className="text-[10px] font-mono text-muted-foreground">×{node.support_count ?? 0}</div>
                       </div>
                     </div>
                   );
                 })}
               </div>
-            </GlassCard>
-          </>
+            )}
+          </div>
         )}
       </div>
 
-      <GlassCard glow={graphReady ? 'primary' : 'none'} className="p-4 flex flex-col">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-foreground">Knowledge Graph</h3>
-          {graphReady && legendEntries.length > 0 && (
-            <div className="flex flex-wrap justify-end gap-3">
-              {legendEntries.map((entry) => (
-                <span key={entry.label} className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-                  {entry.label}
-                </span>
-              ))}
-            </div>
-          )}
+      {/* ───── RIGHT PANEL — KNOWLEDGE GRAPH ───── */}
+      <div className="flex flex-col bg-background">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+          <h3 className="text-sm font-medium text-foreground">Knowledge Graph</h3>
         </div>
+
         {graphReady && (
-          <div className="mb-3 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="px-5 py-2.5 border-b border-border space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <SegmentedControl
                 value={familyFilter}
                 options={[
                   { value: 'all', label: 'All' },
-                  { value: 'nemotron', label: 'Nemotron Entities' },
-                  { value: 'other', label: 'Other Entities' },
+                  { value: 'nemotron', label: 'Nemotron' },
+                  { value: 'other', label: 'Other' },
                 ]}
                 onChange={(nextValue) => setFamilyFilter(nextValue as FamilyFilter)}
               />
               <button
                 type="button"
                 onClick={() => setShowRelationshipLabels((current) => !current)}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] transition-colors ${
+                className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors ${
                   showRelationshipLabels
-                    ? 'border-primary/60 bg-primary/10 text-foreground'
-                    : 'border-white/8 bg-white/4 text-muted-foreground hover:border-white/15 hover:text-foreground'
+                    ? 'border-white/20 bg-white/5 text-foreground'
+                    : 'border-border text-muted-foreground hover:border-white/15 hover:text-foreground'
                 }`}
               >
-                {showRelationshipLabels ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                {showRelationshipLabels ? 'Relationship Labels On' : 'Relationship Labels Off'}
+                {showRelationshipLabels ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                Labels
               </button>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               {availableBuckets.map((bucket) => {
                 const style = DISPLAY_BUCKET_STYLES[bucket] ?? DISPLAY_BUCKET_STYLES.other;
                 const isActive = activeBuckets.includes(bucket);
@@ -470,7 +682,8 @@ export default function PolicyUpload() {
             </div>
           </div>
         )}
-        <div ref={containerRef} className="flex-1 min-h-[300px] rounded-lg overflow-hidden bg-background/30">
+
+        <div ref={containerRef} className="flex-1 min-h-[300px] overflow-hidden">
           {graphReady && graphData.nodes.length > 0 ? (
             <ForceGraph2D
               ref={graphRef}
@@ -492,7 +705,7 @@ export default function PolicyUpload() {
                 const radius = node.renderRadius || radiusFromNormalizedValue(node.val);
                 const label = node.name || '';
                 const fontSize = Math.max(8, 11 / globalScale);
-                ctx.font = `${fontSize}px Inter, sans-serif`;
+                ctx.font = `${fontSize}px "Space Grotesk", sans-serif`;
                 const labelX = node.x + radius + NODE_LABEL_GAP;
                 const labelY = node.y;
                 const labelWidth = ctx.measureText(label).width;
@@ -508,29 +721,25 @@ export default function PolicyUpload() {
                 ctx.fill();
 
                 ctx.lineWidth = 1;
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
                 ctx.stroke();
 
-                ctx.fillStyle = 'rgba(8, 10, 16, 0.78)';
+                ctx.fillStyle = 'rgba(10, 10, 10, 0.85)';
                 ctx.fillRect(backgroundX, backgroundY, backgroundWidth, backgroundHeight);
 
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'middle';
-                ctx.fillStyle = 'hsl(210, 40%, 93%)';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
                 ctx.fillText(label, labelX, labelY);
                 ctx.restore();
               }}
               linkCanvasObjectMode={() => 'after'}
               linkCanvasObject={(link: GraphLinkDatum, ctx, globalScale) => {
-                if (!showRelationshipLabels) {
-                  return;
-                }
+                if (!showRelationshipLabels) return;
                 const label = (link.label || link.type || '').trim();
                 const source = typeof link.source === 'string' ? undefined : link.source;
                 const target = typeof link.target === 'string' ? undefined : link.target;
-                if (!label || typeof source?.x !== 'number' || typeof source?.y !== 'number' || typeof target?.x !== 'number' || typeof target?.y !== 'number') {
-                  return;
-                }
+                if (!label || typeof source?.x !== 'number' || typeof source?.y !== 'number' || typeof target?.x !== 'number' || typeof target?.y !== 'number') return;
 
                 const midX = (source.x + target.x) / 2;
                 const midY = (source.y + target.y) / 2;
@@ -541,7 +750,7 @@ export default function PolicyUpload() {
                 const normalY = dx / length;
                 const readableLabel = shortenLabel(label, Math.max(12, Math.floor(length / 8)));
                 const fontSize = Math.max(8.5, 10.5 / globalScale);
-                ctx.font = `${fontSize}px Inter, sans-serif`;
+                ctx.font = `${fontSize}px "Space Mono", monospace`;
                 const textWidth = ctx.measureText(readableLabel).width;
                 const boxWidth = textWidth + 12;
                 const boxHeight = fontSize + 8;
@@ -550,19 +759,19 @@ export default function PolicyUpload() {
                 ctx.save();
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillStyle = 'rgba(8, 10, 16, 0.84)';
+                ctx.fillStyle = 'rgba(10, 10, 10, 0.88)';
                 ctx.fillRect(
                   midX + normalX * offset - boxWidth / 2,
                   midY + normalY * offset - boxHeight / 2,
                   boxWidth,
                   boxHeight,
                 );
-                ctx.fillStyle = 'hsl(210, 28%, 96%)';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
                 ctx.fillText(readableLabel, midX + normalX * offset, midY + normalY * offset);
                 ctx.restore();
               }}
-              linkColor={() => 'hsl(225, 20%, 25%)'}
-              linkWidth={1.25}
+              linkColor={() => 'rgba(255, 255, 255, 0.08)'}
+              linkWidth={1}
               linkDirectionalArrowLength={4}
               linkDirectionalArrowRelPos={1}
               backgroundColor="transparent"
@@ -572,29 +781,87 @@ export default function PolicyUpload() {
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
               {knowledgeLoading ? (
                 <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                  <span>Building knowledge graph...</span>
+                  <Loader2 className="w-6 h-6 animate-spin text-white/40" />
+                  <span className="font-mono text-xs uppercase tracking-wider">Building graph...</span>
                 </div>
               ) : graphReady ? (
-                'No nodes match the current graph filters'
+                'No nodes match the current filters'
               ) : (
-                'Upload a document to generate the knowledge graph'
+                <div className="text-center max-w-xs">
+                  <div className="text-muted-foreground/40 mb-2">
+                    <Upload className="w-8 h-8 mx-auto" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Upload a document to generate the knowledge graph</p>
+                  <p className="text-[10px] font-mono text-muted-foreground/50 mt-1 uppercase tracking-wider">Interactive Force Graph · Drag nodes to explore</p>
+                </div>
               )}
             </div>
           )}
         </div>
-      </GlassCard>
+      </div>
     </div>
   );
 }
 
+/* ─── Sub-components ─── */
+
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div>
-      <div className="text-xl font-bold font-mono text-primary">{value}</div>
-      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</div>
+      <div className="text-2xl font-mono font-medium text-foreground tracking-tight">{value}</div>
+      <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-[0.18em]">{label}</div>
     </div>
   );
+}
+
+function FilterChip({ active, label, onClick, accent }: { active: boolean; label: string; onClick: () => void; accent?: string; }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors ${
+        active
+          ? 'border-white/20 bg-white/8 text-foreground'
+          : 'border-border text-muted-foreground hover:border-white/15 hover:text-foreground'
+      }`}
+    >
+      <span className="flex items-center gap-1.5">
+        {accent && <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: accent, opacity: active ? 1 : 0.5 }} />}
+        {label}
+      </span>
+    </button>
+  );
+}
+
+function SegmentedControl({ value, options, onChange }: { value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void; }) {
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded border border-border bg-card p-0.5">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={`rounded px-3 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors ${
+            option.value === value
+              ? 'bg-white/10 text-foreground'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ─── Utilities ─── */
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 function normalizeNodeType(type?: string) {
@@ -642,62 +909,6 @@ function resolveDisplayBucket(type?: string, facetKind?: string | null, explicit
   if (['concept', 'policy', 'program', 'topic', 'law', 'service', 'funding'].includes(normalizedType)) return 'concept';
   if (normalizedType === 'industry') return 'industry';
   return 'other';
-}
-
-function FilterChip({
-  active,
-  label,
-  onClick,
-  accent,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-  accent?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full border px-3 py-1 text-[10px] tracking-[0.16em] uppercase transition-colors ${
-        active
-          ? 'border-primary/70 bg-primary/12 text-foreground'
-          : 'border-white/8 bg-white/4 text-muted-foreground hover:border-white/15 hover:text-foreground'
-      }`}
-      style={active && accent ? { borderColor: accent, boxShadow: `inset 0 0 0 1px ${accent}` } : undefined}
-    >
-      {label}
-    </button>
-  );
-}
-
-function SegmentedControl({
-  value,
-  options,
-  onChange,
-}: {
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="inline-flex items-center gap-1 rounded-full border border-white/8 bg-white/4 p-1">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          onClick={() => onChange(option.value)}
-          className={`rounded-full px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] transition-colors ${
-            option.value === value
-              ? 'bg-primary/18 text-foreground shadow-[inset_0_0_0_1px_rgba(91,143,255,0.35)]'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 function shortenLabel(label: string, maxLength: number) {

@@ -9,8 +9,10 @@ import { AppProvider, useApp } from "@/contexts/AppContext";
 import PolicyUpload from "@/pages/PolicyUpload";
 import AgentConfig from "@/pages/AgentConfig";
 import Simulation from "@/pages/Simulation";
-import Analysis from "@/pages/Analysis";
-import AgentChat from "@/pages/AgentChat";
+import ReportChat from "@/pages/ReportChat";
+import Analytics from "@/pages/Analytics";
+import { OnboardingModal } from "@/components/OnboardingModal";
+import { useState, useEffect } from "react";
 
 const queryClient = new QueryClient();
 
@@ -22,42 +24,47 @@ function MainContent() {
       case 1: return <PolicyUpload />;
       case 2: return <AgentConfig />;
       case 3: return <Simulation />;
-      case 4: return <Analysis />;
-      case 5: return <AgentChat />;
+      case 4: return <ReportChat />;
+      case 5: return <Analytics />;
       default: return <PolicyUpload />;
     }
   };
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
-      <header className="h-12 flex items-center border-b border-border px-2 bg-card/30 backdrop-blur-sm flex-shrink-0">
+      <header className="h-11 flex items-center border-b border-border px-2 bg-card/50 flex-shrink-0">
         <SidebarTrigger className="text-muted-foreground hover:text-foreground" />
         <div className="flex-1">
           <StepProgress />
         </div>
       </header>
-      <main className="flex-1 overflow-hidden dot-pattern relative">
+      <main className="flex-1 overflow-hidden relative">
         {renderStep()}
       </main>
     </div>
   );
 }
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <AppProvider>
-        <SidebarProvider>
-          <div className="h-screen flex w-full overflow-hidden bg-background">
-            <AppSidebar />
-            <MainContent />
-          </div>
-        </SidebarProvider>
-      </AppProvider>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+const App = () => {
+  const [onboardingOpen, setOnboardingOpen] = useState(true);
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <AppProvider>
+          <SidebarProvider>
+            <div className="h-screen flex w-full overflow-hidden bg-background">
+              <AppSidebar onOpenSettings={() => setOnboardingOpen(true)} />
+              <MainContent />
+              <OnboardingModal isOpen={onboardingOpen} onClose={() => setOnboardingOpen(false)} />
+            </div>
+          </SidebarProvider>
+        </AppProvider>
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+};
 
 export default App;

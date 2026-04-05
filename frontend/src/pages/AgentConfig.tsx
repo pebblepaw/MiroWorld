@@ -47,6 +47,7 @@ export default function AgentConfig() {
     setSimPosts,
     completeStep,
     setCurrentStep,
+    modelProvider,
   } = useApp();
 
   const [groupCategory, setGroupCategory] = useState<string>('industry');
@@ -122,6 +123,30 @@ export default function AgentConfig() {
         });
       }
     } catch (error) {
+      // Fallback: try loading demo data from public/demo-output.json
+      try {
+        const demoRes = await fetch('/demo-output.json');
+        if (demoRes.ok) {
+          const demo = await demoRes.json();
+          if (demo.population) {
+            const artifact = demo.population;
+            setPopulationArtifact(artifact);
+            setSampleSeed(artifact.sample_seed);
+            setAgentsGenerated(true);
+            setAgents(artifact.sampled_personas.map((row: any) => sampledPersonaToMockAgent(row)));
+            setSimulationComplete(false);
+            setSimPosts([]);
+            toast({
+              title: 'Demo Population Loaded',
+              description: 'Backend unavailable. Loaded cached demo agents.',
+            });
+            return;
+          }
+        }
+      } catch (demoError) {
+        // Fallback failed
+      }
+
       const message = error instanceof Error ? error.message : 'Population sampling failed.';
       setPopulationError(message);
       setPopulationArtifact(null);
@@ -239,7 +264,11 @@ export default function AgentConfig() {
             </Button>
           )}
           {artifact && (
-            <Button onClick={handleProceed} variant="outline" className="border-success/30 text-success hover:bg-success/10 px-6">
+            <Button
+              onClick={handleProceed}
+              variant="outline"
+              className="h-10 border border-success/30 bg-success/20 px-6 font-mono text-xs uppercase tracking-wider text-success hover:bg-success/30"
+            >
               Proceed <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           )}
@@ -254,10 +283,15 @@ export default function AgentConfig() {
 
       {/* Row 1: Configuration */}
       <div className="grid grid-cols-1 xl:grid-cols-[0.8fr_1.2fr] gap-6">
-        <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
+        <div className="surface-card border border-white/5 rounded-xl p-5 shadow-sm">
+          <div className="flex flex-row items-start justify-between mb-4">
             <span className="text-sm font-medium text-foreground">Target Sample Size</span>
-            <span className="text-2xl font-mono text-primary/90">{agentCount.toLocaleString()}</span>
+            <div className="flex flex-col items-end text-right">
+              <span className="text-2xl font-mono text-primary/90 leading-none">{agentCount.toLocaleString()}</span>
+              <span className="text-[10px] font-mono text-muted-foreground mt-1">
+                {String(modelProvider).toLowerCase() === 'gemini' ? '~0.42¢ est. (cached)' : '~1.68¢ est.'}
+              </span>
+            </div>
           </div>
           <Slider
             value={[agentCount]}
@@ -270,9 +304,6 @@ export default function AgentConfig() {
           <div className="flex justify-between text-[11px] text-muted-foreground font-mono mb-6">
             <span>0</span><span>500</span>
           </div>
-          <p className="text-[11px] text-muted-foreground/80 mb-6">
-            Runtime minimum is 2 agents. Values below 2 are automatically executed as 2.
-          </p>
 
           <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3">Sampling Strategy</div>
           <div className="flex flex-col sm:flex-row gap-2">
@@ -289,7 +320,7 @@ export default function AgentConfig() {
           </div>
         </div>
 
-        <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5 shadow-sm flex flex-col">
+        <div className="surface-card border border-white/5 rounded-xl p-5 shadow-sm flex flex-col">
           <label htmlFor="sampling-instructions" className="text-sm font-medium text-foreground mb-3 flex items-center justify-between">
             <span>Strategic Parameters</span>
             {artifact && (
@@ -333,7 +364,7 @@ export default function AgentConfig() {
 
           {/* Row 2: Demographics & Geography */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5">
+            <div className="surface-card border border-white/5 rounded-xl p-5">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Age Stratification</h4>
               <ResponsiveContainer width="100%" height={160}>
                 <BarChart data={ageBuckets} margin={{ top: 0, right: 0, left: -25, bottom: 0 }}>
@@ -345,12 +376,19 @@ export default function AgentConfig() {
               </ResponsiveContainer>
             </div>
 
-            <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5">
+            <div className="surface-card border border-white/5 rounded-xl p-5">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Industry Sector Mix</h4>
               <ResponsiveContainer width="100%" height={160}>
-                <BarChart data={industryData} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
+                <BarChart data={industryData} layout="vertical" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
                   <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="name" tick={{ fill: 'hsl(215,20%,65%)', fontSize: 11 }} axisLine={false} tickLine={false} width={135} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: 'hsl(215,20%,55%)', fontSize: 11 }}
+                    width={110}
+                  />
                   <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.02)' }} content={<CustomBarTooltip />} />
                   <Bar dataKey="value" radius={[0, 2, 2, 0]} maxBarSize={20}>
                     {industryData.map((entry, index) => (
@@ -361,7 +399,7 @@ export default function AgentConfig() {
               </ResponsiveContainer>
             </div>
 
-            <div className="bg-[#0e0e0e] border border-white/5 rounded-xl p-5 flex flex-col">
+            <div className="surface-card border border-white/5 rounded-xl p-5 flex flex-col">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Top Planning Areas</h4>
               <div className="flex-1 -mx-2 -mb-2 rounded-lg overflow-hidden border border-white/5">
                 <SingaporeMap areaData={topAreas} />
@@ -370,7 +408,7 @@ export default function AgentConfig() {
           </div>
 
           {/* Row 3: Cohort Explorer (Waffle Grid Pane) */}
-          <div className="bg-[#0e0e0e] border border-white/5 rounded-xl flex flex-col min-h-[800px] overflow-hidden">
+          <div className="surface-card border border-white/5 rounded-xl flex flex-col min-h-[800px] overflow-hidden">
             <div className="p-5 border-b border-white/5 shrink-0 flex flex-col md:flex-row items-center justify-between bg-[#111111]">
               <div>
                 <h3 className="text-base font-medium text-foreground">Cohort Explorer</h3>
@@ -452,7 +490,7 @@ export default function AgentConfig() {
 
 function InlineStat({ label, value, highlight = false, tooltipText }: { label: string; value: string | number; highlight?: boolean; tooltipText?: string }) {
   const inner = (
-    <div className={`p-4 bg-[#0e0e0e] flex flex-col justify-center h-full transition-colors ${highlight ? 'text-primary' : ''} ${tooltipText ? 'hover:bg-white-[0.02]' : ''}`}>
+    <div className={`p-4 surface-card flex flex-col justify-center h-full transition-colors ${highlight ? 'text-primary' : ''} ${tooltipText ? 'hover:bg-white-[0.02]' : ''}`}>
       <div className="text-2xl font-mono font-medium tracking-tight mb-1" style={highlight ? { color: 'hsl(160, 84%, 45%)' } : {}}>{value}</div>
       <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
         {label}
@@ -552,7 +590,7 @@ function WaffleTooltipContent({ data }: { data: any }) {
         </div>
       </div>
       
-      <div className="p-4 space-y-3 bg-[#0e0e0e]">
+      <div className="p-4 space-y-3 surface-card">
         <div className="grid grid-cols-[80px_1fr] gap-x-2 gap-y-2 text-[11px]">
           <span className="text-white/40">Location</span>
           <span className="text-white/90 truncate">{formatLabel(String(persona.planning_area ?? ''))}</span>

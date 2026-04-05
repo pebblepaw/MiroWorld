@@ -4,6 +4,8 @@ import { ArrowRight, Flame, Loader2, MessageSquare, Play, ThumbsDown, ThumbsUp, 
 import { GlassCard } from "@/components/GlassCard";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/contexts/AppContext";
+import { generateSimPosts, type SimComment, type SimPost } from "@/data/mockData";
+import { toast } from "@/hooks/use-toast";
 import { buildSimulationStreamUrl, SimulationState, startSimulation } from "@/lib/console-api";
 
 type FeedComment = {
@@ -29,31 +31,29 @@ type FeedThread = {
   comments: FeedComment[];
 };
 
-// Occupation color mapping for visual variety
-const OCCUPATION_COLORS: Record<string, { bg: string; text: string; border: string; glow: string }> = {
-  "Teacher": { bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-500/30", glow: "shadow-emerald-500/20" },
-  "Professional": { bg: "bg-blue-500/15", text: "text-blue-400", border: "border-blue-500/30", glow: "shadow-blue-500/20" },
-  "Manager": { bg: "bg-violet-500/15", text: "text-violet-400", border: "border-violet-500/30", glow: "shadow-violet-500/20" },
-  "Engineer": { bg: "bg-cyan-500/15", text: "text-cyan-400", border: "border-cyan-500/30", glow: "shadow-cyan-500/20" },
-  "Nurse": { bg: "bg-rose-500/15", text: "text-rose-400", border: "border-rose-500/30", glow: "shadow-rose-500/20" },
-  "Clerical": { bg: "bg-amber-500/15", text: "text-amber-400", border: "border-amber-500/30", glow: "shadow-amber-500/20" },
-  "Sales": { bg: "bg-orange-500/15", text: "text-orange-400", border: "border-orange-500/30", glow: "shadow-orange-500/20" },
-  "Service": { bg: "bg-pink-500/15", text: "text-pink-400", border: "border-pink-500/30", glow: "shadow-pink-500/20" },
-  "Retired": { bg: "bg-slate-500/15", text: "text-slate-400", border: "border-slate-500/30", glow: "shadow-slate-500/20" },
-  "Student": { bg: "bg-indigo-500/15", text: "text-indigo-400", border: "border-indigo-500/30", glow: "shadow-indigo-500/20" },
-  "Homemaker": { bg: "bg-teal-500/15", text: "text-teal-400", border: "border-teal-500/30", glow: "shadow-teal-500/20" },
-  "Unemployed": { bg: "bg-gray-500/15", text: "text-gray-400", border: "border-gray-500/30", glow: "shadow-gray-500/20" },
-  "Consultant": { bg: "bg-sky-500/15", text: "text-sky-400", border: "border-sky-500/30", glow: "shadow-sky-500/20" },
-  "Analyst": { bg: "bg-lime-500/15", text: "text-lime-400", border: "border-lime-500/30", glow: "shadow-lime-500/20" },
-  "default": { bg: "bg-primary/15", text: "text-primary", border: "border-primary/30", glow: "shadow-primary/20" },
+type ActorTone = {
+  avatarBg: string;
+  avatarText: string;
+  avatarBorder: string;
+  nameText: string;
 };
 
-function getOccupationColor(occupation?: string): { bg: string; text: string; border: string; glow: string } {
-  if (!occupation) return OCCUPATION_COLORS["default"];
-  const key = Object.keys(OCCUPATION_COLORS).find(k => 
-    occupation.toLowerCase().includes(k.toLowerCase())
-  );
-  return OCCUPATION_COLORS[key || "default"];
+const POSITIVE_TONE: ActorTone = {
+  avatarBg: "bg-success/15",
+  avatarText: "text-success",
+  avatarBorder: "border-success/30",
+  nameText: "text-success",
+};
+
+const DEFAULT_TONE: ActorTone = {
+  avatarBg: "bg-white/10",
+  avatarText: "text-foreground/80",
+  avatarBorder: "border-white/15",
+  nameText: "text-foreground/85",
+};
+
+function getActorTone(thread: FeedThread): ActorTone {
+  return thread.likes > thread.dislikes ? POSITIVE_TONE : DEFAULT_TONE;
 }
 
 type SortOption = "new" | "popular";
@@ -69,54 +69,43 @@ type ProcessStage = {
 function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) {
   const marks = useMemo(() => Array.from({ length: max - min + 1 }, (_, i) => min + i), [min, max]);
   const percentage = ((value - min) / (max - min)) * 100;
-  
+
   return (
-    <div className="relative w-full py-6">
-      {/* Track background */}
-      <div className="absolute left-0 right-0 h-2 bg-white/5 rounded-full overflow-hidden top-1/2 -translate-y-1/2">
-        {/* Filled track */}
-        <div 
-          className="h-full bg-gradient-to-r from-primary/60 via-primary to-primary/80 transition-all duration-300 ease-out"
-          style={{ width: `${percentage}%` }}
-        />
+    <div className="relative w-full pt-2 pb-9">
+      <div className="relative h-8">
+        <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/5">
+          <div
+            className="h-full bg-gradient-to-r from-primary/60 via-primary to-primary/80 transition-all duration-300 ease-out"
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+
+        <div className="absolute inset-x-0 top-1/2 flex -translate-y-1/2 items-center justify-between">
+          {marks.map((mark) => (
+            <button
+              key={mark}
+              onClick={() => onChange(mark)}
+              className={`group relative flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ${
+                value === mark ? "scale-110" : "hover:scale-105"
+              }`}
+            >
+              <div
+                className={`h-2.5 w-2.5 rounded-full transition-all duration-300 ${
+                  value >= mark ? "bg-primary shadow-lg shadow-primary/40" : "bg-white/20 group-hover:bg-white/35"
+                } ${value === mark ? "scale-150" : ""}`}
+              />
+              <span
+                className={`absolute top-8 text-xs font-mono transition-all duration-300 ${
+                  value === mark ? "font-bold text-primary" : "text-white/35 group-hover:text-white/60"
+                }`}
+              >
+                {mark}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
-      
-      {/* Marks */}
-      <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 flex justify-between items-center px-0">
-        {marks.map((mark) => (
-          <button
-            key={mark}
-            onClick={() => onChange(mark)}
-            className={`relative w-8 h-8 -ml-4 rounded-full flex items-center justify-center transition-all duration-300 group
-              ${value === mark 
-                ? 'scale-110' 
-                : 'hover:scale-105'
-              }
-            `}
-          >
-            {/* Mark dot */}
-            <div className={`w-3 h-3 rounded-full transition-all duration-300 
-              ${value >= mark 
-                ? 'bg-primary shadow-lg shadow-primary/40' 
-                : 'bg-white/20 group-hover:bg-white/40'
-              }
-              ${value === mark ? 'scale-150' : ''}
-            `} />
-            
-            {/* Mark label - positioned below with more space */}
-            <span className={`absolute top-full mt-3 text-xs font-mono transition-all duration-300
-              ${value === mark 
-                ? 'text-primary font-bold scale-110' 
-                : 'text-white/30 group-hover:text-white/60'
-              }
-            `}>
-              {mark}
-            </span>
-          </button>
-        ))}
-      </div>
-      
-      {/* Invisible range input for accessibility and drag */}
+
       <input
         type="range"
         min={min}
@@ -124,7 +113,7 @@ function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onC
         step={1}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="absolute left-0 right-0 h-8 top-1/2 -translate-y-1/2 opacity-0 cursor-pointer"
+        className="absolute left-0 right-0 top-2 h-8 cursor-pointer opacity-0"
       />
     </div>
   );
@@ -136,6 +125,7 @@ export default function Simulation() {
     modelProvider,
     knowledgeArtifact,
     populationArtifact,
+    agents,
     simulationRounds,
     setSimulationRounds,
     setSimulationComplete,
@@ -145,6 +135,7 @@ export default function Simulation() {
 
   const [simulationState, setSimulationState] = useState<SimulationState | null>(null);
   const [feedThreads, setFeedThreads] = useState<FeedThread[]>([]);
+  const [controversyBoost, setControversyBoost] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedRound, setSelectedRound] = useState<number | "all">("all");
@@ -273,7 +264,7 @@ export default function Simulation() {
 
   const handleSimulationEvent = useCallback((payload: Record<string, unknown>) => {
     const eventType = String(payload.event_type ?? "");
-    setSimulationState((previous) => reduceSimulationState(previous, payload));
+    setSimulationState((previous: SimulationState | null) => reduceSimulationState(previous, payload));
 
     if (eventType === "post_created") {
       setFeedThreads((previous) => {
@@ -410,15 +401,93 @@ export default function Simulation() {
       const state = await startSimulation(sessionId, {
         policy_summary: knowledgeArtifact.summary,
         rounds: simulationRounds,
+        controversy_boost: controversyBoost ? 0.5 : 0.0,
       });
       setSimulationState(state);
       openStream(sessionId);
     } catch (caughtError) {
+      const fallbackAgents = agents.length > 0 ? agents : [];
+      if (fallbackAgents.length > 0) {
+        closeStream();
+
+        const mockPosts = generateSimPosts(simulationRounds, fallbackAgents);
+        const demoThreads: FeedThread[] = mockPosts.map((post: SimPost) => ({
+          id: post.id,
+          postId: post.id,
+          actorName: post.agentName,
+          actorSubtitle: `${post.agentOccupation} · ${post.agentArea}`,
+          actorOccupation: post.agentOccupation,
+          title: post.title,
+          content: post.content,
+          roundNo: post.round,
+          activityRounds: [post.round],
+          likes: post.upvotes,
+          dislikes: post.downvotes,
+          comments: post.comments.map((comment: SimComment) => ({
+            id: comment.id,
+            actorName: comment.agentName,
+            content: comment.content,
+            roundNo: post.round,
+          })),
+        }));
+
+        const commentsTotal = demoThreads.reduce((total, thread) => total + thread.comments.length, 0);
+        const reactionsTotal = demoThreads.reduce((total, thread) => total + thread.likes + thread.dislikes, 0);
+        const activeAuthors = new Set(demoThreads.map((thread) => thread.actorName)).size;
+        const topThreads = [...demoThreads]
+          .map((thread) => ({
+            title: thread.title,
+            engagement: thread.likes + thread.dislikes + thread.comments.length,
+          }))
+          .sort((left, right) => Number(right.engagement) - Number(left.engagement))
+          .slice(0, 3);
+
+        const sampledAgents = populationArtifact?.sample_count ?? fallbackAgents.length;
+        const elapsedSeconds = Math.max(45, Math.round(estimatedTime));
+
+        setFeedThreads(demoThreads);
+        setSimulationState({
+          session_id: sessionId,
+          status: "completed",
+          event_count: demoThreads.length + commentsTotal,
+          last_round: simulationRounds,
+          platform: "reddit",
+          planned_rounds: simulationRounds,
+          current_round: simulationRounds,
+          elapsed_seconds: elapsedSeconds,
+          estimated_total_seconds: elapsedSeconds,
+          estimated_remaining_seconds: 0,
+          counters: {
+            posts: demoThreads.length,
+            comments: commentsTotal,
+            reactions: reactionsTotal,
+            active_authors: activeAuthors,
+          },
+          checkpoint_status: {
+            baseline: { status: "completed", completed_agents: sampledAgents, total_agents: sampledAgents },
+            final: { status: "completed", completed_agents: sampledAgents, total_agents: sampledAgents },
+          },
+          top_threads: topThreads,
+          discussion_momentum: {},
+          latest_metrics: {
+            approval_rate: 68,
+            net_sentiment: 7.2,
+          },
+          recent_events: [],
+        });
+        setSimulationComplete(true);
+        toast({
+          title: "Demo simulation loaded",
+          description: "Backend is unavailable, so mock discussion posts were generated for UI preview.",
+        });
+        return;
+      }
+
       setError(caughtError instanceof Error ? caughtError.message : "Unable to start simulation.");
     } finally {
       setLoading(false);
     }
-  }, [knowledgeArtifact, openStream, sessionId, setSimulationComplete, simulationRounds]);
+  }, [agents, closeStream, estimatedTime, knowledgeArtifact, openStream, populationArtifact?.sample_count, sessionId, setSimulationComplete, simulationRounds]);
 
   const handleProceed = useCallback(() => {
     completeStep(3);
@@ -426,7 +495,7 @@ export default function Simulation() {
   }, [completeStep, setCurrentStep]);
 
   return (
-    <div className="flex h-full p-6 gap-6 overflow-hidden">
+    <div className="flex h-full min-h-0 gap-6 overflow-hidden p-6">
       <div className="flex-1 flex flex-col gap-4 min-w-0">
         {/* Header - removed Generate Report button from here */}
         <div className="flex items-center justify-between gap-4">
@@ -446,7 +515,7 @@ export default function Simulation() {
             <Button 
               onClick={handleProceed} 
               variant="outline" 
-              className="border-success/30 text-success hover:bg-success/10"
+              className="h-10 border border-success/30 bg-success/20 px-4 font-mono text-xs uppercase tracking-wider text-success hover:bg-success/30"
             >
               <ArrowRight className="w-4 h-4" /> Generate Report
             </Button>
@@ -454,49 +523,63 @@ export default function Simulation() {
         </div>
 
         {/* Main Content: Number Picker + Feed + Stats */}
-        <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-5 min-h-0 flex-1">
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.42fr)_minmax(340px,0.78fr)] gap-5 min-h-0 flex-1">
           {/* Left Column: Number Picker + Feed */}
           <div className="flex flex-col gap-4 min-h-0">
-            {/* Number Picker - same width as feed */}
-            <GlassCard className="p-5 shrink-0">
-              <div className="flex items-center gap-6">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
+            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)] auto-rows-fr items-stretch gap-4 shrink-0">
+              <GlassCard className="p-4 min-h-[168px] flex h-full flex-col gap-3">
+                <div>
+                  <div className="mb-2 flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-primary/70" />
                     <h3 className="text-sm font-medium text-foreground">Simulation Rounds</h3>
                   </div>
-                  
+
                   <RoundSlider 
                     value={simulationRounds} 
                     onChange={setSimulationRounds} 
                     min={1} 
                     max={8} 
                   />
-                  
-                  <div className="flex items-center gap-2 mt-6 text-xs text-muted-foreground font-mono">
-                    <Clock className="w-3 h-3" />
-                    <span>~{formatSeconds(estimatedTime)}</span>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="font-mono font-semibold text-foreground">
+                      ~{formatSeconds(estimatedTime)}
+                    </span>
                     <span className="text-white/20">|</span>
-                    <span>{populationArtifact?.sample_count ?? 250} agents × {simulationRounds} rounds</span>
+                    <span className="text-muted-foreground font-mono">{populationArtifact?.sample_count ?? 250} agents × {simulationRounds} rounds</span>
                   </div>
-                  <div className="mt-1 text-[11px] text-white/45 font-mono">
-                    Pre-run estimate: baseline {formatSeconds(runtimeEstimate.baselineCheckpointSeconds)} + OASIS {formatSeconds(runtimeEstimate.roundWindowSeconds)} + final {formatSeconds(runtimeEstimate.finalCheckpointSeconds)}
+                  <div className="justify-self-start lg:justify-self-end font-mono text-primary/85 bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
+                    ~${(0.85 * simulationRounds).toFixed(2)} cost
                   </div>
                 </div>
-                
-                <div className="flex flex-col items-center justify-center px-6 border-l border-white/10">
-                  <div className="text-4xl font-mono font-bold text-foreground">{simulationRounds}</div>
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Rounds</div>
+              </GlassCard>
+
+              <GlassCard className="p-4 min-h-[168px] flex h-full flex-col justify-between gap-3">
+                <div className="flex items-center gap-2 w-full">
+                  <Flame className={`w-4 h-4 ${controversyBoost ? "text-[hsl(var(--data-red))]" : "text-muted-foreground"}`} />
+                  <h3 className="text-sm font-medium text-foreground flex-1">Controversy Boost</h3>
+                  <button 
+                    onClick={() => setControversyBoost(!controversyBoost)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${controversyBoost ? 'bg-[hsl(var(--data-red))]' : 'bg-white/10'}`}
+                  >
+                    <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${controversyBoost ? 'translate-x-2' : '-translate-x-2'}`} />
+                  </button>
                 </div>
-              </div>
-            </GlassCard>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Toggle to model social media ragebait logic. Engages highly controversial posts alongside universally liked content.
+                </p>
+              </GlassCard>
+            </div>
 
             {/* Feed - takes remaining space */}
             <GlassCard className="p-0 min-h-0 flex flex-col overflow-hidden flex-1">
               <div className="p-4 border-b border-white/5 bg-white/[0.02]">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <MessageSquare className="w-4 h-4 text-violet-400" />
+                    <MessageSquare className="w-4 h-4 text-muted-foreground" />
                     <div>
                       <h3 className="text-sm font-semibold text-foreground">Topic Community</h3>
                       <p className="text-[11px] text-muted-foreground">Live discourse feed</p>
@@ -555,18 +638,18 @@ export default function Simulation() {
 
               <div ref={feedRef} className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
                 {displayedThreads.map((thread) => {
-                  const colors = getOccupationColor(thread.actorOccupation);
+                  const tone = getActorTone(thread);
                   const isExpanded = Boolean(expandedReplies[thread.id]);
                   const visibleComments = isExpanded ? thread.comments : thread.comments.slice(0, 3);
                   return (
                     <GlassCard key={thread.id} className="p-4 bg-white/[0.02] border border-white/10 hover:bg-white/[0.04] transition-all duration-200 group">
                       <div className="flex items-start justify-between gap-4 mb-3">
                         <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-full ${colors.bg} flex items-center justify-center text-sm font-bold ${colors.text} border ${colors.border}`}>
+                          <div className={`w-10 h-10 rounded-full ${tone.avatarBg} flex items-center justify-center text-sm font-bold ${tone.avatarText} border ${tone.avatarBorder}`}>
                             {thread.actorName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                           </div>
                           <div>
-                            <div className={`text-sm font-semibold ${colors.text}`}>{thread.actorName}</div>
+                            <div className={`text-sm font-semibold ${tone.nameText}`}>{thread.actorName}</div>
                             <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
                               <span>{thread.actorSubtitle}</span>
                               <span className="w-1 h-1 rounded-full bg-white/20" />
@@ -606,7 +689,7 @@ export default function Simulation() {
                                 {comment.actorName.split(' ').map(n => n[0]).join('').slice(0, 1).toUpperCase()}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <span className="font-medium text-foreground/80 text-[11px]">{comment.actorName}</span>
+                                <span className={`font-medium text-[11px] ${tone.nameText}`}>{comment.actorName}</span>
                                 <span className="text-muted-foreground ml-2 whitespace-pre-wrap">{comment.content}</span>
                               </div>
                             </div>
@@ -614,7 +697,7 @@ export default function Simulation() {
                           {thread.comments.length > 3 && (
                             <button
                               type="button"
-                              className="text-[10px] text-primary/80 hover:text-primary pl-7 transition-colors"
+                              className="text-[10px] text-muted-foreground hover:text-foreground pl-7 transition-colors"
                               onClick={() =>
                                 setExpandedReplies((previous) => ({
                                   ...previous,
@@ -646,12 +729,12 @@ export default function Simulation() {
           </div>
 
           {/* Right: Stats Panel - Now starts from top */}
-          <div className="space-y-4 flex flex-col">
+          <div className="grid min-h-0 grid-rows-[minmax(136px,auto)_minmax(136px,auto)_1fr] gap-4">
             {/* Hottest Thread */}
-            <GlassCard className="p-4">
+            <GlassCard className="p-4 h-full">
               <div className="flex items-center gap-2 mb-3">
-                <Flame className="w-4 h-4 text-orange-400" />
-                <h4 className="text-xs uppercase tracking-wider text-orange-400 font-semibold">Hottest Thread</h4>
+                <Flame className="w-4 h-4 text-primary" />
+                <h4 className="text-xs uppercase tracking-wider text-primary font-semibold">Hottest Thread</h4>
               </div>
               
               {hottestThread?.title ? (
@@ -659,12 +742,12 @@ export default function Simulation() {
                   <h3 className="text-base font-semibold text-foreground leading-tight mb-3 line-clamp-2">
                     {String(hottestThread.title)}
                   </h3>
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 w-fit">
-                    <TrendingUp className="w-3.5 h-3.5 text-orange-400" />
-                    <span className="text-sm font-mono font-bold text-orange-400">
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 w-fit">
+                    <TrendingUp className="w-3.5 h-3.5 text-primary" />
+                    <span className="text-sm font-mono font-bold text-primary">
                       {Number(hottestThread.engagement ?? 0).toLocaleString()}
                     </span>
-                    <span className="text-xs text-orange-400/70">engagement</span>
+                    <span className="text-xs text-primary/70">engagement</span>
                   </div>
                 </div>
               ) : (
@@ -675,58 +758,37 @@ export default function Simulation() {
             </GlassCard>
 
             {/* Time Elapsed - Big */}
-            <GlassCard className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Clock className="w-4 h-4 text-cyan-400" />
-                <h4 className="text-xs uppercase tracking-wider text-cyan-400 font-semibold">Time Elapsed</h4>
+            <GlassCard className="p-3 h-full">
+              <div className="mb-2 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-muted-foreground" />
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Time Elapsed</h4>
               </div>
               
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-mono font-bold text-foreground">
+              <div className="flex items-center">
+                <span className="text-2xl font-mono font-bold text-foreground leading-none">
                   {formatSeconds(simulationState?.elapsed_seconds ?? 0)}
                 </span>
               </div>
               
               {running && (
-                <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   <span>Simulation in progress...</span>
                 </div>
               )}
               
               {completed && (
-                <div className="mt-3 flex items-center gap-2 text-xs text-emerald-400">
+                <div className="mt-2 flex items-center gap-2 text-xs text-emerald-400">
                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   <span>Completed</span>
                 </div>
               )}
             </GlassCard>
 
-            <GlassCard className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Zap className="w-4 h-4 text-violet-400" />
-                <h4 className="text-xs uppercase tracking-wider text-violet-400 font-semibold">Process Timeline</h4>
-              </div>
 
-              <div className="max-h-56 overflow-y-auto pr-1 space-y-2.5 scrollbar-thin">
-                {processStages.map((stage) => (
-                  <div key={stage.id} className="p-2.5 rounded-lg border border-white/8 bg-white/[0.02]">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-medium text-foreground">{stage.title}</div>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-medium border capitalize ${stageStatusClass(stage.status)}`}
-                      >
-                        {stage.status}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">{stage.detail}</p>
-                  </div>
-                ))}
-              </div>
-            </GlassCard>
 
             {/* Expanded Metrics */}
-            <GlassCard className="p-4 flex-1">
+            <GlassCard className="p-4 flex min-h-0 h-full flex-col">
               <div className="flex items-center gap-2 mb-4">
                 <Users className="w-4 h-4 text-primary" />
                 <h4 className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Metrics</h4>
@@ -751,21 +813,18 @@ export default function Simulation() {
                 </div>
               </div>
               
-              <div className="flex items-center justify-between py-3 border-t border-white/5">
-                <span className="text-sm text-muted-foreground">Dominant Stance</span>
-                <span className="text-sm font-medium text-primary capitalize">
-                  {String(simulationState?.discussion_momentum?.dominant_stance ?? "mixed")}
-                </span>
-              </div>
-              
-              <div className="mt-4 pt-4 border-t border-white/5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Baseline Checkpoint</span>
-                  <StatusBadge status={baselineStatus} />
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="flex flex-col gap-1 px-3 py-2 bg-white/[0.02] border border-white/5 rounded-lg">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Approval Rate</span>
+                  <span className="text-xl font-mono font-bold text-success/90">
+                    {readLatestMetric(simulationState, "approval_rate", 68).toFixed(1)}%
+                  </span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Final Checkpoint</span>
-                  <StatusBadge status={finalStatus} />
+                <div className="flex flex-col gap-1 px-3 py-2 bg-white/[0.02] border border-white/5 rounded-lg">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Net Sentiment</span>
+                  <span className="text-xl font-mono font-bold text-success/90">
+                    {readLatestMetric(simulationState, "net_sentiment", 7.2).toFixed(1)}/10
+                  </span>
                 </div>
               </div>
             </GlassCard>
@@ -809,8 +868,16 @@ function stageStatusClass(status: StageStatus): string {
 }
 
 function formatSeconds(value: number | null | undefined): string {
-  const seconds = Math.max(0, Number(value ?? 0));
-  return `${Math.round(seconds)}s`;
+  const totalSeconds = Math.max(0, Math.round(Number(value ?? 0)));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+function readLatestMetric(simulationState: SimulationState | null, metricName: string, fallback: number): number {
+  const rawMetricValue = simulationState?.latest_metrics?.[metricName];
+  const numericValue = Number(rawMetricValue);
+  return Number.isFinite(numericValue) ? numericValue : fallback;
 }
 
 function estimateRuntimeBreakdown(agentCount: number, rounds: number, provider: string): {

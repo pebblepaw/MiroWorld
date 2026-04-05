@@ -2,17 +2,25 @@ import React, { createContext, useCallback, useContext, useMemo, useState, React
 import { Agent, SimPost } from '@/data/mockData';
 import { KnowledgeArtifact, ModelProviderId, PopulationArtifact } from '@/lib/console-api';
 
+type ChatHistoryEntry = {
+  role: 'user' | 'agent';
+  content: string;
+  agentId?: string;
+};
+
 interface AppState {
   currentStep: number;
   completedSteps: number[];
   sessionId: string | null;
+  country: string;
+  useCase: string;
   modelProvider: ModelProviderId;
   modelName: string;
   embedModelName: string;
   modelApiKey: string;
   modelBaseUrl: string;
-  uploadedFile: File | null;
-  guidingPrompt: string;
+  uploadedFiles: File[];
+  guidingPrompts: string[];
   knowledgeGraphReady: boolean;
   knowledgeArtifact: KnowledgeArtifact | null;
   knowledgeLoading: boolean;
@@ -29,20 +37,27 @@ interface AppState {
   simulationRounds: number;
   simulationComplete: boolean;
   simPosts: SimPost[];
-  chatHistory: Record<string, { role: 'user' | 'agent'; content: string }[]>;
+  chatHistory: Record<string, ChatHistoryEntry[]>;
 }
 
 interface AppContextType extends AppState {
   setCurrentStep: (step: number) => void;
   completeStep: (step: number) => void;
   setSessionId: (sessionId: string | null) => void;
+  setCountry: (country: string) => void;
+  setUseCase: (useCase: string) => void;
   setModelProvider: (provider: ModelProviderId) => void;
   setModelName: (modelName: string) => void;
   setEmbedModelName: (embedModelName: string) => void;
   setModelApiKey: (modelApiKey: string) => void;
   setModelBaseUrl: (modelBaseUrl: string) => void;
-  setUploadedFile: (file: File | null) => void;
-  setGuidingPrompt: (prompt: string) => void;
+  setUploadedFiles: (files: File[]) => void;
+  addUploadedFile: (file: File) => void;
+  removeUploadedFile: (index: number) => void;
+  setGuidingPrompts: (prompts: string[]) => void;
+  addGuidingPrompt: () => void;
+  updateGuidingPrompt: (index: number, value: string) => void;
+  removeGuidingPrompt: (index: number) => void;
   setKnowledgeGraphReady: (ready: boolean) => void;
   setKnowledgeArtifact: (artifact: KnowledgeArtifact | null) => void;
   setKnowledgeLoading: (loading: boolean) => void;
@@ -59,7 +74,7 @@ interface AppContextType extends AppState {
   setSimulationRounds: (rounds: number) => void;
   setSimulationComplete: (complete: boolean) => void;
   setSimPosts: (posts: SimPost[]) => void;
-  addChatMessage: (agentId: string, role: 'user' | 'agent', content: string) => void;
+  addChatMessage: (threadId: string, role: 'user' | 'agent', content: string, sourceAgentId?: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -69,13 +84,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     currentStep: 1,
     completedSteps: [],
     sessionId: null,
+    country: 'singapore',
+    useCase: 'policy-review',
     modelProvider: 'ollama',
     modelName: 'qwen3:4b-instruct-2507-q4_K_M',
     embedModelName: 'nomic-embed-text',
     modelApiKey: '',
     modelBaseUrl: 'http://127.0.0.1:11434/v1/',
-    uploadedFile: null,
-    guidingPrompt: '',
+    uploadedFiles: [],
+    guidingPrompts: [''],
     knowledgeGraphReady: false,
     knowledgeArtifact: null,
     knowledgeLoading: false,
@@ -101,13 +118,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     completedSteps: s.completedSteps.includes(step) ? s.completedSteps : [...s.completedSteps, step],
   })), []);
   const setSessionId = useCallback((sessionId: string | null) => setState(s => ({ ...s, sessionId })), []);
+  const setCountry = useCallback((country: string) => setState(s => ({ ...s, country })), []);
+  const setUseCase = useCallback((useCase: string) => setState(s => ({ ...s, useCase })), []);
   const setModelProvider = useCallback((modelProvider: ModelProviderId) => setState(s => ({ ...s, modelProvider })), []);
   const setModelName = useCallback((modelName: string) => setState(s => ({ ...s, modelName })), []);
   const setEmbedModelName = useCallback((embedModelName: string) => setState(s => ({ ...s, embedModelName })), []);
   const setModelApiKey = useCallback((modelApiKey: string) => setState(s => ({ ...s, modelApiKey })), []);
   const setModelBaseUrl = useCallback((modelBaseUrl: string) => setState(s => ({ ...s, modelBaseUrl })), []);
-  const setUploadedFile = useCallback((file: File | null) => setState(s => ({ ...s, uploadedFile: file })), []);
-  const setGuidingPrompt = useCallback((prompt: string) => setState(s => ({ ...s, guidingPrompt: prompt })), []);
+  const setUploadedFiles = useCallback((files: File[]) => setState(s => ({ ...s, uploadedFiles: files })), []);
+  const addUploadedFile = useCallback((file: File) => setState(s => ({ ...s, uploadedFiles: [...s.uploadedFiles, file] })), []);
+  const removeUploadedFile = useCallback((index: number) => setState(s => ({ ...s, uploadedFiles: s.uploadedFiles.filter((_, i) => i !== index) })), []);
+  const setGuidingPrompts = useCallback((prompts: string[]) => setState(s => ({ ...s, guidingPrompts: prompts })), []);
+  const addGuidingPrompt = useCallback(() => setState(s => ({ ...s, guidingPrompts: [...s.guidingPrompts, ''] })), []);
+  const updateGuidingPrompt = useCallback((index: number, value: string) => setState(s => ({
+    ...s,
+    guidingPrompts: s.guidingPrompts.map((p, i) => i === index ? value : p),
+  })), []);
+  const removeGuidingPrompt = useCallback((index: number) => setState(s => ({
+    ...s,
+    guidingPrompts: s.guidingPrompts.filter((_, i) => i !== index),
+  })), []);
   const setKnowledgeGraphReady = useCallback((ready: boolean) => setState(s => ({ ...s, knowledgeGraphReady: ready })), []);
   const setKnowledgeArtifact = useCallback((knowledgeArtifact: KnowledgeArtifact | null) => setState(s => ({ ...s, knowledgeArtifact })), []);
   const setKnowledgeLoading = useCallback((knowledgeLoading: boolean) => setState(s => ({ ...s, knowledgeLoading })), []);
@@ -124,12 +154,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setSimulationRounds = useCallback((rounds: number) => setState(s => ({ ...s, simulationRounds: rounds })), []);
   const setSimulationComplete = useCallback((complete: boolean) => setState(s => ({ ...s, simulationComplete: complete })), []);
   const setSimPosts = useCallback((posts: SimPost[]) => setState(s => ({ ...s, simPosts: posts })), []);
-  const addChatMessage = useCallback((agentId: string, role: 'user' | 'agent', content: string) => {
+  const addChatMessage = useCallback((threadId: string, role: 'user' | 'agent', content: string, sourceAgentId?: string) => {
     setState(s => ({
       ...s,
       chatHistory: {
         ...s.chatHistory,
-        [agentId]: [...(s.chatHistory[agentId] || []), { role, content }],
+        [threadId]: [...(s.chatHistory[threadId] || []), { role, content, agentId: sourceAgentId }],
       },
     }));
   }, []);
@@ -139,13 +169,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentStep,
     completeStep,
     setSessionId,
+    setCountry,
+    setUseCase,
     setModelProvider,
     setModelName,
     setEmbedModelName,
     setModelApiKey,
     setModelBaseUrl,
-    setUploadedFile,
-    setGuidingPrompt,
+    setUploadedFiles,
+    addUploadedFile,
+    removeUploadedFile,
+    setGuidingPrompts,
+    addGuidingPrompt,
+    updateGuidingPrompt,
+    removeGuidingPrompt,
     setKnowledgeGraphReady,
     setKnowledgeArtifact,
     setKnowledgeLoading,
@@ -173,8 +210,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setEmbedModelName,
     setModelApiKey,
     setModelBaseUrl,
-    setUploadedFile,
-    setGuidingPrompt,
+    setUploadedFiles,
+    addUploadedFile,
+    removeUploadedFile,
+    setGuidingPrompts,
+    addGuidingPrompt,
+    updateGuidingPrompt,
+    removeGuidingPrompt,
     setKnowledgeGraphReady,
     setKnowledgeArtifact,
     setKnowledgeLoading,

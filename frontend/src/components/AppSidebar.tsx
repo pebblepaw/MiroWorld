@@ -40,16 +40,17 @@ const steps = [
   { step: 1, title: 'Policy Upload', icon: Upload, path: '/upload' },
   { step: 2, title: 'Agent Config', icon: Users, path: '/agents' },
   { step: 3, title: 'Simulation', icon: MessageSquare, path: '/simulation' },
-  { step: 4, title: 'Analysis', icon: BarChart3, path: '/analysis' },
-  { step: 5, title: 'Agent Chat', icon: Bot, path: '/chat' },
+  { step: 4, title: 'Report', icon: BarChart3, path: '/report' },
+  { step: 5, title: 'Analytics', icon: Bot, path: '/analytics' },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const {
     currentStep,
     completedSteps,
     setCurrentStep,
     sessionId,
+    country,
     modelProvider,
     modelName,
     embedModelName,
@@ -294,13 +295,13 @@ export function AppSidebar() {
       <Sidebar collapsible="icon" className="border-r border-border bg-sidebar">
         <SidebarHeader className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
-              <span className="text-primary font-bold text-sm">S</span>
+            <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 bg-white/10">
+              <span className="text-white font-mono text-sm font-bold">M</span>
             </div>
             {!collapsed && (
               <div>
-                <h1 className="text-foreground font-bold text-lg tracking-wider glow-text bg-clip-text text-transparent bg-gradient-to-r from-primary to-orange-300">McKAInsey</h1>
-                <p className="text-muted-foreground text-[10px] leading-tight">Policy Sentiment Engine</p>
+                <h1 className="text-foreground font-semibold text-base tracking-wide">McKAInsey</h1>
+                <p className="font-mono text-[9px] text-muted-foreground uppercase tracking-[0.2em]">Simulation Engine</p>
               </div>
             )}
           </div>
@@ -308,7 +309,7 @@ export function AppSidebar() {
         <SidebarContent className="pt-4 px-2">
           <SidebarGroup>
             <SidebarGroupContent>
-              <SidebarMenu className="space-y-2">
+              <SidebarMenu className="space-y-1">
                 {steps.map(({ step, title, icon: Icon }) => {
                   const active = currentStep === step;
                   const completed = completedSteps.includes(step);
@@ -318,34 +319,31 @@ export function AppSidebar() {
                     <SidebarMenuItem key={step}>
                       <SidebarMenuButton
                         onClick={() => !locked && setCurrentStep(step)}
-                        className={`relative h-12 transition-all duration-300 rounded-xl overflow-hidden group ${
+                        className={`relative h-10 transition-colors rounded-md overflow-hidden group ${
                           active
-                            ? 'bg-gradient-to-r from-primary/20 to-transparent text-primary border border-primary/30 shadow-[0_0_15px_rgba(255,100,0,0.15)]'
+                            ? 'bg-white/8 text-foreground'
                             : locked
-                            ? 'text-muted-foreground/40 cursor-not-allowed'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5 hover:border-white/10 border border-transparent'
+                            ? 'text-muted-foreground/30 cursor-not-allowed'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-white/4'
                         }`}
                         disabled={locked}
                       >
                         {active && (
-                          <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-primary to-primary/50 shadow-[0_0_10px_rgba(255,100,0,0.5)]" />
-                        )}
-                        {!locked && !active && (
-                          <div className="absolute inset-0 bg-gradient-to-r from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                          <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-white rounded-full" />
                         )}
                         <div className="relative flex items-center justify-center w-5 h-5 z-10">
                           {completed && !active ? (
-                            <Check className="w-4 h-4 text-success" />
+                            <Check className="w-3.5 h-3.5 text-white/60" />
                           ) : locked ? (
-                            <Lock className="w-4 h-4" />
+                            <Lock className="w-3.5 h-3.5" />
                           ) : (
-                            <Icon className={`w-4 h-4 transition-transform duration-300 ${active ? 'scale-110' : 'group-hover:scale-110'}`} />
+                            <Icon className="w-3.5 h-3.5" />
                           )}
                         </div>
                         {!collapsed && (
                           <div className="flex items-center gap-2 ml-1 z-10 relative">
-                            <span className="font-mono text-[10px] opacity-70">{step}/5</span>
-                            <span className="text-sm font-medium">{title}</span>
+                            <span className="font-mono text-[9px] opacity-40">{step}</span>
+                            <span className="text-sm">{title}</span>
                           </div>
                         )}
                       </SidebarMenuButton>
@@ -357,14 +355,21 @@ export function AppSidebar() {
           </SidebarGroup>
         </SidebarContent>
         <SidebarFooter className="p-2 border-t border-border">
+          {!collapsed && (
+            <div className="px-3 pb-2 pt-1 flex items-center justify-between text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+              <span>
+                {country === 'singapore' ? '🇸🇬' : country === 'usa' ? '🇺🇸' : '🌍'} {country} · {modelProvider}
+              </span>
+            </div>
+          )}
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton
-                onClick={() => setSettingsOpen(true)}
-                className="h-11 rounded-xl border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5 hover:border-white/10"
+              <SidebarMenuButton 
+                onClick={onOpenSettings} 
+                tooltip="Configure Platform"
               >
-                <Settings2 className="w-4 h-4" />
-                {!collapsed && <span className="text-sm font-medium">Settings</span>}
+                <Settings2 className="w-4 h-4 text-muted-foreground mr-2" />
+                <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Configure</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

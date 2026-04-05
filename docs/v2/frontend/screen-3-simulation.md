@@ -7,6 +7,16 @@
 
 Two-panel layout. Left: simulation header, config card (rounds + controversy boost), and live post feed. Right: dynamic use-case-specific metrics, activity counters, hottest thread, and elapsed time.
 
+## Current Frontend Delta (2026-04-06)
+
+This is the current UI reality in `frontend/src/pages/Simulation.tsx` before backend re-linking:
+
+1. Generate Report CTA uses standardized green success styling, consistent with other proceed actions.
+2. Time Elapsed panel has reduced vertical density (smaller row floor and tighter internal spacing).
+3. Controversy boost is currently a binary toggle in UI (`off` / `on`) and maps to `0.0` or `0.5` in request payload.
+
+Do not mark checklist items complete yet; backend-linked behavior still needs verification.
+
 ## Layout
 
 ```

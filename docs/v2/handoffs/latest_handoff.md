@@ -1,69 +1,149 @@
 # McKAInsey V2 — Latest Handoff
 
-> **Date**: 2026-04-05
-> **From**: Planning/Orchestrator Agent
-> **To**: Coding Agent
+> Date: 2026-04-06
+> From: Frontend Integration/Polish Agent
+> To: Next Coding Agent (Backend Linking + E2E Validation)
 
-## What Changed
+## Mission Context
 
-### Documentation (Complete)
-- Created full V2 documentation suite in `docs/v2/` (13 documents + index)
-- Archived all V1 docs to `archive/v1/` (BRD, Progress, UserInput, phase files, handoffs)
-- Created Paper MCP mockups for all 6 screens + analytics visualizations (8 artboards)
+Frontend is now in a stable implementation state for Screens 0-5 and ready for backend route integration.
 
-### Design Decisions (All Resolved)
-- **Report layout**: 60/40 split with 3-way view toggle (Report Only / Report+Chat / Chat Only)
-- **Visualizations**: Separate dedicated analytics screen (Screen 5)
-- **Memory**: Graphiti + FalkorDB (local), Neo4j (AWS stretch)
-- **Controversy boost**: 0.0–1.0 slider on `calculate_hot_score`
-- **Token caching**: Gemini context caching (~75% savings)
-- **Config**: All prompts/countries externalized to YAML
-- **Export**: DOCX via `python-docx` server-side
-- **Comment depth**: Top-level only (no nested replies)
-- **Group chat**: Top 5 most influential per stance segment
+This handoff assumes your primary objective is:
 
-## What Is Stable
+1. Link frontend to backend endpoints
+2. Validate end-to-end behavior
+3. Only then mark checklist items complete
 
-- Existing V1 codebase: frontend (React/Vite), backend (FastAPI), OASIS integration
-- Demo mode caching system
-- Provider-aware model routing (Gemini/OpenAI/Ollama)
-- LightRAG document processing pipeline
-- Persona sampling pipeline (needs filter generalization, not rewrite)
+Do not check off any frontend/backend checklist item until integration and E2E tests pass.
 
-## What Is Risky
+## What Changed In This Pass
 
-- **Graphiti integration**: New dependency; FalkorDB Docker image + Graphiti Python client. The existing `memory_service.py` has Zep Cloud calls that need replacement. Keep Zep as env-var fallback.
-- **OASIS `recsys.py` edit**: Modifying a vendored/pip-installed package. May need to fork or patch at import time. Check how OASIS is installed in the project.
-- **Context caching**: Gemini-specific feature. Non-Gemini providers must work without it (graceful degradation).
-- **Dynamic Parquet filters**: Need to handle schema differences between SG and USA datasets cleanly.
+### Frontend UX/Consistency Updates
 
-## What Is Blocked
+1. Standardized step-advance CTA styling (green success treatment) across applicable screens.
+2. Screen 5 demographic sentiment map changed to Screen 2 chunked waffle layout parity.
+3. Screen 5 mini-cell color logic now strictly sentiment-based.
+4. Screen 3 Time Elapsed panel density reduced (less dead vertical space).
+5. Screen 4 group-segment chat responder simulation increased from top 3 to top 5.
 
-- Nothing is blocked. All design decisions are finalized. Implementation can begin immediately.
+### Documentation Updates
 
-## Exact Next Actions
+1. `frontend/README.md` replaced placeholder content with actual implementation map and backend-linking notes.
+2. `docs/v2/frontend/screen-5-analytics.md` rewritten to match real implemented frontend behavior.
+3. `docs/v2/frontend/frontend-final-check-2026-04-06.md` added with screen-by-screen implementation and pending integration notes.
 
-### Start with Phase Q (Foundation)
+## Current Frontend Reality (By Screen)
 
-1. **Read**: `docs/v2/index.md` → `docs/v2/BRD_V2.md` §1 and §5
-2. **Create**: `config/` directory with all YAML files from `docs/v2/backend/config-system.md`
-3. **Create**: `docker-compose.yml` from `docs/v2/infrastructure/docker.md`
-4. **Implement**: `ConfigService` in `backend/src/mckainsey/services/config_service.py`
-5. **Implement**: `TokenTracker` in `backend/src/mckainsey/services/token_tracker.py`
-6. **Implement**: `CachingLLMClient` in `backend/src/mckainsey/services/caching_llm_client.py`
-7. **Fix**: Remove Ollama-or-die from `quick_start.sh` (graceful degradation)
-8. **Add**: `session_id` to all state containers
+### Screen 0
 
-### Then Phase R (Multi-Country) and so on...
+Implemented:
 
-Follow the phase order defined in `BRD_V2.md` §5. Each phase references specific sub-documents.
+1. Onboarding modal state and provider/model/use-case flow
 
-## File Links for Immediate Continuation
+Pending backend link:
 
-| Priority | File | Why |
-|:---------|:-----|:----|
-| 1 | [docs/v2/index.md](../docs/v2/index.md) | Start here — doc map |
-| 2 | [docs/v2/BRD_V2.md](../docs/v2/BRD_V2.md) | Master requirements |
-| 3 | [docs/v2/backend/config-system.md](../docs/v2/backend/config-system.md) | First implementation task |
-| 4 | [docs/v2/infrastructure/docker.md](../docs/v2/infrastructure/docker.md) | Docker setup |
-| 5 | [quick_start.sh](../quick_start.sh) | Fix Ollama startup check |
+1. Countries/providers/session-create live API wiring and persistence verification
+
+### Screen 1
+
+Implemented:
+
+1. Upload shell, guiding prompt editing, force graph rendering, green Proceed CTA
+
+Pending backend link:
+
+1. URL scrape endpoint behavior
+2. Multi-file merged extraction behavior
+
+### Screen 2
+
+Implemented:
+
+1. Sampling controls, cohort explorer waffle groups, map/chart panels, green Proceed CTA
+
+Pending backend link:
+
+1. Dynamic schema-driven filters endpoint
+2. Token estimate endpoint
+
+### Screen 3
+
+Implemented:
+
+1. Simulation UI shell, feed panels, compacted right rail, standardized Generate Report CTA
+
+Pending backend link:
+
+1. Dynamic metric payloads from backend
+2. SSE progress fidelity and status semantics
+
+### Screen 4
+
+Implemented:
+
+1. Report/chat toggle, profile drawer, segmented chat, top-5 group responder behavior
+
+Pending backend link:
+
+1. Report generation payload
+2. DOCX export
+3. Group + 1:1 chat endpoints
+
+### Screen 5
+
+Implemented:
+
+1. Sentiment Dynamics
+2. Demographic Sentiment Map (chunked waffle parity with Screen 2)
+3. KOL & Viral Posts
+
+Pending backend link:
+
+1. Polarization
+2. Opinion flow
+3. Influence
+4. Cascades endpoints
+
+## Critical Files You Should Start With
+
+1. `frontend/src/contexts/AppContext.tsx`
+2. `frontend/src/lib/console-api.ts`
+3. `frontend/src/pages/PolicyUpload.tsx`
+4. `frontend/src/pages/AgentConfig.tsx`
+5. `frontend/src/pages/Simulation.tsx`
+6. `frontend/src/pages/ReportChat.tsx`
+7. `frontend/src/pages/Analytics.tsx`
+8. `docs/v2/frontend/screen-5-analytics.md`
+9. `docs/v2/frontend/frontend-final-check-2026-04-06.md`
+
+## Backend Linking Execution Order (Recommended)
+
+1. Confirm session lifecycle endpoints for onboarding and global context persistence.
+2. Wire Screen 1 extraction + scrape + multi-doc behavior.
+3. Wire Screen 2 dynamic filters and token estimate.
+4. Wire Screen 3 simulation metrics/progress payloads.
+5. Wire Screen 4 report/chat/export endpoints.
+6. Wire Screen 5 analytics endpoints.
+7. Run full journey E2E from Screen 0 to Screen 5 on both demo and live backend modes.
+
+## Validation Requirements Before Any Checklist Tick
+
+1. Frontend compile/build passes.
+2. Backend routes return expected contracts.
+3. No runtime console errors in critical flows.
+4. Visual layout remains stable under real backend payload sizes.
+5. Fallback mode still works when backend is unavailable.
+
+## Risks / Watchouts
+
+1. Existing demo fallback logic can mask route failures if not explicitly tested in live mode.
+2. Some screens currently rely on local constants for analytics/report content.
+3. Ensure response-shape adapters in frontend are strict to avoid silent data drift.
+
+## Done Definition For Next Agent
+
+Only consider the frontend-backend link complete when:
+
+1. All screen docs map to live endpoint behavior.
+2. E2E flow is validated end-to-end.
+3. Checklist items are then marked complete with evidence.
