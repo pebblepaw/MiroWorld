@@ -98,10 +98,12 @@ class SimulationService:
         personas: list[dict[str, Any]],
         events_path: Path | None = None,
         force_live: bool = False,
+        controversy_boost: float = 0.0,
         on_progress: Callable[[Path, int], None] | None = None,
         elapsed_offset_seconds: int = 0,
         tail_checkpoint_estimate_seconds: int = 0,
     ) -> dict[str, Any]:
+        token_usage: dict[str, Any] | None = None
         if force_live or self.settings.enable_real_oasis:
             result = self._run_oasis_with_inputs(
                 simulation_id=simulation_id,
@@ -109,6 +111,7 @@ class SimulationService:
                 rounds=rounds,
                 personas=personas,
                 events_path=events_path,
+                controversy_boost=controversy_boost,
                 on_progress=on_progress,
                 elapsed_offset_seconds=elapsed_offset_seconds,
                 tail_checkpoint_estimate_seconds=tail_checkpoint_estimate_seconds,
@@ -121,6 +124,7 @@ class SimulationService:
             net_opinion_shift = float(result["net_opinion_shift"])
             elapsed_seconds = int(result.get("elapsed_seconds", 0) or 0)
             counters = dict(result.get("counters") or {})
+            token_usage = result.get("token_usage") if isinstance(result.get("token_usage"), dict) else None
         else:
             agents = self._build_agents(personas)
             interactions = []
@@ -140,7 +144,7 @@ class SimulationService:
         self.store.upsert_simulation(simulation_id, policy_summary, rounds, len(agents), runtime=runtime)
         self.store.replace_agents(simulation_id, agents)
         self.store.replace_interactions(simulation_id, interactions)
-        return {
+        payload = {
             "simulation_id": simulation_id,
             "platform": self.settings.simulation_platform,
             "agent_count": len(agents),
@@ -153,6 +157,9 @@ class SimulationService:
             "elapsed_seconds": elapsed_seconds,
             "counters": counters,
         }
+        if token_usage is not None:
+            payload["token_usage"] = token_usage
+        return payload
 
     def build_context_bundles(
         self,
@@ -268,9 +275,12 @@ class SimulationService:
         checkpoint_kind: str,
         policy_summary: str,
         agent_context_bundles: dict[str, dict[str, Any]],
+        checkpoint_questions: list[dict[str, Any]] | None = None,
+        on_token_usage: Callable[[int, int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
         if not agent_context_bundles:
             return []
+        resolved_questions = [item for item in (checkpoint_questions or []) if isinstance(item, dict)]
         batch_size = self._resolve_checkpoint_batch_size(total_agents=len(agent_context_bundles))
         max_attempts = 3
         records: list[dict[str, Any]] = []
@@ -289,6 +299,7 @@ class SimulationService:
                     checkpoint_kind=checkpoint_kind,
                     policy_summary=policy_summary,
                     bundle_chunk=bundle_chunk,
+                    checkpoint_questions=resolved_questions,
                 )
                 response_format = {"type": "json_object"} if self.settings.llm_provider == "ollama" else None
                 try:
@@ -300,6 +311,12 @@ class SimulationService:
                         ),
                         response_format=response_format,
                     )
+                    if on_token_usage is not None:
+                        on_token_usage(
+                            _estimate_tokens(prompt),
+                            _estimate_tokens(raw),
+                            0,
+                        )
                     parsed = _parse_json_payload(raw)
                     if isinstance(parsed, dict):
                         parsed = parsed.get("records")
@@ -311,6 +328,7 @@ class SimulationService:
                         checkpoint_kind=checkpoint_kind,
                         parsed_records=parsed,
                         bundle_chunk=bundle_chunk,
+                        checkpoint_questions=resolved_questions,
                         allow_missing=True,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -354,6 +372,7 @@ class SimulationService:
             rounds=req.rounds,
             personas=personas,
             events_path=None,
+            controversy_boost=0.0,
         )
 
     def _run_oasis_with_inputs(
@@ -364,6 +383,7 @@ class SimulationService:
         rounds: int,
         personas: list[dict[str, Any]],
         events_path: Path | None,
+        controversy_boost: float = 0.0,
         on_progress: Callable[[Path, int], None] | None = None,
         elapsed_offset_seconds: int = 0,
         tail_checkpoint_estimate_seconds: int = 0,
@@ -406,6 +426,7 @@ class SimulationService:
             "policy_summary": policy_summary,
             "rounds": rounds,
             "personas": personas,
+            "controversy_boost": max(0.0, min(1.0, float(controversy_boost))),
             "model_name": self.settings.gemini_model,
             "api_key": provider_key,
             "base_url": self.settings.gemini_openai_base_url,
@@ -510,6 +531,7 @@ class SimulationService:
         checkpoint_kind: str,
         policy_summary: str,
         bundle_chunk: list[dict[str, Any]],
+        checkpoint_questions: list[dict[str, Any]] | None = None,
     ) -> str:
         knowledge_digest = ""
         if bundle_chunk:
@@ -522,15 +544,36 @@ class SimulationService:
             }
             for bundle in bundle_chunk
         ]
+        questions = [item for item in (checkpoint_questions or []) if isinstance(item, dict)]
+        question_block = ""
+        if questions:
+            question_lines: list[str] = []
+            for question in questions:
+                metric_name = str(question.get("metric_name", "")).strip()
+                metric_type = str(question.get("type", "")).strip() or "scale"
+                question_text = str(question.get("question", "")).strip()
+                if not metric_name or not question_text:
+                    continue
+                question_lines.append(
+                    f'- metric_name="{metric_name}" type="{metric_type}" question="{question_text}"'
+                )
+            if question_lines:
+                question_block = (
+                    "\nCheckpoint questions (populate metric_answers for each metric_name):\n"
+                    + "\n".join(question_lines)
+                    + "\n"
+                )
         context_line = f"Shared document context: {knowledge_digest}\n" if knowledge_digest else ""
         return (
             f"Simulation: {simulation_id}\n"
             f"Checkpoint kind: {checkpoint_kind}\n"
             f"Policy summary: {policy_summary}\n"
             f"{context_line}\n"
+            f"{question_block}"
             "For each agent, assess their stance on the policy and return JSON only using this schema:\n"
             "{\"records\":[{\"agent_id\": str, \"stance_score\": number, \"stance_class\": \"approve|neutral|dissent\", "
-            "\"confidence\": number, \"primary_driver\": str, \"matched_context_nodes\": [str]}]}\n\n"
+            "\"confidence\": number, \"primary_driver\": str, \"confirmed_name\": str, "
+            "\"metric_answers\": {metric_name: number|string}, \"matched_context_nodes\": [str]}]}\n\n"
             f"Agents:\n{json.dumps(payload, ensure_ascii=False)}"
         )
 
@@ -541,9 +584,11 @@ class SimulationService:
         checkpoint_kind: str,
         parsed_records: list[dict[str, Any]],
         bundle_chunk: list[dict[str, Any]],
+        checkpoint_questions: list[dict[str, Any]] | None = None,
         allow_missing: bool = False,
     ) -> list[dict[str, Any]]:
         bundle_lookup = {bundle["agent_id"]: bundle for bundle in bundle_chunk}
+        questions = [item for item in (checkpoint_questions or []) if isinstance(item, dict)]
         normalized: list[dict[str, Any]] = []
         for item in parsed_records:
             if not isinstance(item, dict):
@@ -559,6 +604,7 @@ class SimulationService:
                 for value in (item.get("matched_context_nodes") or bundle_lookup[agent_id].get("matched_context_nodes") or [])
                 if str(value).strip()
             ]
+            metric_answers = _normalize_metric_answers(item.get("metric_answers"), questions)
             normalized.append(
                 {
                     "simulation_id": simulation_id,
@@ -568,6 +614,8 @@ class SimulationService:
                     "stance_class": stance_class,
                     "confidence": round(max(0.0, min(1.0, confidence)), 4),
                     "primary_driver": str(item.get("primary_driver", "")).strip() or "unspecified",
+                    "confirmed_name": str(item.get("confirmed_name", "")).strip() or None,
+                    "metric_answers": metric_answers,
                     "matched_context_nodes": matched_nodes,
                 }
             )
@@ -681,6 +729,40 @@ def _tail_file(path: Path, lines: int = 40) -> str:
         return "\n".join(content[-lines:])
     except Exception:  # noqa: BLE001
         return "<unable to read run log>"
+
+
+def _estimate_tokens(text: str) -> int:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return 0
+    return max(1, int(len(normalized) / 4))
+
+
+def _normalize_metric_answers(raw_answers: Any, checkpoint_questions: list[dict[str, Any]]) -> dict[str, Any]:
+    if not isinstance(raw_answers, dict):
+        return {}
+    expected = {
+        str(question.get("metric_name", "")).strip()
+        for question in checkpoint_questions
+        if str(question.get("metric_name", "")).strip()
+    }
+    normalized: dict[str, Any] = {}
+    for key, value in raw_answers.items():
+        metric_name = str(key or "").strip()
+        if not metric_name:
+            continue
+        if expected and metric_name not in expected:
+            continue
+        if isinstance(value, bool):
+            normalized[metric_name] = "yes" if value else "no"
+            continue
+        if isinstance(value, (int, float)):
+            normalized[metric_name] = float(value)
+            continue
+        text = str(value or "").strip()
+        if text:
+            normalized[metric_name] = text
+    return normalized
 
 
 def _persona_seed_opinion(persona: dict[str, Any]) -> float:

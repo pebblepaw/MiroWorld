@@ -1,0 +1,29 @@
+name: "Singapore"
+code: "sg"
+flag_emoji: "🇸🇬"
+dataset_path: "backend/data/nemotron/singapore_nemotron_cc.parquet"
+available: true
+
+filter_fields:
+  - field: "age"
+    type: "range"
+    label: "Age Range"
+    default_min: 20
+    default_max: 65
+  - field: "planning_area"
+    type: "multi-select-chips"
+    label: "Planning Area"
+  - field: "occupation"
+    type: "dropdown"
+    label: "Occupation"
+  - field: "gender"
+    type: "single-select-chips"
+    label: "Gender"
+
+geo_json_path: "config/countries/singapore_geo.json"
+map_center: [1.3521, 103.8198]
+map_zoom: 11
+
+max_agents: 500
+default_agents: 250
+name_regex: "^([A-Z][a-z]+(?:\\s[A-Z][a-z]+){1,3})"

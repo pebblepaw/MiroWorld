@@ -8,7 +8,13 @@ import { useApp } from '@/contexts/AppContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  StructuredReportState, generateReport, getStructuredReport
+  StructuredReportState,
+  exportReportDocx,
+  generateReport,
+  getStructuredReport,
+  sendAgentChatMessage,
+  sendGroupChatMessage,
+  isLiveBootMode,
 } from '@/lib/console-api';
 import { agentResponses, Agent, type SimPost } from '@/data/mockData';
 import { toast } from '@/hooks/use-toast';
@@ -88,6 +94,7 @@ export default function ReportChat() {
     useCase,
     simulationRounds,
   } = useApp();
+  const liveMode = isLiveBootMode();
 
   const [viewMode, setViewMode] = useState<ViewMode>('split');
   const [reportState, setReportState] = useState<StructuredReportState>(EMPTY_REPORT);
@@ -132,6 +139,9 @@ export default function ReportChat() {
 
   // Load demo data if no backend
   useEffect(() => {
+    if (isLiveBootMode()) {
+      return;
+    }
     if (reportState.status === 'idle' && !loading) {
       void loadDemoReport();
     }
@@ -153,12 +163,23 @@ export default function ReportChat() {
       setReportState(polled);
     } catch (error) {
       startedRef.current = null;
-      await loadDemoReport();
-      setReportError(null);
-      toast({
-        title: 'Demo report loaded',
-        description: error instanceof Error ? `${error.message}. Showing cached demo report.` : 'Backend unavailable. Showing cached demo report.',
-      });
+      if (!isLiveBootMode()) {
+        await loadDemoReport();
+        setReportError(null);
+        toast({
+          title: 'Demo report loaded',
+          description: error instanceof Error ? `${error.message}. Showing cached demo report.` : 'Backend unavailable. Showing cached demo report.',
+        });
+      } else {
+        const message = error instanceof Error ? error.message : 'Report generation failed.';
+        setReportState(EMPTY_REPORT);
+        setReportError(message);
+        toast({
+          title: 'Report generation failed',
+          description: message,
+          variant: 'destructive',
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -182,10 +203,28 @@ export default function ReportChat() {
   }, [sessionId, reportState.status]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    chatEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
   }, [chatHistory, selectedAgent]);
 
-  const sendMessage = useCallback(() => {
+  const enqueueDemoGroupReplies = useCallback((threadId: string, responders: Agent[]) => {
+    responders.slice(0, 5).forEach((agent, index) => {
+      window.setTimeout(() => {
+        const responses = agentResponses[agent.sentiment] || agentResponses.neutral;
+        const reply = responses[Math.floor(Math.random() * responses.length)];
+        addChatMessage(threadId, 'agent', reply, agent.id);
+      }, 420 + index * 220 + Math.random() * 300);
+    });
+  }, [addChatMessage]);
+
+  const enqueueDemoOneToOneReply = useCallback((threadId: string, selected: Agent) => {
+    window.setTimeout(() => {
+      const responses = agentResponses[selected.sentiment] || agentResponses.neutral;
+      const reply = responses[Math.floor(Math.random() * responses.length)];
+      addChatMessage(threadId, 'agent', reply, selected.id);
+    }, 520 + Math.random() * 500);
+  }, [addChatMessage]);
+
+  const sendMessage = useCallback(async () => {
     const trimmed = message.trim();
     if (!trimmed) return;
 
@@ -194,34 +233,134 @@ export default function ReportChat() {
       const threadId = selectedAgent.id;
       addChatMessage(threadId, 'user', trimmed, selectedAgent.id);
       setMessage('');
-
-      window.setTimeout(() => {
-        const responses = agentResponses[selectedAgent.sentiment] || agentResponses.neutral;
-        const reply = responses[Math.floor(Math.random() * responses.length)];
-        addChatMessage(threadId, 'agent', reply, selectedAgent.id);
-      }, 520 + Math.random() * 500);
+      if (!sessionId) {
+        enqueueDemoOneToOneReply(threadId, selectedAgent);
+        return;
+      }
+      try {
+        const response = await sendAgentChatMessage(sessionId, {
+          agent_id: selectedAgent.id,
+          message: trimmed,
+        });
+        if (response.responses.length > 0) {
+          response.responses.forEach((entry) => {
+            addChatMessage(threadId, 'agent', entry.content, entry.agent_id ?? selectedAgent.id);
+          });
+          return;
+        }
+        if (liveMode) {
+          toast({
+            title: 'Live chat unavailable',
+            description: 'The backend returned no agent response.',
+            variant: 'destructive',
+          });
+          return;
+        }
+        enqueueDemoOneToOneReply(threadId, selectedAgent);
+      } catch (error) {
+        if (liveMode) {
+          toast({
+            title: 'Live chat unavailable',
+            description: error instanceof Error ? error.message : 'The backend request failed.',
+            variant: 'destructive',
+          });
+          return;
+        }
+        enqueueDemoOneToOneReply(threadId, selectedAgent);
+      }
       return;
     }
 
     const threadId = `group-${chatSegment}`;
     const responders = chatSegment === 'supporters' ? topSupporters : topDissenters;
-    if (!responders.length) return;
+    if (!responders.length) {
+      if (liveMode) {
+        toast({
+          title: 'Live chat unavailable',
+          description: 'No live agents are available for this chat segment.',
+          variant: 'destructive',
+        });
+      }
+      return;
+    }
 
     addChatMessage(threadId, 'user', trimmed);
     setMessage('');
+    if (!sessionId) {
+      enqueueDemoGroupReplies(threadId, responders);
+      return;
+    }
+    try {
+      const response = await sendGroupChatMessage(sessionId, {
+        segment: chatSegment,
+        message: trimmed,
+      });
+      if (response.responses.length > 0) {
+        response.responses.forEach((entry, index) => {
+          addChatMessage(
+            threadId,
+            'agent',
+            entry.content,
+            entry.agent_id ?? responders[index]?.id,
+          );
+        });
+        return;
+      }
+      if (liveMode) {
+        toast({
+          title: 'Live chat unavailable',
+          description: 'The backend returned no agent responses.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      enqueueDemoGroupReplies(threadId, responders);
+    } catch (error) {
+      if (liveMode) {
+        toast({
+          title: 'Live chat unavailable',
+          description: error instanceof Error ? error.message : 'The backend request failed.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      enqueueDemoGroupReplies(threadId, responders);
+    }
+  }, [
+    addChatMessage,
+    chatSegment,
+    enqueueDemoGroupReplies,
+    enqueueDemoOneToOneReply,
+    message,
+    selectedAgent,
+    sessionId,
+    liveMode,
+    topDissenters,
+    topSupporters,
+  ]);
 
-    responders.slice(0, 5).forEach((agent, index) => {
-      window.setTimeout(() => {
-        const responses = agentResponses[agent.sentiment] || agentResponses.neutral;
-        const reply = responses[Math.floor(Math.random() * responses.length)];
-        addChatMessage(threadId, 'agent', reply, agent.id);
-      }, 420 + index * 220 + Math.random() * 300);
-    });
-  }, [addChatMessage, chatSegment, message, selectedAgent, topDissenters, topSupporters]);
-
-  const handleExport = () => {
-    toast({ title: 'Export', description: 'DOCX export coming soon' });
-  };
+  const handleExport = useCallback(async () => {
+    if (!sessionId) {
+      toast({ title: 'Export failed', description: 'No active session found.' });
+      return;
+    }
+    try {
+      const file = await exportReportDocx(sessionId);
+      const url = URL.createObjectURL(file);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `mckainsey-report-${sessionId}.docx`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toast({
+        title: 'Export unavailable',
+        description: error instanceof Error ? error.message : 'Unable to export DOCX right now.',
+      });
+    }
+  }, [sessionId]);
 
   const handleProceed = useCallback(() => {
     completeStep(4);
@@ -258,7 +397,16 @@ export default function ReportChat() {
     setProfileAgent(null);
   }, []);
 
-  const headerAgentCount = agents.length > 0 ? agents.length : 250;
+  const headerAgentCount = agents.length > 0 ? String(agents.length) : (liveMode ? '—' : '250');
+  const initialApproval = liveMode
+    ? getReportMetricDisplay(report, ['initial_approval', 'initial_approval_rate', 'approval_rate'], 'percent')
+    : '65%';
+  const finalApproval = liveMode
+    ? getReportMetricDisplay(report, ['final_approval', 'final_approval_rate'])
+    : '34%';
+  const agentsSimulated = liveMode
+    ? getReportMetricDisplay(report, ['agent_count', 'agents_simulated', 'simulation_agents', 'population_size'], 'count')
+    : '250';
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-background">
@@ -320,11 +468,11 @@ export default function ReportChat() {
                   </p>
                   {/* Quick stats */}
                   <div className="mt-4 pt-4 border-t border-border flex items-center gap-6">
-                    <QuickStat label="Initial Approval" value="65%" color="hsl(var(--data-green))" />
+                    <QuickStat label="Initial Approval" value={initialApproval} color="hsl(var(--data-green))" />
                     <ArrowRight className="w-4 h-4 text-muted-foreground" />
-                    <QuickStat label="Final Approval" value="34%" color="hsl(var(--data-red))" />
+                    <QuickStat label="Final Approval" value={finalApproval} color="hsl(var(--data-red))" />
                     <div className="ml-auto">
-                      <QuickStat label="Agents Simulated" value="250" />
+                      <QuickStat label="Agents Simulated" value={agentsSimulated} />
                     </div>
                   </div>
                 </section>
@@ -558,7 +706,11 @@ export default function ReportChat() {
               <Input
                 value={message}
                 onChange={e => setMessage(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && sendMessage()}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    void sendMessage();
+                  }
+                }}
                 placeholder={
                   chatSegment === 'one-on-one' && selectedAgent
                     ? `Ask ${selectedAgent.name.split(' ')[0]}...`
@@ -567,7 +719,7 @@ export default function ReportChat() {
                 className="bg-card border-border text-sm h-10"
               />
               <Button
-                onClick={sendMessage}
+                onClick={() => void sendMessage()}
                 size="icon"
                 className="h-10 w-10 shrink-0 bg-[hsl(210,100%,56%)] hover:bg-[hsl(210,100%,50%)] text-white border-0"
               >
@@ -836,4 +988,19 @@ function formatUseCase(useCase: string): string {
   if (normalized === 'pmf-discovery') return 'PMF Discovery';
   if (normalized === 'reviews') return 'Reviews';
   return 'Policy Review';
+}
+
+function getReportMetricDisplay(
+  report: StructuredReportState,
+  keys: string[],
+  kind: 'percent' | 'count' = 'percent',
+): string {
+  const payload = report as Record<string, unknown>;
+  for (const key of keys) {
+    const raw = payload[key];
+    const value = typeof raw === 'number' ? raw : Number(raw);
+    if (!Number.isFinite(value)) continue;
+    return kind === 'count' ? `${Math.round(value)}` : `${Number(value).toFixed(1)}%`;
+  }
+  return '—';
 }

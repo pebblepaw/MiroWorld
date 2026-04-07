@@ -4,8 +4,11 @@ import threading
 import time
 import uuid
 import re
+import sqlite3
+import json
 from pathlib import Path
 import random
+from collections import Counter
 from typing import Any
 
 from fastapi import HTTPException
@@ -13,10 +16,12 @@ from fastapi import UploadFile
 
 from mckainsey.config import Settings
 from mckainsey.models.phase_a import PersonaFilterRequest
+from mckainsey.services.config_service import ConfigService
 from mckainsey.services.demo_service import DemoService
 from mckainsey.services.document_parser import extract_document_text
-from mckainsey.services.lightrag_service import LightRAGService
+from mckainsey.services.lightrag_service import LightRAGService, OCCUPATION_NAMES, PLANNING_AREA_NAMES
 from mckainsey.services.memory_service import MemoryService
+from mckainsey.services.metrics_service import MetricsService
 from mckainsey.services.model_provider_service import (
     ensure_ollama_models_available,
     mask_api_key,
@@ -31,6 +36,7 @@ from mckainsey.services.report_service import ReportService
 from mckainsey.services.simulation_service import SimulationService
 from mckainsey.services.simulation_stream_service import SimulationStreamService
 from mckainsey.services.storage import SimulationStore
+from mckainsey.services.token_tracker import TokenTracker
 
 MAX_AFFECTED_GROUPS_CANDIDATES = 1000
 MAX_BASELINE_CANDIDATES = 1200
@@ -50,9 +56,58 @@ class ConsoleService:
         )
         self.streams = SimulationStreamService(settings)
         self.demo = DemoService(settings)
+        self._ensure_session_config_table()
+        self._ensure_session_token_usage_table()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.settings.simulation_db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _ensure_session_config_table(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS session_configs (
+                    session_id TEXT PRIMARY KEY,
+                    country TEXT,
+                    use_case TEXT,
+                    provider TEXT,
+                    model TEXT,
+                    guiding_prompt TEXT,
+                    config_json TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
+    def _ensure_session_token_usage_table(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS session_token_usage (
+                    session_id TEXT PRIMARY KEY,
+                    model TEXT NOT NULL,
+                    total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                    total_output_tokens INTEGER NOT NULL DEFAULT 0,
+                    total_cached_tokens INTEGER NOT NULL DEFAULT 0,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
     def _session_record(self, session_id: str) -> dict[str, Any] | None:
         return self.store.get_console_session(session_id)
+
+    def _session_mode(self, session_id: str) -> str:
+        session = self._session_record(session_id)
+        if not session:
+            return "demo"
+        return str(session.get("mode", "demo")).strip().lower() or "demo"
+
+    def _is_live_session(self, session_id: str) -> bool:
+        return self._session_mode(session_id) == "live"
 
     def _session_model_overrides(self, session: dict[str, Any] | None) -> dict[str, Any]:
         if not session:
@@ -130,6 +185,233 @@ class ConsoleService:
     def model_provider_catalog(self) -> dict[str, Any]:
         return {"providers": provider_catalog(self.settings)}
 
+    def v2_provider_catalog(self) -> list[dict[str, Any]]:
+        provider_name_map = {
+            "google": "gemini",
+            "openai": "openai",
+            "ollama": "ollama",
+        }
+
+        rows: list[dict[str, Any]] = []
+        for provider in self.model_provider_catalog()["providers"]:
+            provider_id = str(provider.get("id", "")).strip().lower()
+            if provider_id not in provider_name_map:
+                continue
+
+            default_model = str(provider.get("default_model") or "").strip()
+            models: list[str] = [default_model] if default_model else []
+            try:
+                listed = self.list_provider_models(provider_id)
+                discovered = [str(item.get("id", "")).strip() for item in listed.get("models", [])]
+                discovered = [item for item in discovered if item]
+                if discovered:
+                    models = discovered
+            except Exception:  # noqa: BLE001
+                # Keep compatibility endpoint resilient when provider discovery
+                # requires credentials or local runtimes are unavailable.
+                pass
+
+            rows.append(
+                {
+                    "name": provider_name_map[provider_id],
+                    "models": models,
+                    "requires_api_key": bool(provider.get("requires_api_key", False)),
+                }
+            )
+        return rows
+
+    def _read_session_config(self, session_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM session_configs WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return {}
+        payload = dict(row)
+        raw_json = payload.get("config_json")
+        if raw_json:
+            try:
+                payload.update(json.loads(str(raw_json)))
+            except Exception:  # noqa: BLE001
+                pass
+        return payload
+
+    def _upsert_session_config(self, session_id: str, config_patch: dict[str, Any]) -> dict[str, Any]:
+        existing = self._read_session_config(session_id)
+        merged = dict(existing)
+        merged.update({key: value for key, value in config_patch.items() if value is not None})
+
+        normalized_provider = normalize_provider(merged.get("provider")) if merged.get("provider") else None
+        provider_for_payload = "gemini" if normalized_provider == "google" else normalized_provider
+        use_case = str(merged.get("use_case") or "").strip().lower() or None
+        country = str(merged.get("country") or "").strip().lower() or None
+        model = str(merged.get("model") or "").strip() or None
+        guiding_prompt = (
+            str(merged.get("guiding_prompt")).strip()
+            if merged.get("guiding_prompt") is not None
+            else None
+        )
+
+        stored_json = {
+            "country": country,
+            "use_case": use_case,
+            "provider": provider_for_payload,
+            "model": model,
+            "guiding_prompt": guiding_prompt,
+        }
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO session_configs(
+                    session_id,
+                    country,
+                    use_case,
+                    provider,
+                    model,
+                    guiding_prompt,
+                    config_json
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    country=excluded.country,
+                    use_case=excluded.use_case,
+                    provider=excluded.provider,
+                    model=excluded.model,
+                    guiding_prompt=excluded.guiding_prompt,
+                    config_json=excluded.config_json,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    session_id,
+                    country,
+                    use_case,
+                    provider_for_payload,
+                    model,
+                    guiding_prompt,
+                    json.dumps(stored_json, ensure_ascii=False),
+                ),
+            )
+
+        return self._read_session_config(session_id)
+
+    def _resolve_guiding_prompt(self, session_id: str, explicit_guiding_prompt: str | None) -> str | None:
+        cleaned = str(explicit_guiding_prompt or "").strip()
+        if cleaned:
+            return cleaned
+
+        session_cfg = self._read_session_config(session_id)
+        use_case = str(session_cfg.get("use_case") or "").strip()
+        if not use_case:
+            return None
+
+        try:
+            use_case_cfg = ConfigService(self.settings).get_use_case(use_case)
+        except Exception:  # noqa: BLE001
+            return None
+        default_prompt = str(use_case_cfg.get("guiding_prompt") or "").strip()
+        return default_prompt or None
+
+    def update_v2_session_config(
+        self,
+        session_id: str,
+        *,
+        country: str | None = None,
+        use_case: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        guiding_prompt: str | None = None,
+    ) -> dict[str, Any]:
+        session = self._session_record(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+        patch: dict[str, Any] = {}
+        config_service = ConfigService(self.settings)
+
+        if country is not None:
+            config_service.get_country(country)
+            patch["country"] = str(country).strip().lower()
+
+        if use_case is not None:
+            use_case_payload = config_service.get_use_case(use_case)
+            patch["use_case"] = str(use_case_payload.get("code", use_case)).strip().lower()
+            if guiding_prompt is None and not self._read_session_config(session_id).get("guiding_prompt"):
+                default_prompt = str(use_case_payload.get("guiding_prompt") or "").strip()
+                if default_prompt:
+                    patch["guiding_prompt"] = default_prompt
+
+        if provider is not None:
+            patch["provider"] = "gemini" if normalize_provider(provider) == "google" else normalize_provider(provider)
+        if model is not None:
+            patch["model"] = str(model).strip()
+        if guiding_prompt is not None:
+            patch["guiding_prompt"] = str(guiding_prompt).strip() or None
+
+        merged_cfg = self._upsert_session_config(session_id, patch)
+
+        if provider is not None or model is not None or api_key is not None:
+            resolved_provider = normalize_provider(provider or session.get("model_provider"))
+            resolved_model = str(model or session.get("model_name") or "").strip()
+            if not resolved_model:
+                resolved_model = self.settings.default_model_for_provider(resolved_provider)
+            self.update_session_model_config(
+                session_id,
+                model_provider=resolved_provider,
+                model_name=resolved_model,
+                api_key=api_key,
+            )
+
+        model_payload = self._session_model_payload(session_id)
+        return {
+            "session_id": session_id,
+            "country": merged_cfg.get("country"),
+            "use_case": merged_cfg.get("use_case"),
+            "provider": "gemini" if model_payload["model_provider"] == "google" else model_payload["model_provider"],
+            "model": model_payload["model_name"],
+            "api_key_configured": bool(model_payload["api_key_configured"]),
+            "guiding_prompt": merged_cfg.get("guiding_prompt"),
+        }
+
+    def create_v2_session(
+        self,
+        *,
+        country: str,
+        use_case: str,
+        provider: str,
+        model: str,
+        api_key: str | None = None,
+        mode: str = "live",
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        config = ConfigService(self.settings)
+        _ = config.get_country(country)
+        _ = config.get_use_case(use_case)
+
+        resolved_provider = normalize_provider(provider)
+        payload = self.create_session(
+            requested_session_id=session_id,
+            mode=mode,
+            model_provider=resolved_provider,
+            model_name=model,
+            api_key=api_key,
+        )
+        use_case_payload = config.get_use_case(use_case)
+        stored_prompt = str(use_case_payload.get("guiding_prompt") or "").strip() or None
+        self._upsert_session_config(
+            payload["session_id"],
+            {
+                "country": str(country).strip().lower(),
+                "use_case": str(use_case_payload.get("code", use_case)).strip().lower(),
+                "provider": "gemini" if resolved_provider == "google" else resolved_provider,
+                "model": model,
+                "guiding_prompt": stored_prompt,
+            },
+        )
+        return {"session_id": payload["session_id"]}
+
     def list_provider_models(
         self,
         provider: str,
@@ -150,6 +432,170 @@ class ConsoleService:
             "provider": normalized,
             "models": models,
         }
+
+    def get_dynamic_filters(self, session_id: str) -> dict[str, Any]:
+        session = self._session_record(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+        session_cfg = self._read_session_config(session_id)
+        country = str(session_cfg.get("country") or "singapore").strip().lower()
+        use_case = str(session_cfg.get("use_case") or "").strip().lower() or None
+        config_service = ConfigService(self.settings)
+        country_cfg = config_service.get_country(country)
+        filter_fields = list(country_cfg.get("filter_fields") or [])
+        live_mode = self._is_live_session(session_id)
+
+        dataset_path = str(country_cfg.get("dataset_path") or "").strip()
+        if not dataset_path:
+            raise HTTPException(status_code=422, detail=f"Country config missing dataset_path for {country}.")
+
+        try:
+            dataset_path = config_service.resolve_dataset_path(dataset_path)
+            schema_rows = self.sampler.infer_filter_schema(
+                dataset_path=dataset_path,
+                filter_fields=filter_fields,
+            )
+        except FileNotFoundError as exc:
+            if live_mode:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Live dynamic filter discovery failed for country '{country}': {exc}",
+                ) from exc
+            schema_rows = self._fallback_dynamic_filters(filter_fields)
+        return {
+            "session_id": session_id,
+            "country": country,
+            "use_case": use_case,
+            "filters": schema_rows,
+        }
+
+    def _fallback_dynamic_filters(self, filter_fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        fallback_rows: list[dict[str, Any]] = []
+        for field_cfg in filter_fields:
+            field_name = str(field_cfg.get("field", "")).strip()
+            filter_type = str(field_cfg.get("type", "")).strip()
+            label = str(field_cfg.get("label", field_name)).strip() or field_name
+            if not field_name or not filter_type:
+                continue
+
+            payload: dict[str, Any] = {
+                "field": field_name,
+                "type": filter_type,
+                "label": label,
+            }
+            if filter_type == "range":
+                if "default_min" in field_cfg:
+                    payload["default_min"] = field_cfg.get("default_min")
+                if "default_max" in field_cfg:
+                    payload["default_max"] = field_cfg.get("default_max")
+                payload["min"] = field_cfg.get("default_min", 0)
+                payload["max"] = field_cfg.get("default_max", 100)
+            else:
+                payload["options"] = self._fallback_filter_options(field_name, field_cfg)
+                if "default" in field_cfg:
+                    payload["default"] = field_cfg.get("default")
+            fallback_rows.append(payload)
+        return fallback_rows
+
+    def _fallback_filter_options(self, field_name: str, field_cfg: dict[str, Any]) -> list[str]:
+        explicit_options = field_cfg.get("options")
+        if isinstance(explicit_options, list) and explicit_options:
+            return [str(option) for option in explicit_options if str(option).strip()]
+
+        normalized = str(field_name).strip().lower()
+        if normalized == "planning_area":
+            return list(PLANNING_AREA_NAMES)
+        if normalized == "occupation":
+            return list(OCCUPATION_NAMES)
+        if normalized in {"sex", "gender"}:
+            return ["Male", "Female"]
+        if normalized == "ethnicity":
+            return ["Asian", "Black", "Hispanic", "White", "Other"]
+        if normalized == "state":
+            return [
+                "California",
+                "Florida",
+                "New York",
+                "Texas",
+            ]
+        return []
+
+    def estimate_token_usage(self, session_id: str, *, agents: int, rounds: int) -> dict[str, Any]:
+        model_payload = self._session_model_payload(session_id)
+        tracker = TokenTracker(model=str(model_payload.get("model_name") or "gemini-2.0-flash"))
+        return tracker.estimate_cost(agent_count=agents, rounds=rounds)
+
+    def record_runtime_token_usage(
+        self,
+        session_id: str,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int = 0,
+    ) -> None:
+        model_payload = self._session_model_payload(session_id)
+        model_name = str(model_payload.get("model_name") or "gemini-2.0-flash")
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT total_input_tokens, total_output_tokens, total_cached_tokens, model
+                FROM session_token_usage
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if row:
+                new_input = int(row["total_input_tokens"]) + max(0, int(input_tokens))
+                new_output = int(row["total_output_tokens"]) + max(0, int(output_tokens))
+                new_cached = int(row["total_cached_tokens"]) + max(0, int(cached_tokens))
+                model_name = str(row["model"] or model_name)
+            else:
+                new_input = max(0, int(input_tokens))
+                new_output = max(0, int(output_tokens))
+                new_cached = max(0, int(cached_tokens))
+
+            conn.execute(
+                """
+                INSERT INTO session_token_usage(
+                    session_id,
+                    model,
+                    total_input_tokens,
+                    total_output_tokens,
+                    total_cached_tokens
+                )
+                VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    model=excluded.model,
+                    total_input_tokens=excluded.total_input_tokens,
+                    total_output_tokens=excluded.total_output_tokens,
+                    total_cached_tokens=excluded.total_cached_tokens,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (session_id, model_name, new_input, new_output, new_cached),
+            )
+
+    def get_runtime_token_usage(self, session_id: str) -> dict[str, Any]:
+        model_payload = self._session_model_payload(session_id)
+        model_name = str(model_payload.get("model_name") or "gemini-2.0-flash")
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT total_input_tokens, total_output_tokens, total_cached_tokens, model
+                FROM session_token_usage
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+
+        tracker = TokenTracker(model=str(row["model"]) if row and row["model"] else model_name)
+        if row:
+            tracker.record(
+                input_tokens=int(row["total_input_tokens"]),
+                output_tokens=int(row["total_output_tokens"]),
+                cached_tokens=int(row["total_cached_tokens"]),
+            )
+        return tracker.get_summary()
 
     def get_session_model_config(self, session_id: str) -> dict[str, Any]:
         return self._session_model_payload(session_id)
@@ -202,6 +648,7 @@ class ConsoleService:
         api_key: str | None = None,
         base_url: str | None = None,
     ) -> dict[str, Any]:
+        session_id = requested_session_id or f"session-{uuid.uuid4().hex[:8]}"
         selection = resolve_model_selection(
             self.settings,
             provider=model_provider,
@@ -211,7 +658,15 @@ class ConsoleService:
             base_url=base_url,
         )
         if selection.provider == "ollama" and mode == "live":
-            ensure_ollama_models_available(self.settings, selection)
+            try:
+                ensure_ollama_models_available(self.settings, selection)
+            except Exception as exc:  # noqa: BLE001
+                detail = self._format_runtime_failure_detail(
+                    session_id,
+                    exc,
+                    action="Session creation",
+                )
+                raise HTTPException(status_code=502, detail=detail) from exc
 
         # If demo mode and demo cache is available, use demo service.
         if mode == "demo" and self.demo.is_demo_available():
@@ -237,7 +692,6 @@ class ConsoleService:
                 "api_key_masked": mask_api_key(selection.api_key),
             }
 
-        session_id = requested_session_id or f"session-{uuid.uuid4().hex[:8]}"
         self.store.upsert_console_session(
             session_id=session_id,
             mode=mode,
@@ -266,6 +720,7 @@ class ConsoleService:
         *,
         document_text: str | None = None,
         source_path: str | None = None,
+        documents: list[dict[str, str | None]] | None = None,
         guiding_prompt: str | None = None,
         demographic_focus: str | None = None,
         use_default_demo_document: bool = False,
@@ -273,30 +728,35 @@ class ConsoleService:
         session = self.store.get_console_session(session_id)
         if not session:
             self.create_session(session_id)
-
-        resolved_source = source_path
-        resolved_text = document_text
-        if use_default_demo_document and not resolved_text:
-            path = Path(self.settings.demo_default_policy_markdown)
-            if not path.exists():
-                alt = Path("..") / self.settings.demo_default_policy_markdown
-                path = alt
-            resolved_source = str(path)
-            resolved_text = path.read_text(encoding="utf-8")
-
-        if not resolved_text:
-            raise HTTPException(status_code=422, detail="document_text or use_default_demo_document is required")
+            session = self.store.get_console_session(session_id)
+        resolved_guiding_prompt = self._resolve_guiding_prompt(session_id, guiding_prompt)
+        live_mode = self._is_live_session(session_id)
+        resolved_documents = self._resolve_knowledge_documents(
+            document_text=document_text,
+            source_path=source_path,
+            documents=documents or [],
+            use_default_demo_document=use_default_demo_document,
+        )
+        if not resolved_documents:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide document_text/documents or set use_default_demo_document=true.",
+            )
 
         runtime_settings = self._runtime_settings_for_session(session_id)
         lightrag = LightRAGService(runtime_settings)
         try:
-            artifact = await lightrag.process_document(
-                simulation_id=session_id,
-                document_text=resolved_text,
-                source_path=resolved_source,
-                guiding_prompt=guiding_prompt,
-                demographic_focus=demographic_focus,
-            )
+            artifacts: list[dict[str, Any]] = []
+            for item in resolved_documents:
+                artifact = await lightrag.process_document(
+                    simulation_id=session_id,
+                    document_text=str(item.get("document_text") or ""),
+                    source_path=str(item.get("source_path")) if item.get("source_path") else None,
+                    guiding_prompt=resolved_guiding_prompt,
+                    demographic_focus=demographic_focus,
+                    live_mode=live_mode,
+                )
+                artifacts.append(artifact)
         except HTTPException:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -307,8 +767,12 @@ class ConsoleService:
             )
             raise HTTPException(status_code=502, detail=detail) from exc
 
-        artifact["session_id"] = session_id
-        artifact["guiding_prompt"] = guiding_prompt
+        artifact = self._merge_knowledge_artifacts(
+            session_id,
+            artifacts=artifacts,
+            guiding_prompt=resolved_guiding_prompt,
+            demographic_focus=demographic_focus,
+        )
         self.store.save_knowledge_artifact(session_id, artifact)
         self.store.upsert_console_session(session_id=session_id, mode=session.get("mode", "demo") if session else "demo", status="knowledge_ready")
         return artifact
@@ -347,6 +811,136 @@ class ConsoleService:
             demographic_focus=demographic_focus,
         )
 
+    def _resolve_knowledge_documents(
+        self,
+        *,
+        document_text: str | None,
+        source_path: str | None,
+        documents: list[dict[str, str | None]],
+        use_default_demo_document: bool,
+    ) -> list[dict[str, str | None]]:
+        resolved: list[dict[str, str | None]] = []
+
+        if document_text:
+            resolved.append(
+                {
+                    "document_text": str(document_text),
+                    "source_path": source_path,
+                }
+            )
+
+        for item in documents:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("document_text") or "").strip()
+            if not text:
+                continue
+            resolved.append(
+                {
+                    "document_text": text,
+                    "source_path": str(item.get("source_path") or "").strip() or None,
+                }
+            )
+
+        if not resolved and use_default_demo_document:
+            path = Path(self.settings.demo_default_policy_markdown)
+            if not path.exists():
+                path = Path("..") / self.settings.demo_default_policy_markdown
+            if path.exists():
+                resolved.append(
+                    {
+                        "document_text": path.read_text(encoding="utf-8"),
+                        "source_path": str(path),
+                    }
+                )
+
+        return resolved
+
+    def _merge_knowledge_artifacts(
+        self,
+        session_id: str,
+        *,
+        artifacts: list[dict[str, Any]],
+        guiding_prompt: str | None,
+        demographic_focus: str | None,
+    ) -> dict[str, Any]:
+        if not artifacts:
+            raise HTTPException(status_code=422, detail="No documents were processed for knowledge extraction.")
+
+        if len(artifacts) == 1:
+            merged = dict(artifacts[0])
+            merged["session_id"] = session_id
+            merged["guiding_prompt"] = guiding_prompt
+            return merged
+
+        summaries: list[str] = []
+        entity_nodes: list[dict[str, Any]] = []
+        relationship_edges: list[dict[str, Any]] = []
+        documents: list[dict[str, Any]] = []
+        processing_logs: list[str] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[tuple[str, str, str, str]] = set()
+
+        for artifact in artifacts:
+            summary = str(artifact.get("summary") or "").strip()
+            if summary:
+                summaries.append(summary)
+
+            doc = dict(artifact.get("document") or {})
+            documents.append(doc)
+
+            for node in artifact.get("entity_nodes", []):
+                if not isinstance(node, dict):
+                    continue
+                node_id = str(node.get("id") or node.get("label") or "").strip().lower()
+                if not node_id or node_id in seen_nodes:
+                    continue
+                seen_nodes.add(node_id)
+                entity_nodes.append(node)
+
+            for edge in artifact.get("relationship_edges", []):
+                if not isinstance(edge, dict):
+                    continue
+                edge_key = (
+                    str(edge.get("source") or "").strip().lower(),
+                    str(edge.get("target") or "").strip().lower(),
+                    str(edge.get("type") or "").strip().lower(),
+                    str(edge.get("label") or "").strip().lower(),
+                )
+                if edge_key in seen_edges:
+                    continue
+                seen_edges.add(edge_key)
+                relationship_edges.append(edge)
+
+            for log_line in artifact.get("processing_logs", []):
+                text = str(log_line).strip()
+                if text:
+                    processing_logs.append(text)
+
+        paragraph_count = sum(int(doc.get("paragraph_count") or 0) for doc in documents)
+        text_length = sum(int(doc.get("text_length") or 0) for doc in documents)
+        entity_type_counts = dict(Counter(str(node.get("type", "unknown")) for node in entity_nodes))
+
+        merged_document = {
+            "document_id": f"merged-{len(documents)}-documents",
+            "source_path": "merged://knowledge-documents",
+            "source_count": len(documents),
+            "sources": documents,
+            "text_length": text_length,
+            "paragraph_count": paragraph_count,
+        }
+        return {
+            "session_id": session_id,
+            "document": merged_document,
+            "summary": "\n\n".join(summaries),
+            "guiding_prompt": guiding_prompt,
+            "entity_nodes": entity_nodes,
+            "relationship_edges": relationship_edges,
+            "entity_type_counts": entity_type_counts,
+            "processing_logs": processing_logs,
+            "demographic_focus_summary": demographic_focus,
+        }
+
     def preview_population(self, session_id: str, request: Any) -> dict[str, Any]:
         knowledge = self.store.get_knowledge_artifact(session_id)
         if not knowledge:
@@ -354,11 +948,13 @@ class ConsoleService:
 
         runtime_settings = self._runtime_settings_for_session(session_id)
         relevance = PersonaRelevanceService(runtime_settings)
+        live_mode = self._is_live_session(session_id)
 
         try:
             parsed_instructions = relevance.parse_sampling_instructions(
                 request.sampling_instructions,
                 knowledge_artifact=knowledge,
+                live_mode=live_mode,
             )
         except HTTPException:
             raise
@@ -392,6 +988,7 @@ class ConsoleService:
             education_levels=merged_filters["education_levels"],
             occupations=merged_filters["occupations"],
             industries=merged_filters["industries"],
+            extra_filters=merged_filters["dynamic_filters"],
         )
         if not personas:
             raise HTTPException(status_code=422, detail="No personas matched the current sampling configuration.")
@@ -408,11 +1005,20 @@ class ConsoleService:
             sample_mode=request.sample_mode,
             seed=effective_seed,
             parsed_sampling_instructions=parsed_instructions,
+            live_mode=live_mode,
         )
         self.store.save_population_artifact(session_id, artifact)
         return artifact
 
-    def start_simulation(self, session_id: str, *, policy_summary: str, rounds: int, mode: str | None = None) -> dict[str, Any]:
+    def start_simulation(
+        self,
+        session_id: str,
+        *,
+        policy_summary: str,
+        rounds: int,
+        controversy_boost: float = 0.0,
+        mode: str | None = None,
+    ) -> dict[str, Any]:
         session = self.store.get_console_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
@@ -476,10 +1082,22 @@ class ConsoleService:
 
         thread = threading.Thread(
             target=self._run_simulation_background,
-            args=(session_id, policy_summary, rounds, sampled_rows, personas, events_path, effective_mode),
+            args=(
+                session_id,
+                policy_summary,
+                rounds,
+                sampled_rows,
+                personas,
+                events_path,
+                effective_mode,
+                max(0.0, min(1.0, float(controversy_boost))),
+            ),
             daemon=True,
         )
         thread.start()
+        return self.streams.get_state(session_id)
+
+    def get_simulation_state(self, session_id: str) -> dict[str, Any]:
         return self.streams.get_state(session_id)
 
     def _is_demo_session(self, session_id: str) -> bool:
@@ -572,6 +1190,242 @@ class ConsoleService:
             "selected_agent": selected,
         }
 
+    def get_v2_report(self, session_id: str) -> dict[str, Any]:
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        report_service = ReportService(runtime_settings)
+        session_cfg = self._read_session_config(session_id)
+        use_case = str(session_cfg.get("use_case") or "").strip() or None
+        return report_service.build_v2_report(session_id, use_case=use_case)
+
+    def export_v2_report_docx(self, session_id: str) -> tuple[str, bytes]:
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        report_service = ReportService(runtime_settings)
+        session_cfg = self._read_session_config(session_id)
+        use_case = str(session_cfg.get("use_case") or "").strip() or None
+        report_payload = report_service.build_v2_report(session_id, use_case=use_case)
+        docx_bytes = report_service.export_v2_report_docx(session_id, report=report_payload, use_case=use_case)
+        return (f"mckainsey-{session_id}-report.docx", docx_bytes)
+
+    def group_chat(self, session_id: str, segment: str, message: str, top_n: int = 5) -> dict[str, Any]:
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        config_service = ConfigService(runtime_settings)
+        metrics = MetricsService(config_service)
+        memory_service = MemoryService(runtime_settings)
+
+        segment_key = self._normalize_group_chat_segment(segment)
+
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            selected = metrics.select_group_chat_agents(
+                agents=self._agents_for_metrics(session_id),
+                interactions=self.store.get_interactions(session_id),
+                segment=segment_key,
+                top_n=max(1, int(top_n)),
+            )
+            if not selected:
+                hub = self.demo.get_interaction_hub(session_id)
+                influential_agents = [
+                    row for row in hub.get("influential_agents", []) if str(row.get("agent_id") or "").strip()
+                ]
+                selected = [
+                    {
+                        "agent_id": str(row.get("agent_id")),
+                        "influence_score": float(row.get("influence_score", 0.0) or 0.0),
+                    }
+                    for row in influential_agents
+                ]
+            if not selected:
+                selected = [
+                    {
+                        "agent_id": str(row.get("agent_id") or ""),
+                        "influence_score": float(row.get("influence_score", 0.0) or 0.0),
+                    }
+                    for row in self._agents_for_metrics(session_id)[: max(1, int(top_n))]
+                ]
+
+            responses: list[dict[str, Any]] = []
+            for row in selected[: max(1, int(top_n))]:
+                agent_id = str(row.get("agent_id") or "")
+                if not agent_id:
+                    continue
+                payload = self.demo.generate_demo_agent_chat(session_id, agent_id, message)
+                response_item = {
+                    "agent_id": agent_id,
+                    "response": payload.get("response", ""),
+                    "influence_score": row.get("influence_score", 0.0),
+                    "memory_used": False,
+                    "zep_context_used": bool(payload.get("zep_context_used", False)),
+                    "graphiti_context_used": False,
+                    "memory_backend": "demo",
+                }
+                responses.append(response_item)
+                self.store.append_interaction_transcript(session_id, "group_chat", "assistant", response_item["response"], agent_id=agent_id)
+
+            self.store.append_interaction_transcript(session_id, "group_chat", "user", message)
+            return {
+                "session_id": session_id,
+                "segment": segment_key,
+                "responses": responses,
+            }
+
+        agents = self._agents_for_metrics(session_id)
+        interactions = self.store.get_interactions(session_id)
+        selected = metrics.select_group_chat_agents(
+            agents=agents,
+            interactions=interactions,
+            segment=segment_key,
+            top_n=max(1, int(top_n)),
+        )
+        if not selected:
+            notice = {
+                "agent_id": "system",
+                "response": f"No agents were classified as {segment_key} in this simulation run.",
+                "influence_score": 0.0,
+                "memory_used": False,
+                "zep_context_used": False,
+                "graphiti_context_used": False,
+                "memory_backend": "system",
+            }
+            self.store.append_interaction_transcript(session_id, "group_chat", "user", message)
+            self.store.append_interaction_transcript(session_id, "group_chat", "assistant", notice["response"], agent_id="system")
+            return {
+                "session_id": session_id,
+                "segment": segment_key,
+                "responses": [notice],
+            }
+
+        responses: list[dict[str, Any]] = []
+        for row in selected:
+            agent_id = str(row.get("agent_id") or "")
+            if not agent_id:
+                continue
+            payload = memory_service.agent_chat_realtime(
+                session_id,
+                agent_id,
+                message,
+                live_mode=self._is_live_session(session_id),
+            )
+            response_item = {
+                "agent_id": agent_id,
+                "response": payload.get("response", ""),
+                "influence_score": row.get("influence_score", 0.0),
+                "memory_used": bool(payload.get("memory_used", False)),
+                "zep_context_used": bool(payload.get("zep_context_used", False)),
+                "graphiti_context_used": bool(payload.get("graphiti_context_used", False)),
+                "memory_backend": payload.get("memory_backend", "local"),
+            }
+            responses.append(response_item)
+            self.store.append_interaction_transcript(session_id, "group_chat", "assistant", response_item["response"], agent_id=agent_id)
+
+        self.store.append_interaction_transcript(session_id, "group_chat", "user", message)
+        return {
+            "session_id": session_id,
+            "segment": segment_key,
+            "responses": responses,
+        }
+
+    def _normalize_group_chat_segment(self, segment: str) -> str:
+        segment_key = str(segment).strip().lower()
+        alias_map = {
+            "supporters": "supporter",
+            "dissenters": "dissenter",
+        }
+        return alias_map.get(segment_key, segment_key)
+
+    def agent_chat_v2(self, session_id: str, agent_id: str, message: str) -> dict[str, Any]:
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            model_payload = self._session_model_payload(session_id)
+            demo_payload = self.demo.generate_demo_agent_chat(session_id, agent_id, message)
+            payload = {
+                **demo_payload,
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "memory_used": False,
+                "model_provider": model_payload["model_provider"],
+                "model_name": model_payload["model_name"],
+                "gemini_model": model_payload["model_name"],
+                "zep_context_used": bool(demo_payload.get("zep_context_used", False)),
+                "graphiti_context_used": False,
+                "memory_backend": "demo",
+            }
+            self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
+            self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)
+            return payload
+
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        memory_service = MemoryService(runtime_settings)
+        payload = memory_service.agent_chat_realtime(
+            session_id,
+            agent_id,
+            message,
+            live_mode=self._is_live_session(session_id),
+        )
+        self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
+        self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)
+        return payload
+
+    def get_analytics_polarization(self, session_id: str) -> dict[str, Any]:
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        config_service = ConfigService(runtime_settings)
+        metrics = MetricsService(config_service)
+        agents = self._agents_for_metrics(session_id)
+        interactions = self.store.get_interactions(session_id)
+        max_round = max((int(item.get("round_no", 0) or 0) for item in interactions), default=0)
+        if max_round <= 0:
+            round_numbers = [1]
+        else:
+            round_numbers = list(range(1, max_round + 1))
+
+        series = []
+        for round_no in round_numbers:
+            metric = metrics.compute_group_polarization(agents, "planning_area")
+            series.append(
+                {
+                    "round": f"R{round_no}",
+                    "polarization_index": metric.get("polarization_index", 0.0),
+                    "severity": metric.get("severity", "low"),
+                    "by_group_means": metric.get("by_group_means", {}),
+                    "group_sizes": metric.get("group_sizes", {}),
+                }
+            )
+        return {"session_id": session_id, "series": series}
+
+    def get_analytics_opinion_flow(self, session_id: str) -> dict[str, Any]:
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        config_service = ConfigService(runtime_settings)
+        metrics = MetricsService(config_service)
+        agents = self._agents_for_metrics(session_id)
+        flow = metrics.compute_opinion_flow(agents)
+        flow["session_id"] = session_id
+        return flow
+
+    def get_analytics_influence(self, session_id: str) -> dict[str, Any]:
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        config_service = ConfigService(runtime_settings)
+        metrics = MetricsService(config_service)
+        interactions = self.store.get_interactions(session_id)
+        payload = metrics.compute_influence(interactions)
+        payload["session_id"] = session_id
+        return payload
+
+    def get_analytics_cascades(self, session_id: str) -> dict[str, Any]:
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        config_service = ConfigService(runtime_settings)
+        metrics = MetricsService(config_service)
+        interactions = self.store.get_interactions(session_id)
+        posts = [
+            row
+            for row in interactions
+            if str(row.get("action_type", "")).lower() in {"create_post", "post_created", "post"}
+        ]
+        comments = [
+            row
+            for row in interactions
+            if "comment" in str(row.get("action_type", "")).lower() or str(row.get("type", "")).lower() == "comment"
+        ]
+        payload = metrics.compute_cascades(posts, comments, self._agents_for_metrics(session_id))
+        payload["session_id"] = session_id
+        return payload
+
     def report_chat(self, session_id: str, message: str) -> dict[str, Any]:
         # Check if demo mode
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
@@ -611,12 +1465,16 @@ class ConsoleService:
             self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)
             return payload
 
-        runtime_settings = self._runtime_settings_for_session(session_id)
-        memory_service = MemoryService(runtime_settings)
-        payload = memory_service.agent_chat_realtime(session_id, agent_id, message)
-        self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
-        self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)
-        return payload
+        return self.agent_chat_v2(session_id, agent_id, message)
+
+    def _agents_for_metrics(self, session_id: str) -> list[dict[str, Any]]:
+        rows = self.store.get_agents(session_id)
+        normalized: list[dict[str, Any]] = []
+        for row in rows:
+            payload = dict(row)
+            payload["id"] = payload.get("id") or payload.get("agent_id")
+            normalized.append(payload)
+        return normalized
 
     def _build_selected_agent_state(
         self,
@@ -656,10 +1514,16 @@ class ConsoleService:
         personas: list[dict[str, Any]],
         events_path: Path,
         mode: str,
+        controversy_boost: float = 0.0,
     ) -> None:
         try:
             runtime_settings = self._runtime_settings_for_session(session_id)
             simulation_service = SimulationService(runtime_settings)
+            config_service = ConfigService(runtime_settings)
+            use_case = self._session_use_case(session_id)
+            checkpoint_questions = self._checkpoint_questions_for_use_case(config_service, use_case)
+            personality_modifiers = self._personality_modifiers_for_use_case(config_service, use_case)
+            metrics_service = MetricsService(config_service)
             knowledge = self.store.get_knowledge_artifact(session_id) or {}
             context_bundles = simulation_service.build_context_bundles(
                 simulation_id=session_id,
@@ -667,6 +1531,17 @@ class ConsoleService:
                 knowledge_artifact=knowledge,
                 sampled_personas=sampled_rows,
             )
+
+            def _record_tokens(input_tokens: int, output_tokens: int, cached_tokens: int = 0) -> None:
+                if input_tokens <= 0 and output_tokens <= 0 and cached_tokens <= 0:
+                    return
+                self.record_runtime_token_usage(
+                    session_id,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cached_tokens=cached_tokens,
+                )
+
             checkpoint_estimate = self._estimate_checkpoint_runtime(
                 agent_count=len(sampled_rows),
                 provider=runtime_settings.llm_provider,
@@ -692,8 +1567,19 @@ class ConsoleService:
                 checkpoint_kind="baseline",
                 policy_summary=policy_summary,
                 agent_context_bundles=context_bundles,
+                checkpoint_questions=checkpoint_questions,
+                on_token_usage=_record_tokens,
             )
             baseline_elapsed = max(1, int(time.monotonic() - baseline_started_at))
+            baseline_metrics = metrics_service.compute_dynamic_metrics(
+                self._agents_for_dynamic_metrics(baseline),
+                use_case,
+                round_no=0,
+            )
+            baseline_metrics_payload = self._flatten_dynamic_metrics_payload(
+                baseline_metrics,
+                round_label="Round 0 (100%)",
+            )
             self.store.replace_checkpoint_records(session_id, "baseline", baseline)
             self.streams.append_events(
                 session_id,
@@ -715,11 +1601,17 @@ class ConsoleService:
                         "counters": {"posts": 0, "comments": 0, "reactions": 0, "active_authors": 0},
                         "discussion_momentum": {"approval_delta": 0.0, "dominant_stance": "mixed"},
                         "top_threads": [],
-                        "metrics": {"checkpoint": "baseline"},
+                        "metrics": baseline_metrics_payload,
+                        **baseline_metrics_payload,
                     },
                 ],
             )
-            enriched_personas = self._enrich_personas_for_simulation(personas, sampled_rows, context_bundles)
+            enriched_personas = self._enrich_personas_for_simulation(
+                personas,
+                sampled_rows,
+                context_bundles,
+                personality_modifiers=personality_modifiers,
+            )
 
             def _ingest_progress(path: Path, elapsed: int) -> None:
                 del elapsed
@@ -732,10 +1624,18 @@ class ConsoleService:
                 personas=enriched_personas,
                 events_path=events_path,
                 force_live=(mode == "live"),
+                controversy_boost=controversy_boost,
                 on_progress=_ingest_progress,
                 elapsed_offset_seconds=baseline_elapsed,
                 tail_checkpoint_estimate_seconds=checkpoint_estimate,
             )
+            token_usage_payload = simulation_result.get("token_usage")
+            if isinstance(token_usage_payload, dict):
+                _record_tokens(
+                    int(token_usage_payload.get("input_tokens", 0) or 0),
+                    int(token_usage_payload.get("output_tokens", 0) or 0),
+                    int(token_usage_payload.get("cached_tokens", 0) or 0),
+                )
             self.streams.ingest_events_incremental(session_id, events_path)
             final_bundles = self._build_final_checkpoint_bundles(session_id, context_bundles)
             final_started_at = time.monotonic()
@@ -755,11 +1655,22 @@ class ConsoleService:
                 checkpoint_kind="final",
                 policy_summary=policy_summary,
                 agent_context_bundles=final_bundles,
+                checkpoint_questions=checkpoint_questions,
+                on_token_usage=_record_tokens,
             )
             final_elapsed = max(1, int(time.monotonic() - final_started_at))
             total_elapsed = int(simulation_result.get("elapsed_seconds", 0) or 0) + final_elapsed
             final_counters = dict(simulation_result.get("counters") or {})
             current_state = self.streams.get_state(session_id)
+            final_metrics = metrics_service.compute_dynamic_metrics(
+                self._agents_for_dynamic_metrics(final),
+                use_case,
+                round_no=rounds,
+            )
+            final_metrics_payload = self._flatten_dynamic_metrics_payload(
+                final_metrics,
+                round_label=f"Round {rounds} (100%)",
+            )
             self.store.replace_checkpoint_records(session_id, "final", final)
             self.streams.append_events(
                 session_id,
@@ -781,7 +1692,8 @@ class ConsoleService:
                         "counters": final_counters or {"posts": 0, "comments": 0, "reactions": 0, "active_authors": 0},
                         "discussion_momentum": current_state.get("discussion_momentum", {"approval_delta": 0.0, "dominant_stance": "mixed"}),
                         "top_threads": current_state.get("top_threads", []),
-                        "metrics": {"checkpoint": "final"},
+                        "metrics": final_metrics_payload,
+                        **final_metrics_payload,
                     },
                     {
                         "event_type": "run_completed",
@@ -820,7 +1732,8 @@ class ConsoleService:
         try:
             runtime_settings = self._runtime_settings_for_session(session_id)
             report_service = ReportService(runtime_settings)
-            payload = report_service.generate_structured_report(session_id)
+            use_case = self._session_use_case(session_id)
+            payload = report_service.generate_structured_report(session_id, use_case=use_case)
             self.store.save_report_state(session_id, payload)
         except Exception as exc:  # noqa: BLE001
             failed = self._empty_report_state(session_id, status="failed")
@@ -853,6 +1766,11 @@ class ConsoleService:
         if min_age is not None and max_age is not None and min_age > max_age:
             raise HTTPException(status_code=422, detail="Sampling constraints are contradictory: min_age exceeds max_age.")
 
+        dynamic_filters = self._merge_dynamic_filters(
+            request_dynamic_filters=getattr(request, "dynamic_filters", {}) or {},
+            hard_filters=hard_filters,
+        )
+
         return {
             "min_age": min_age,
             "max_age": max_age,
@@ -862,6 +1780,7 @@ class ConsoleService:
             "education_levels": self._merge_unique_values([], hard_filters.get("education_level", [])),
             "occupations": self._merge_unique_values([], hard_filters.get("occupation", [])),
             "industries": self._merge_unique_values([], hard_filters.get("industry", [])),
+            "dynamic_filters": dynamic_filters,
         }
 
     def _merge_unique_values(self, primary: list[str], secondary: list[str], *, title_case: bool = False) -> list[str]:
@@ -880,6 +1799,65 @@ class ConsoleService:
             seen.add(slug)
             merged.append(value)
         return merged
+
+    def _merge_dynamic_filters(
+        self,
+        *,
+        request_dynamic_filters: dict[str, Any],
+        hard_filters: dict[str, Any],
+    ) -> dict[str, Any]:
+        supported_keys = {
+            "min_age",
+            "max_age",
+            "age_cohort",
+            "planning_area",
+            "sex",
+            "marital_status",
+            "education_level",
+            "occupation",
+            "industry",
+        }
+        merged: dict[str, Any] = {}
+
+        for key, value in (request_dynamic_filters or {}).items():
+            clean_key = str(key or "").strip()
+            if not clean_key or clean_key in supported_keys:
+                continue
+            normalized = self._normalize_dynamic_filter_value(value)
+            if normalized is not None:
+                merged[clean_key] = normalized
+
+        for key, value in (hard_filters or {}).items():
+            clean_key = str(key or "").strip()
+            if not clean_key or clean_key in supported_keys:
+                continue
+            normalized = self._normalize_dynamic_filter_value(value)
+            if normalized is None:
+                continue
+            if clean_key not in merged:
+                merged[clean_key] = normalized
+                continue
+            existing = merged[clean_key]
+            if isinstance(existing, list) and isinstance(normalized, list):
+                for item in normalized:
+                    if item not in existing:
+                        existing.append(item)
+        return merged
+
+    def _normalize_dynamic_filter_value(self, value: Any) -> list[str] | str | dict[str, Any] | None:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            normalized: dict[str, Any] = {}
+            for key in ("min", "max"):
+                if value.get(key) is not None:
+                    normalized[key] = value.get(key)
+            return normalized or None
+        if isinstance(value, list):
+            values = [str(item).strip() for item in value if str(item).strip()]
+            return values or None
+        scalar = str(value).strip()
+        return scalar or None
 
     def _age_bounds_for_cohort(self, cohort: str) -> tuple[int, int] | None:
         normalized = str(cohort).strip().lower()
@@ -926,6 +1904,66 @@ class ConsoleService:
             return max(45, int(agent_count * 6.8) + 20)
         return max(10, int(agent_count * 0.06) + 6)
 
+    def _session_use_case(self, session_id: str) -> str:
+        session_cfg = self._read_session_config(session_id)
+        use_case = str(session_cfg.get("use_case") or "").strip().lower()
+        return use_case or "policy-review"
+
+    def _checkpoint_questions_for_use_case(self, config_service: ConfigService, use_case: str) -> list[dict[str, Any]]:
+        try:
+            raw_questions = config_service.get_checkpoint_questions(use_case)
+        except Exception:  # noqa: BLE001
+            return []
+        if not isinstance(raw_questions, list):
+            return []
+        return [item for item in raw_questions if isinstance(item, dict)]
+
+    def _personality_modifiers_for_use_case(self, config_service: ConfigService, use_case: str) -> list[str]:
+        try:
+            raw_modifiers = config_service.get_agent_personality_modifiers(use_case)
+        except Exception:  # noqa: BLE001
+            return []
+        if not isinstance(raw_modifiers, list):
+            return []
+        return [str(item).strip() for item in raw_modifiers if str(item).strip()]
+
+    def _agents_for_dynamic_metrics(self, checkpoint_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        agents: list[dict[str, Any]] = []
+        for record in checkpoint_records:
+            if not isinstance(record, dict):
+                continue
+            row: dict[str, Any] = {}
+            metric_answers = record.get("metric_answers", {})
+            if isinstance(metric_answers, dict):
+                for metric_name, value in metric_answers.items():
+                    clean_name = str(metric_name or "").strip()
+                    if not clean_name:
+                        continue
+                    row[f"checkpoint_{clean_name}"] = value
+            if not row:
+                # Backward-compat fallback for legacy checkpoint output.
+                row["checkpoint_approval_rate"] = 1 + (float(record.get("stance_score", 0.5) or 0.5) * 9)
+                row["checkpoint_net_sentiment"] = row["checkpoint_approval_rate"]
+            agents.append(row)
+        return agents
+
+    def _flatten_dynamic_metrics_payload(
+        self,
+        dynamic_metrics: dict[str, Any],
+        *,
+        round_label: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for metric_name, value in (dynamic_metrics or {}).items():
+            if not isinstance(value, dict):
+                continue
+            payload[metric_name] = value.get("value")
+            payload[f"{metric_name}_meta"] = value
+        if round_label:
+            payload["round_progress_label"] = round_label
+            payload["round_progress"] = {"label": round_label}
+        return payload
+
     def _empty_report_state(self, session_id: str, *, status: str) -> dict[str, Any]:
         return {
             "session_id": session_id,
@@ -946,8 +1984,14 @@ class ConsoleService:
         personas: list[dict[str, Any]],
         sampled_rows: list[dict[str, Any]],
         context_bundles: dict[str, dict[str, Any]],
+        *,
+        personality_modifiers: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         enriched: list[dict[str, Any]] = []
+        modifiers = [str(item).strip() for item in (personality_modifiers or []) if str(item).strip()]
+        modifier_suffix = ""
+        if modifiers:
+            modifier_suffix = " Personality modifiers: " + " ".join(f"- {item}" for item in modifiers)
         by_agent = {str(row.get("agent_id")): row for row in sampled_rows}
         for persona in personas:
             agent_id = str(persona.get("agent_id", "")).strip()
@@ -955,7 +1999,8 @@ class ConsoleService:
             reason = dict(row.get("selection_reason") or {})
             bundle = context_bundles.get(agent_id, {})
             enriched_persona = dict(persona)
-            enriched_persona["mckainsey_context"] = bundle.get("brief")
+            brief = str(bundle.get("brief") or "").strip()
+            enriched_persona["mckainsey_context"] = f"{brief}{modifier_suffix}".strip()
             enriched_persona["mckainsey_matched_context_nodes"] = bundle.get("matched_context_nodes", [])
             enriched_persona["mckainsey_relevance_score"] = reason.get("score") or reason.get("selection_score") or 0.0
             enriched.append(enriched_persona)

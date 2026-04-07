@@ -68,11 +68,13 @@ Two side-by-side cards:
 - **Supporting Views** (green header): Top arguments in favor
 - **Dissenting Views** (red header): Top arguments against
 - Each view is a bullet point pulled from actual agent posts
+[#NEW User Input: this wouldn't make sense for the other use cases e.g. finding product market fit. Let's just remove it.]
 
 ### 5. Additional Report Sections
 - **Demographic Breakdown**: Approval/score by demographic group
 - **Key Recommendations**: LLM-generated action items based on simulation results
 - **Methodology**: How the simulation was configured (agents, rounds, controversy boost, model)
+[#NEW User Input to frontend agent: This is actually already in Screen 5 Analytics, as the grid, so maybe we can safely remove this from this Screen]
 
 ## Chat Panel
 
@@ -161,17 +163,17 @@ This matches the "Screen 6 — Full Page Chat (Option C)" mockup.
 ### Tests
 
 **Frontend**:
-- [ ] View toggle switches between 3 modes correctly
-- [ ] Report scrolls independently from chat
-- [ ] Chat messages display with correct alignment and styling
-- [ ] Segment tabs switch chat groups
-- [ ] Agent click opens side panel with correct data
-- [ ] DOCX export triggers file download
-- [ ] Report sections correspond to guiding prompts
+- [x] View toggle switches between 3 modes correctly
+- [x] Report scrolls independently from chat
+- [x] Chat messages display with correct alignment and styling
+- [x] Segment tabs switch chat groups
+- [x] Agent click opens side panel with correct data
+- [x] DOCX export triggers file download
+- [x] Report sections correspond to guiding prompts
 
 **Backend**:
-- [ ] ReportAgent generates plan before metrics
-- [ ] Report sections map to guiding prompt questions
-- [ ] Group chat returns responses from top-N agents in segment
-- [ ] 1:1 chat maintains agent persona context
-- [ ] DOCX export includes all sections and is valid .docx
+- [x] ReportAgent generates plan before metrics
+- [x] Report sections map to guiding prompt questions
+- [x] Group chat returns responses from top-N agents in segment
+- [x] 1:1 chat maintains agent persona context
+- [x] DOCX export includes all sections and is valid .docx

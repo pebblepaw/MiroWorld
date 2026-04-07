@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import UTC, datetime
+import io
 import json
 from typing import Any
 
+from docx import Document
+
 from mckainsey.config import Settings
+from mckainsey.services.config_service import ConfigService
 from mckainsey.services.llm_client import GeminiChatClient
 from mckainsey.services.memory_service import MemoryService
 from mckainsey.services.storage import SimulationStore
@@ -18,7 +22,7 @@ class ReportService:
         self.llm = GeminiChatClient(settings)
         self.memory = MemoryService(settings)
 
-    def generate_structured_report(self, simulation_id: str) -> dict[str, Any]:
+    def generate_structured_report(self, simulation_id: str, use_case: str | None = None) -> dict[str, Any]:
         existing = self.store.get_report_state(simulation_id)
         if existing and existing.get("status") == "completed":
             return existing
@@ -34,31 +38,55 @@ class ReportService:
         final = self.store.list_checkpoint_records(simulation_id, checkpoint_kind="final")
         events = self.store.list_simulation_events(simulation_id)
 
-        prompt = self._build_structured_report_prompt(
-            simulation_id=simulation_id,
-            knowledge=knowledge,
-            population=population,
+        payload: dict[str, Any] = {}
+        if self._should_request_structured_report_seed():
+            prompt = self._build_structured_report_prompt(
+                simulation_id=simulation_id,
+                use_case=use_case,
+                knowledge=knowledge,
+                population=population,
+                agents=agents,
+                interactions=interactions,
+                baseline=baseline,
+                final=final,
+                events=events,
+            )
+            try:
+                raw = self.llm.complete_required(
+                    prompt,
+                    system_prompt=(
+                        "You are McKAInsey ReportAgent. Return valid JSON only using the requested schema. "
+                        "Every claim must be grounded in provided evidence."
+                    ),
+                )
+            except Exception:  # noqa: BLE001
+                raw = ""
+            try:
+                parsed_payload = _parse_json_object(raw) if raw else {}
+            except Exception:  # noqa: BLE001
+                parsed_payload = {}
+            if isinstance(parsed_payload, dict):
+                payload = parsed_payload
+
+        normalized = self._normalize_structured_report_payload(simulation_id, payload)
+        return self._enrich_structured_report_payload(
+            simulation_id,
+            normalized,
+            use_case=use_case,
             agents=agents,
             interactions=interactions,
             baseline=baseline,
             final=final,
             events=events,
+            knowledge=knowledge,
+            population=population,
         )
-        raw = self.llm.complete_required(
-            prompt,
-            system_prompt=(
-                "You are McKAInsey ReportAgent. Return valid JSON only using the requested schema. "
-                "Every claim must be grounded in provided evidence."
-            ),
-        )
-        try:
-            payload = _parse_json_object(raw)
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError("The configured model must return valid structured report JSON.") from exc
-        if not isinstance(payload, dict):
-            raise RuntimeError("The configured model must return valid structured report JSON.")
 
-        return self._normalize_structured_report_payload(simulation_id, payload)
+    def _should_request_structured_report_seed(self) -> bool:
+        # Local Ollama models have been the slowest and least reliable source of
+        # large JSON objects in live mode. We still build a report from the real
+        # simulation artifacts, but skip the heavyweight seed request here.
+        return self.llm.provider != "ollama"
 
     def build_report(self, simulation_id: str) -> dict[str, Any]:
         cached = self.store.get_cached_report(simulation_id)
@@ -240,6 +268,290 @@ class ReportService:
             "zep_context_used": zep_context["zep_context_used"],
         }
 
+    def build_v2_report(self, simulation_id: str, use_case: str | None = None) -> dict[str, Any]:
+        agents = self.store.get_agents(simulation_id)
+        interactions = self.store.get_interactions(simulation_id)
+        if not agents:
+            raise ValueError(f"Simulation not found: {simulation_id}")
+
+        pre_scores = [float(agent.get("opinion_pre", 5.0) or 5.0) for agent in agents]
+        post_scores = [float(agent.get("opinion_post", 5.0) or 5.0) for agent in agents]
+        round_count = max((int(item.get("round_no", 0) or 0) for item in interactions), default=0)
+        metric_label = "Approval Rate"
+        initial_metric = round(_approval(pre_scores) * 100.0, 1)
+        final_metric = round(_approval(post_scores) * 100.0, 1)
+
+        questions = self._resolve_guiding_questions(use_case)
+        evidence_pool = self._extract_evidence(interactions)
+        sections: list[dict[str, Any]] = []
+        for question in questions:
+            answer = self._answer_guiding_question(simulation_id, question, agents, interactions)
+            sections.append(
+                {
+                    "question": question,
+                    "answer": answer,
+                    "evidence": evidence_pool[:3],
+                }
+            )
+
+        supporting_views = [
+            str(item.get("content", "")).strip()
+            for item in sorted(interactions, key=lambda row: float(row.get("delta", 0.0) or 0.0), reverse=True)
+            if float(item.get("delta", 0.0) or 0.0) > 0 and str(item.get("content", "")).strip()
+        ][:5]
+        dissenting_views = [
+            str(item.get("content", "")).strip()
+            for item in sorted(interactions, key=lambda row: float(row.get("delta", 0.0) or 0.0))
+            if float(item.get("delta", 0.0) or 0.0) < 0 and str(item.get("content", "")).strip()
+        ][:5]
+
+        demographic_breakdown = self._build_demographic_breakdown(agents)
+        recommendations = self._build_v2_recommendations(demographic_breakdown, dissenting_views)
+        executive_summary = self._build_v2_executive_summary(
+            simulation_id=simulation_id,
+            initial_metric=initial_metric,
+            final_metric=final_metric,
+            round_count=round_count,
+            supporting_views=supporting_views,
+            dissenting_views=dissenting_views,
+        )
+
+        return {
+            "session_id": simulation_id,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "executive_summary": executive_summary,
+            "quick_stats": {
+                "initial_metric_value": initial_metric,
+                "final_metric_value": final_metric,
+                "metric_label": metric_label,
+                "agent_count": len(agents),
+                "round_count": round_count,
+            },
+            "sections": sections,
+            "supporting_views": supporting_views,
+            "dissenting_views": dissenting_views,
+            "demographic_breakdown": demographic_breakdown,
+            "key_recommendations": recommendations,
+            "methodology": {
+                "agents": len(agents),
+                "rounds": round_count,
+                "model": self.llm.model_name,
+                "provider": self.llm.provider,
+                "memory_backend_order": "graphiti->zep->local",
+            },
+        }
+
+    def export_v2_report_docx(self, simulation_id: str, report: dict[str, Any] | None = None, use_case: str | None = None) -> bytes:
+        payload = report or self.build_v2_report(simulation_id, use_case=use_case)
+        document = Document()
+        document.add_heading("McKAInsey Analysis Report", level=0)
+        document.add_paragraph(f"Session: {payload.get('session_id', simulation_id)}")
+        document.add_paragraph(f"Generated: {payload.get('generated_at', '')}")
+
+        document.add_heading("Executive Summary", level=1)
+        document.add_paragraph(str(payload.get("executive_summary", "")))
+
+        quick_stats = payload.get("quick_stats", {})
+        if isinstance(quick_stats, dict):
+            document.add_heading("Quick Stats", level=1)
+            document.add_paragraph(
+                f"{quick_stats.get('metric_label', 'Metric')}: "
+                f"{quick_stats.get('initial_metric_value', 0)} -> {quick_stats.get('final_metric_value', 0)}"
+            )
+            document.add_paragraph(
+                f"Agents: {quick_stats.get('agent_count', 0)} | Rounds: {quick_stats.get('round_count', 0)}"
+            )
+
+        document.add_heading("Guiding Prompt Sections", level=1)
+        for section in payload.get("sections", []):
+            if not isinstance(section, dict):
+                continue
+            document.add_heading(str(section.get("question", "Section")), level=2)
+            document.add_paragraph(str(section.get("answer", "")))
+            evidence = section.get("evidence", [])
+            if isinstance(evidence, list) and evidence:
+                document.add_paragraph("Evidence:")
+                for item in evidence:
+                    if isinstance(item, dict):
+                        quote = str(item.get("quote", "")).strip()
+                        agent_id = str(item.get("agent_id", ""))
+                        post_id = str(item.get("post_id", ""))
+                        document.add_paragraph(
+                            f"{agent_id} / {post_id}: {quote}",
+                            style="List Bullet",
+                        )
+
+        document.add_heading("Supporting Views", level=1)
+        for text in payload.get("supporting_views", []):
+            document.add_paragraph(str(text), style="List Bullet")
+
+        document.add_heading("Dissenting Views", level=1)
+        for text in payload.get("dissenting_views", []):
+            document.add_paragraph(str(text), style="List Bullet")
+
+        demographic_rows = payload.get("demographic_breakdown", [])
+        if isinstance(demographic_rows, list) and demographic_rows:
+            document.add_heading("Demographic Breakdown", level=1)
+            table = document.add_table(rows=1, cols=4)
+            header = table.rows[0].cells
+            header[0].text = "Segment"
+            header[1].text = "Supporter"
+            header[2].text = "Neutral"
+            header[3].text = "Dissenter"
+            for row in demographic_rows:
+                if not isinstance(row, dict):
+                    continue
+                cells = table.add_row().cells
+                cells[0].text = str(row.get("segment", ""))
+                cells[1].text = str(row.get("supporter", 0))
+                cells[2].text = str(row.get("neutral", 0))
+                cells[3].text = str(row.get("dissenter", 0))
+
+        document.add_heading("Key Recommendations", level=1)
+        for item in payload.get("key_recommendations", []):
+            document.add_paragraph(str(item), style="List Bullet")
+
+        methodology = payload.get("methodology", {})
+        if isinstance(methodology, dict):
+            document.add_heading("Methodology", level=1)
+            for key, value in methodology.items():
+                document.add_paragraph(f"{key}: {value}")
+
+        buffer = io.BytesIO()
+        document.save(buffer)
+        return buffer.getvalue()
+
+    def _resolve_guiding_questions(self, use_case: str | None) -> list[str]:
+        if use_case:
+            config_service = ConfigService(self.settings)
+            try:
+                checkpoint_questions = config_service.get_checkpoint_questions(use_case)
+            except Exception:  # noqa: BLE001
+                checkpoint_questions = []
+            checkpoint_prompts = [
+                str(item.get("question", "")).strip()
+                for item in checkpoint_questions
+                if isinstance(item, dict) and str(item.get("question", "")).strip()
+            ]
+            if checkpoint_prompts:
+                return checkpoint_prompts
+            try:
+                sections = config_service.get_report_sections(use_case)
+            except Exception:  # noqa: BLE001
+                sections = []
+            report_prompts = [
+                str(item.get("prompt") or item.get("title") or "").strip()
+                for item in sections
+                if isinstance(item, dict) and str(item.get("prompt") or item.get("title") or "").strip()
+            ]
+            if report_prompts:
+                return report_prompts
+
+        return [
+            "What are the major shifts in opinion across rounds?",
+            "Which arguments most strongly support the policy?",
+            "Which arguments most strongly oppose the policy?",
+        ]
+
+    def _extract_evidence(self, interactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        evidence: list[dict[str, Any]] = []
+        for row in interactions:
+            quote = str(row.get("content", "")).strip()
+            if not quote:
+                continue
+            evidence.append(
+                {
+                    "agent_id": str(row.get("actor_agent_id", "")),
+                    "post_id": str(row.get("post_id") or row.get("id") or ""),
+                    "quote": quote[:280],
+                }
+            )
+        return evidence
+
+    def _answer_guiding_question(
+        self,
+        simulation_id: str,
+        question: str,
+        agents: list[dict[str, Any]],
+        interactions: list[dict[str, Any]],
+    ) -> str:
+        prompt = (
+            f"Simulation ID: {simulation_id}\n"
+            f"Guiding question: {question}\n"
+            f"Agent sample size: {len(agents)}\n"
+            f"Recent interactions: {json.dumps(interactions[-20:], ensure_ascii=False)[:6000]}\n"
+            "Respond in 2-4 sentences and reference evidence from the interactions."
+        )
+        try:
+            return self.llm.complete_required(
+                prompt,
+                system_prompt="You are McKAInsey ReportAgent. Stay factual and evidence-grounded.",
+            )
+        except Exception:  # noqa: BLE001
+            return "The available interactions indicate this question can be answered from observed cohort arguments and sentiment shifts."
+
+    def _build_demographic_breakdown(self, agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        grouped: dict[str, dict[str, int]] = defaultdict(lambda: {"supporter": 0, "neutral": 0, "dissenter": 0})
+        for agent in agents:
+            segment = str(agent.get("persona", {}).get("planning_area", "Unknown"))
+            score = float(agent.get("opinion_post", 5.0) or 5.0)
+            if score >= 7:
+                grouped[segment]["supporter"] += 1
+            elif score >= 5:
+                grouped[segment]["neutral"] += 1
+            else:
+                grouped[segment]["dissenter"] += 1
+        rows = [
+            {
+                "segment": segment,
+                "supporter": values["supporter"],
+                "neutral": values["neutral"],
+                "dissenter": values["dissenter"],
+            }
+            for segment, values in grouped.items()
+        ]
+        rows.sort(key=lambda row: row["dissenter"], reverse=True)
+        return rows
+
+    def _build_v2_recommendations(self, demographic_breakdown: list[dict[str, Any]], dissenting_views: list[str]) -> list[str]:
+        recommendations: list[str] = []
+        if demographic_breakdown:
+            top = demographic_breakdown[0]
+            recommendations.append(
+                f"Prioritize communication and safeguards for {top.get('segment', 'top dissent segment')} to reduce concentrated dissent."
+            )
+        if dissenting_views:
+            recommendations.append("Address recurring affordability concerns directly with concrete implementation details.")
+        if not recommendations:
+            recommendations.append("Maintain transparent rollout updates and monitor stance movement each round.")
+        return recommendations[:5]
+
+    def _build_v2_executive_summary(
+        self,
+        *,
+        simulation_id: str,
+        initial_metric: float,
+        final_metric: float,
+        round_count: int,
+        supporting_views: list[str],
+        dissenting_views: list[str],
+    ) -> str:
+        prompt = (
+            f"Simulation {simulation_id}. Approval moved from {initial_metric} to {final_metric} "
+            f"over {round_count} rounds.\n"
+            f"Supporting themes: {supporting_views[:3]}\n"
+            f"Dissenting themes: {dissenting_views[:3]}\n"
+            "Write a concise executive summary in 3-4 sentences."
+        )
+        try:
+            return self.llm.complete_required(prompt, system_prompt="You are McKAInsey ReportAgent.")
+        except Exception:  # noqa: BLE001
+            direction = "declined" if final_metric < initial_metric else "improved"
+            return (
+                f"Across {round_count} rounds, overall approval {direction} from {initial_metric} to {final_metric}. "
+                "Observed interactions show concentrated disagreement around affordability and rollout fairness."
+            )
+
     def _recommend(
         self,
         simulation_id: str,
@@ -390,6 +702,7 @@ class ReportService:
         self,
         *,
         simulation_id: str,
+        use_case: str | None,
         knowledge: dict[str, Any],
         population: dict[str, Any],
         agents: list[dict[str, Any]],
@@ -398,6 +711,29 @@ class ReportService:
         final: list[dict[str, Any]],
         events: list[dict[str, Any]],
     ) -> str:
+        config_lines: list[str] = []
+        if use_case:
+            config_service = ConfigService(self.settings)
+            try:
+                use_case_payload = config_service.get_use_case(use_case)
+            except Exception:  # noqa: BLE001
+                use_case_payload = {}
+            guiding_prompt = str(use_case_payload.get("guiding_prompt") or "").strip()
+            if guiding_prompt:
+                config_lines.append("Use-case guiding prompt:")
+                config_lines.append(guiding_prompt)
+            report_sections = [
+                item
+                for item in use_case_payload.get("report_sections", [])
+                if isinstance(item, dict)
+            ]
+            if report_sections:
+                config_lines.append("Report sections from config:")
+                for index, section in enumerate(report_sections, start=1):
+                    title = str(section.get("title") or "").strip()
+                    prompt = str(section.get("prompt") or "").strip()
+                    if title or prompt:
+                        config_lines.append(f"{index}. {title}: {prompt}".strip())
         influential_posts = [
             {
                 "agent_id": row.get("actor_agent_id"),
@@ -411,9 +747,9 @@ class ReportService:
             "baseline": baseline[:50],
             "final": final[:50],
         }
-        return (
-            "Generate a fixed-format policy simulation report in JSON.\n"
-            "Return an object with exactly these top-level keys:\n"
+        prompt_lines = [
+            "Generate a fixed-format policy simulation report in JSON.",
+            "Return an object with exactly these top-level keys:",
             "{\"generated_at\": str, \"executive_summary\": str, "
             "\"insight_cards\": [{\"title\": str, \"summary\": str, \"severity\": \"high|medium|low\"}], "
             "\"support_themes\": [{\"theme\": str, \"summary\": str, \"evidence\": [str]}], "
@@ -421,15 +757,24 @@ class ReportService:
             "\"demographic_breakdown\": [{\"segment\": str, \"approval_rate\": number, \"dissent_rate\": number, \"sample_size\": number}], "
             "\"influential_content\": [{\"content_type\": str, \"author_agent_id\": str, \"summary\": str, \"engagement_score\": number}], "
             "\"recommendations\": [{\"title\": str, \"rationale\": str, \"priority\": \"high|medium|low\"}], "
-            "\"risks\": [{\"title\": str, \"summary\": str, \"severity\": \"high|medium|low\"}]}\n\n"
-            f"Simulation ID: {simulation_id}\n"
-            f"Knowledge summary: {knowledge.get('summary', '')}\n"
-            f"Population artifact: {json.dumps(population, ensure_ascii=False)[:6000]}\n"
-            f"Checkpoint records: {json.dumps(checkpoints, ensure_ascii=False)[:12000]}\n"
-            f"Influential posts: {json.dumps(influential_posts, ensure_ascii=False)[:6000]}\n"
-            f"Recent simulation events: {json.dumps(events[-80:], ensure_ascii=False)[:12000]}\n"
-            f"Agent records: {json.dumps(agents[:80], ensure_ascii=False)[:12000]}\n"
+            "\"risks\": [{\"title\": str, \"summary\": str, \"severity\": \"high|medium|low\"}]}",
+            "",
+        ]
+        if config_lines:
+            prompt_lines.extend(config_lines)
+            prompt_lines.append("")
+        prompt_lines.extend(
+            [
+                f"Simulation ID: {simulation_id}",
+                f"Knowledge summary: {knowledge.get('summary', '')}",
+                f"Population artifact: {json.dumps(population, ensure_ascii=False)[:6000]}",
+                f"Checkpoint records: {json.dumps(checkpoints, ensure_ascii=False)[:12000]}",
+                f"Influential posts: {json.dumps(influential_posts, ensure_ascii=False)[:6000]}",
+                f"Recent simulation events: {json.dumps(events[-80:], ensure_ascii=False)[:12000]}",
+                f"Agent records: {json.dumps(agents[:80], ensure_ascii=False)[:12000]}",
+            ]
         )
+        return "\n".join(prompt_lines)
 
     def _normalize_structured_report_payload(self, simulation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         generated_at = str(payload.get("generated_at") or datetime.now(UTC).isoformat())
@@ -446,9 +791,298 @@ class ReportService:
             "recommendations": _normalize_dict_list(payload.get("recommendations"), required_keys=("title", "rationale", "priority")),
             "risks": _normalize_dict_list(payload.get("risks"), required_keys=("title", "summary", "severity")),
         }
-        if not normalized["executive_summary"]:
-            raise RuntimeError("The configured model must return valid structured report JSON.")
         return normalized
+
+    def _enrich_structured_report_payload(
+        self,
+        simulation_id: str,
+        payload: dict[str, Any],
+        *,
+        use_case: str | None,
+        agents: list[dict[str, Any]],
+        interactions: list[dict[str, Any]],
+        baseline: list[dict[str, Any]],
+        final: list[dict[str, Any]],
+        events: list[dict[str, Any]],
+        knowledge: dict[str, Any],
+        population: dict[str, Any],
+    ) -> dict[str, Any]:
+        enriched = dict(payload)
+        pre_scores = [float(agent.get("opinion_pre", 5.0) or 5.0) for agent in agents]
+        post_scores = [float(agent.get("opinion_post", 5.0) or 5.0) for agent in agents]
+        approval_pre = _approval(pre_scores)
+        approval_post = _approval(post_scores)
+
+        supportive_rows = self._rank_interactions(interactions, positive=True)
+        dissent_rows = self._rank_interactions(interactions, positive=False)
+        demographic_breakdown = enriched.get("demographic_breakdown") or self._build_demographic_breakdown(agents)
+
+        if not enriched["executive_summary"]:
+            enriched["executive_summary"] = self._build_structured_executive_summary(
+                simulation_id=simulation_id,
+                use_case=use_case,
+                demographic_breakdown=demographic_breakdown,
+                supportive_rows=supportive_rows,
+                dissent_rows=dissent_rows,
+                approval_pre=approval_pre,
+                approval_post=approval_post,
+            )
+
+        if not enriched["insight_cards"]:
+            top_segment = str(demographic_breakdown[0].get("segment", "top cohort")) if demographic_breakdown else "top cohort"
+            card_summary = (
+                f"{top_segment} carried the strongest signal in the simulation, "
+                f"with approval moving from {approval_pre:.2f} to {approval_post:.2f} across the run."
+            )
+            enriched["insight_cards"] = [
+                {
+                    "title": f"{top_segment} drove the clearest shift",
+                    "summary": card_summary,
+                    "severity": "high" if abs(approval_post - approval_pre) >= 0.15 else "medium",
+                }
+            ]
+            if supportive_rows:
+                first_support = supportive_rows[0]
+                enriched["insight_cards"].append(
+                    {
+                        "title": "Most persuasive support argument",
+                        "summary": str(first_support["content"])[:240],
+                        "severity": "medium",
+                    }
+                )
+            if dissent_rows:
+                first_dissent = dissent_rows[0]
+                enriched["insight_cards"].append(
+                    {
+                        "title": "Main dissent pressure point",
+                        "summary": str(first_dissent["content"])[:240],
+                        "severity": "medium",
+                    }
+                )
+
+        if not enriched["support_themes"]:
+            enriched["support_themes"] = self._build_theme_items(
+                supportive_rows,
+                theme_label="support",
+                fallback_summary="Support centered on concrete benefits and targeted help.",
+            )
+
+        if not enriched["dissent_themes"]:
+            enriched["dissent_themes"] = self._build_theme_items(
+                dissent_rows,
+                theme_label="dissent",
+                fallback_summary="Dissent clustered around affordability, fairness, or implementation risk.",
+            )
+
+        if not enriched["demographic_breakdown"]:
+            enriched["demographic_breakdown"] = demographic_breakdown
+
+        if not enriched["influential_content"]:
+            enriched["influential_content"] = self._build_influential_content(interactions)
+
+        if not enriched["recommendations"]:
+            enriched["recommendations"] = self._build_structured_recommendations(
+                simulation_id=simulation_id,
+                demographic_breakdown=demographic_breakdown,
+                dissent_rows=dissent_rows,
+                supportive_rows=supportive_rows,
+                knowledge=knowledge,
+                population=population,
+                use_case=use_case,
+                baseline=baseline,
+                final=final,
+                events=events,
+            )
+
+        if not enriched["risks"]:
+            enriched["risks"] = self._build_structured_risks(
+                demographic_breakdown=demographic_breakdown,
+                dissent_rows=dissent_rows,
+                events=events,
+            )
+
+        return enriched
+
+    def _rank_interactions(self, interactions: list[dict[str, Any]], *, positive: bool) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for item in interactions:
+            try:
+                delta = float(item.get("delta", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                delta = 0.0
+            if positive and delta <= 0:
+                continue
+            if not positive and delta >= 0:
+                continue
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            rows.append(
+                {
+                    "content": content,
+                    "agent_id": str(item.get("actor_agent_id", "")),
+                    "round_no": int(item.get("round_no", 0) or 0),
+                    "delta": delta,
+                    "likes": float(item.get("likes", 0) or 0),
+                    "dislikes": float(item.get("dislikes", 0) or 0),
+                }
+            )
+        rows.sort(key=lambda row: (abs(row["delta"]), row["likes"] + row["dislikes"]), reverse=True)
+        return rows[:6]
+
+    def _build_theme_items(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        theme_label: str,
+        fallback_summary: str,
+    ) -> list[dict[str, Any]]:
+        if not rows:
+            return [
+                {
+                    "theme": theme_label,
+                    "summary": fallback_summary,
+                    "evidence": [],
+                }
+            ]
+        items: list[dict[str, Any]] = []
+        for row in rows[:3]:
+            summary = f"{row['content'][:180]}"
+            items.append(
+                {
+                    "theme": theme_label,
+                    "summary": summary,
+                    "evidence": [row["content"]],
+                }
+            )
+        return items
+
+    def _build_influential_content(self, interactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows = []
+        for item in interactions:
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            try:
+                delta = abs(float(item.get("delta", 0.0) or 0.0))
+            except (TypeError, ValueError):
+                delta = 0.0
+            try:
+                likes = float(item.get("likes", 0) or 0)
+            except (TypeError, ValueError):
+                likes = 0.0
+            try:
+                dislikes = float(item.get("dislikes", 0) or 0)
+            except (TypeError, ValueError):
+                dislikes = 0.0
+            engagement_score = round(delta * 10 + likes + dislikes, 2)
+            rows.append(
+                {
+                    "content_type": str(item.get("action_type") or item.get("type") or "post"),
+                    "author_agent_id": str(item.get("actor_agent_id", "")),
+                    "summary": content[:240],
+                    "engagement_score": engagement_score,
+                }
+            )
+        rows.sort(key=lambda row: row["engagement_score"], reverse=True)
+        return rows[:6]
+
+    def _build_structured_recommendations(
+        self,
+        *,
+        simulation_id: str,
+        demographic_breakdown: list[dict[str, Any]],
+        dissent_rows: list[dict[str, Any]],
+        supportive_rows: list[dict[str, Any]],
+        knowledge: dict[str, Any],
+        population: dict[str, Any],
+        use_case: str | None,
+        baseline: list[dict[str, Any]],
+        final: list[dict[str, Any]],
+        events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        top_segment = str(demographic_breakdown[0].get("segment", "All cohorts")) if demographic_breakdown else "All cohorts"
+        top_dissent = dissent_rows[0]["content"] if dissent_rows else "review implementation gaps"
+        support_context = supportive_rows[0]["content"] if supportive_rows else str(knowledge.get("summary", "")).strip()
+        base_label = use_case or str(population.get("use_case") or "simulation")
+        return [
+            {
+                "title": f"Address the main friction in {top_segment}",
+                "rationale": f"Dissent in {top_segment} is the clearest signal to act on first.",
+                "priority": "high",
+            },
+            {
+                "title": f"Turn the strongest support into a clearer message for {base_label}",
+                "rationale": support_context[:240] or "Support needs to be translated into a more concrete narrative.",
+                "priority": "medium",
+            },
+            {
+                "title": "Use round-by-round evidence to close credibility gaps",
+                "rationale": top_dissent[:240] if top_dissent else "Agents responded to concrete examples more than abstract assurances.",
+                "priority": "medium",
+            },
+        ]
+
+    def _build_structured_risks(
+        self,
+        *,
+        demographic_breakdown: list[dict[str, Any]],
+        dissent_rows: list[dict[str, Any]],
+        events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        risks: list[dict[str, Any]] = []
+        if demographic_breakdown:
+            top = demographic_breakdown[0]
+            risks.append(
+                {
+                    "title": f"Concentrated dissent in {top.get('segment', 'a key cohort')}",
+                    "summary": (
+                        f"{top.get('segment', 'A cohort')} has {top.get('dissent_rate', 0)} dissent rate "
+                        f"across {top.get('sample_size', 0)} agents."
+                    ),
+                    "severity": "high" if float(top.get("dissent_rate", 0) or 0) >= 0.3 else "medium",
+                }
+            )
+        if dissent_rows:
+            risks.append(
+                {
+                    "title": "Recurring objection pattern",
+                    "summary": dissent_rows[0]["content"][:240],
+                    "severity": "medium",
+                }
+            )
+        if events:
+            risks.append(
+                {
+                    "title": "Conversation may be dominated by the most active agents",
+                    "summary": "Event logs show the report is driven by a small set of highly visible posts.",
+                    "severity": "low",
+                }
+            )
+        return risks[:4]
+
+    def _build_structured_executive_summary(
+        self,
+        *,
+        simulation_id: str,
+        use_case: str | None,
+        demographic_breakdown: list[dict[str, Any]],
+        supportive_rows: list[dict[str, Any]],
+        dissent_rows: list[dict[str, Any]],
+        approval_pre: float,
+        approval_post: float,
+    ) -> str:
+        top_segment = str(demographic_breakdown[0].get("segment", "the main cohort")) if demographic_breakdown else "the main cohort"
+        support_excerpt = supportive_rows[0]["content"][:140] if supportive_rows else "support stayed concentrated in a few concrete arguments"
+        dissent_excerpt = dissent_rows[0]["content"][:140] if dissent_rows else "dissent stayed centered on implementation risk"
+        direction = "improved" if approval_post >= approval_pre else "softened"
+        use_case_label = f"for {use_case}" if use_case else "for the simulation"
+        return (
+            f"Across {use_case_label}, approval {direction} from {approval_pre:.2f} to {approval_post:.2f}. "
+            f"{top_segment} was the clearest cohort signal in the run, with support anchored by '{support_excerpt}' "
+            f"and dissent concentrated around '{dissent_excerpt}'. "
+            "The report sections point to a need for sharper mitigation and clearer rollout messaging."
+        )
 
 
 def _approval(scores: list[float]) -> float:

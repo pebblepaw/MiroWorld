@@ -71,6 +71,7 @@ class ConsoleProviderModelsResponse(BaseModel):
 class ConsoleKnowledgeProcessRequest(BaseModel):
     document_text: str | None = None
     source_path: str | None = None
+    documents: list[dict[str, str | None]] = Field(default_factory=list)
     guiding_prompt: str | None = None
     demographic_focus: str | None = None
     use_default_demo_document: bool = False
@@ -98,6 +99,7 @@ class PopulationPreviewRequest(BaseModel):
     min_age: int | None = Field(default=None, ge=0, le=120)
     max_age: int | None = Field(default=None, ge=0, le=120)
     planning_areas: list[str] = Field(default_factory=list)
+    dynamic_filters: dict[str, Any] = Field(default_factory=dict)
 
 
 class PopulationArtifactResponse(BaseModel):
@@ -117,6 +119,14 @@ class PopulationArtifactResponse(BaseModel):
 class SimulationStartRequest(BaseModel):
     policy_summary: str
     rounds: int = Field(default=10, ge=1, le=30)
+    controversy_boost: float = Field(default=0.0, ge=0.0, le=1.0)
+    mode: Literal["demo", "live"] | None = None
+
+
+class SimulationQuickStartRequest(BaseModel):
+    policy_summary: str | None = None
+    rounds: int = Field(default=10, ge=1, le=30)
+    controversy_boost: float = Field(default=0.0, ge=0.0, le=1.0)
     mode: Literal["demo", "live"] | None = None
 
 
@@ -201,3 +211,180 @@ class ConsoleAgentChatResponse(BaseModel):
     model_name: str
     gemini_model: str | None = None
     zep_context_used: bool
+
+
+class V2ReportResponse(BaseModel):
+    session_id: str
+    generated_at: str | None = None
+    executive_summary: str | None = None
+    quick_stats: dict[str, Any] = Field(default_factory=dict)
+    sections: list[dict[str, Any]] = Field(default_factory=list)
+    supporting_views: list[str] = Field(default_factory=list)
+    dissenting_views: list[str] = Field(default_factory=list)
+    demographic_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    key_recommendations: list[str] = Field(default_factory=list)
+    methodology: dict[str, Any] = Field(default_factory=dict)
+
+
+class V2GroupChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segment: Literal["supporter", "neutral", "dissenter", "engaged"]
+    message: str = Field(min_length=3)
+    top_n: int = Field(default=5, ge=1, le=20)
+
+
+class V2GroupChatResponse(BaseModel):
+    session_id: str
+    segment: str
+    responses: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class V2AgentChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=3)
+
+
+class V2AgentChatResponse(BaseModel):
+    session_id: str
+    agent_id: str
+    response: str
+    memory_used: bool
+    model_provider: str
+    model_name: str
+    gemini_model: str | None = None
+    zep_context_used: bool = False
+    graphiti_context_used: bool = False
+    memory_backend: str | None = None
+
+
+class V2PolarizationResponse(BaseModel):
+    session_id: str
+    series: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class V2OpinionFlowResponse(BaseModel):
+    session_id: str
+    initial: dict[str, int] = Field(default_factory=dict)
+    final: dict[str, int] = Field(default_factory=dict)
+    flows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class V2InfluenceResponse(BaseModel):
+    session_id: str
+    top_influencers: list[dict[str, Any]] = Field(default_factory=list)
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    total_nodes: int = 0
+    total_edges: int = 0
+
+
+class V2CascadeResponse(BaseModel):
+    session_id: str
+    post_id: str | None = None
+    tree_size: int = 0
+    total_engagement: int = 0
+    mean_opinion_delta: float = 0.0
+    engaged_agents: list[str] = Field(default_factory=list)
+
+
+class V2CountryResponse(BaseModel):
+    name: str
+    code: str
+    flag_emoji: str
+    dataset_path: str
+    available: bool = True
+
+
+class V2ProviderResponse(BaseModel):
+    name: Literal["gemini", "openai", "ollama"]
+    models: list[str] = Field(default_factory=list)
+    requires_api_key: bool
+
+
+class V2SessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    country: str
+    provider: Literal["gemini", "google", "openai", "ollama"]
+    model: str
+    api_key: str | None = None
+    use_case: str
+    mode: Literal["demo", "live"] = "live"
+    session_id: str | None = None
+
+
+class V2SessionCreateResponse(BaseModel):
+    session_id: str
+
+
+class V2SessionConfigPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    country: str | None = None
+    use_case: str | None = None
+    provider: Literal["gemini", "google", "openai", "ollama"] | None = None
+    model: str | None = None
+    api_key: str | None = None
+    guiding_prompt: str | None = None
+
+
+class V2SessionConfigResponse(BaseModel):
+    session_id: str
+    country: str | None = None
+    use_case: str | None = None
+    provider: Literal["gemini", "google", "openai", "ollama"] | None = None
+    model: str | None = None
+    api_key_configured: bool = False
+    guiding_prompt: str | None = None
+
+
+class ConsoleScrapeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+
+
+class ConsoleScrapeResponse(BaseModel):
+    url: str
+    title: str
+    text: str
+    length: int
+
+
+class ConsoleDynamicFilterFieldResponse(BaseModel):
+    field: str
+    type: str
+    label: str
+    options: list[str] = Field(default_factory=list)
+    min: int | float | None = None
+    max: int | float | None = None
+    default_min: int | float | None = None
+    default_max: int | float | None = None
+    default: str | list[str] | None = None
+
+
+class ConsoleDynamicFiltersResponse(BaseModel):
+    session_id: str
+    country: str
+    use_case: str | None = None
+    filters: list[ConsoleDynamicFilterFieldResponse] = Field(default_factory=list)
+
+
+class TokenUsageEstimateResponse(BaseModel):
+    with_caching_usd: float
+    without_caching_usd: float
+    savings_pct: float
+    model: str
+
+
+class TokenUsageRuntimeResponse(BaseModel):
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cached_tokens: int
+    estimated_cost_usd: float
+    cost_without_caching_usd: float
+    caching_savings_usd: float
+    caching_savings_pct: float
+    model: str

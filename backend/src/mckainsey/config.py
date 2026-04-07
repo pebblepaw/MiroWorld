@@ -86,6 +86,8 @@ class Settings(BaseSettings):
     datagov_api_key: str | None = None
     planning_area_dataset_id: str = "d_4765db0e87b9c86336792efe8a1f7a66"
     planning_area_geojson_cache_path: str = "data/geo/planning_area_boundaries.geojson"
+    config_countries_dir: str = "../config/countries"
+    config_prompts_dir: str = "../config/prompts"
 
     frontend_dist_path: str = "../frontend/dist"
     console_demo_output_path: str = "data/demo-output.json"
@@ -125,6 +127,8 @@ class Settings(BaseSettings):
             "oasis_db_dir",
             "oasis_run_log_dir",
             "planning_area_geojson_cache_path",
+            "config_countries_dir",
+            "config_prompts_dir",
             "frontend_dist_path",
             "console_demo_output_path",
             "console_demo_frontend_output_path",

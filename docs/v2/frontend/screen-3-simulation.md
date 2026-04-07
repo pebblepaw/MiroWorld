@@ -146,18 +146,18 @@ See [docs/v2/backend/controversy-boost.md](../backend/controversy-boost.md) for 
 ### Tests
 
 **Frontend**:
-- [ ] Config card displays rounds slider and controversy slider
-- [ ] Controversy tooltip renders on hover/click
-- [ ] Feed shows posts with dislikes column
-- [ ] Progress shows "Round X (Y%)" during simulation
-- [ ] Dynamic metrics update after each checkpoint
-- [ ] Metric tooltips explain heuristics correctly
-- [ ] Page fits 100vh without zoom
-- [ ] Feed scrolls independently from right panel
+- [x] Config card displays rounds slider and controversy slider
+- [x] Controversy tooltip renders on hover/click
+- [x] Feed shows posts with dislikes column
+- [x] Progress shows "Round X (Y%)" during simulation
+- [x] Dynamic metrics update after each checkpoint
+- [x] Metric tooltips explain heuristics correctly
+- [x] Page fits 100vh without zoom
+- [x] Feed scrolls independently from right panel
 
 **Backend**:
-- [ ] `controversy_boost=0.0` produces identical scores to original algorithm
-- [ ] `controversy_boost=1.0` correctly boosts controversial posts
-- [ ] Checkpoint interview extracts numeric scores
-- [ ] Name verification parses confirmed names
-- [ ] Metrics aggregation computes correctly
+- [x] `controversy_boost=0.0` produces identical scores to original algorithm
+- [x] `controversy_boost=1.0` correctly boosts controversial posts
+- [x] Checkpoint interview extracts numeric scores
+- [x] Name verification parses confirmed names
+- [x] Metrics aggregation computes correctly

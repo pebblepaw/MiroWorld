@@ -1,0 +1,38 @@
+name: "Policy Review"
+code: "policy-review"
+description: "Evaluate public sentiment toward a government policy."
+
+guiding_prompt: |
+  You are evaluating the public's reaction to the provided policy content.
+  Focus on approval, disapproval, and concrete reasons for each stance.
+
+agent_personality_modifiers:
+  - "Use realistic daily-life concerns in your responses."
+  - "Reply directly to other comments with specific arguments."
+  - "When disagreeing, provide concrete examples."
+
+checkpoint_questions:
+  - question: "Do you approve of this policy? Rate 1-10."
+    type: "scale"
+    metric_name: "approval_rate"
+    threshold: 7
+    threshold_direction: "gte"
+    display_label: "Approval Rate"
+    tooltip: "Share of agents rating approval at least 7 out of 10."
+  - question: "What is your overall sentiment? Rate 1-10."
+    type: "scale"
+    metric_name: "net_sentiment"
+    display_label: "Net Sentiment"
+    tooltip: "Mean sentiment score across all agents."
+
+report_sections:
+  - title: "Overall Approval"
+    prompt: "Summarize the approval trend over time."
+  - title: "Key Supporting Arguments"
+    prompt: "List the top supporting arguments with evidence."
+  - title: "Key Opposing Arguments"
+    prompt: "List the top opposing arguments with evidence."
+  - title: "Demographic Patterns"
+    prompt: "Highlight demographic groups with notable shifts."
+  - title: "Recommendations"
+    prompt: "Provide actionable recommendations for policy owners."

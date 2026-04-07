@@ -1,21 +1,31 @@
 import json
+from io import BytesIO
+from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from mckainsey.config import Settings, get_settings
 from mckainsey.models.console import (
     ConsoleAgentChatRequest,
     ConsoleAgentChatResponse,
+    ConsoleDynamicFiltersResponse,
     ConsoleKnowledgeProcessRequest,
     ConsoleModelProviderCatalogResponse,
     ConsoleProviderModelsResponse,
     ConsoleReportChatRequest,
     ConsoleReportChatResponse,
+    ConsoleScrapeRequest,
+    ConsoleScrapeResponse,
     ConsoleSessionModelConfigRequest,
     ConsoleSessionModelConfigResponse,
     ConsoleSessionCreateRequest,
     ConsoleSessionResponse,
+    V2AgentChatRequest,
+    V2AgentChatResponse,
+    V2GroupChatRequest,
+    V2GroupChatResponse,
     InteractionHubResponse,
     KnowledgeArtifactResponse,
     PopulationArtifactResponse,
@@ -24,14 +34,27 @@ from mckainsey.models.console import (
     ReportFullResponse,
     ReportOpinionsResponse,
     SimulationStartRequest,
+    SimulationQuickStartRequest,
     SimulationStateResponse,
+    TokenUsageEstimateResponse,
+    TokenUsageRuntimeResponse,
+    V2CountryResponse,
+    V2ProviderResponse,
+    V2ReportResponse,
+    V2SessionConfigPatchRequest,
+    V2SessionConfigResponse,
+    V2SessionCreateRequest,
+    V2SessionCreateResponse,
 )
+from mckainsey.services.config_service import ConfigService
 from mckainsey.services.console_service import ConsoleService
 from mckainsey.services.demo_service import DemoService
+from mckainsey.services.scrape_service import ScrapeService
 from mckainsey.services.simulation_stream_service import SimulationStreamService
 
 
 router = APIRouter(prefix="/api/v2/console", tags=["console"])
+compat_router = APIRouter(prefix="/api/v2", tags=["console-compat"])
 
 
 def _is_demo_session(session_id: str, settings: Settings) -> bool:
@@ -45,6 +68,89 @@ def _is_demo_session(session_id: str, settings: Settings) -> bool:
 def _get_demo_service(settings: Settings) -> DemoService:
     """Get demo service instance."""
     return DemoService(settings)
+
+
+def _normalize_group_chat_segment(segment: Any) -> str:
+    segment_key = str(segment or "").strip().lower()
+    alias_map = {
+        "supporters": "supporter",
+        "dissenters": "dissenter",
+    }
+    return alias_map.get(segment_key, segment_key)
+
+
+def _parse_group_chat_request(body: dict[str, Any]) -> V2GroupChatRequest:
+    normalized = dict(body or {})
+    normalized["segment"] = _normalize_group_chat_segment(normalized.get("segment"))
+    try:
+        return V2GroupChatRequest(**normalized)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+
+@compat_router.get("/countries", response_model=list[V2CountryResponse])
+def v2_countries(settings: Settings = Depends(get_settings)) -> list[V2CountryResponse]:
+    service = ConfigService(settings)
+    rows = []
+    for country in service.list_countries():
+        rows.append(
+            V2CountryResponse(
+                name=str(country.get("name", "")),
+                code=str(country.get("code", "")).lower(),
+                flag_emoji=str(country.get("flag_emoji", "")),
+                dataset_path=str(country.get("dataset_path", "")),
+                available=bool(country.get("available", True)),
+            )
+        )
+    return rows
+
+
+@compat_router.get("/providers", response_model=list[V2ProviderResponse])
+def v2_providers(settings: Settings = Depends(get_settings)) -> list[V2ProviderResponse]:
+    payload = ConsoleService(settings).v2_provider_catalog()
+    return [V2ProviderResponse(**row) for row in payload]
+
+
+@compat_router.post("/session/create", response_model=V2SessionCreateResponse)
+def v2_session_create(
+    req: V2SessionCreateRequest,
+    settings: Settings = Depends(get_settings),
+) -> V2SessionCreateResponse:
+    provider = "google" if req.provider == "gemini" else req.provider
+    try:
+        payload = ConsoleService(settings).create_v2_session(
+            country=req.country,
+            use_case=req.use_case,
+            provider=provider,
+            model=req.model,
+            api_key=req.api_key,
+            mode=req.mode,
+            session_id=req.session_id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return V2SessionCreateResponse(**payload)
+
+
+@compat_router.patch("/session/{session_id}/config", response_model=V2SessionConfigResponse)
+def v2_session_update_config(
+    session_id: str,
+    req: V2SessionConfigPatchRequest,
+    settings: Settings = Depends(get_settings),
+) -> V2SessionConfigResponse:
+    try:
+        payload = ConsoleService(settings).update_v2_session_config(
+            session_id,
+            country=req.country,
+            use_case=req.use_case,
+            provider=req.provider,
+            model=req.model,
+            api_key=req.api_key,
+            guiding_prompt=req.guiding_prompt,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return V2SessionConfigResponse(**payload)
 
 
 @router.post("/session", response_model=ConsoleSessionResponse)
@@ -129,6 +235,7 @@ async def process_knowledge(
         session_id,
         document_text=req.document_text,
         source_path=req.source_path,
+        documents=req.documents,
         guiding_prompt=req.guiding_prompt,
         demographic_focus=req.demographic_focus,
         use_default_demo_document=req.use_default_demo_document,
@@ -159,6 +266,60 @@ async def upload_knowledge(
         demographic_focus=demographic_focus,
     )
     return KnowledgeArtifactResponse(**payload)
+
+
+@router.post("/session/{session_id}/scrape", response_model=ConsoleScrapeResponse)
+def scrape_document(
+    session_id: str,
+    req: ConsoleScrapeRequest,
+    settings: Settings = Depends(get_settings),
+) -> ConsoleScrapeResponse:
+    del session_id
+    del settings
+    scraper = ScrapeService()
+    try:
+        payload = scraper.scrape(req.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid URL: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Failed to scrape URL: {exc}") from exc
+    return ConsoleScrapeResponse(**payload)
+
+
+@router.get("/session/{session_id}/filters", response_model=ConsoleDynamicFiltersResponse)
+def session_filters(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+) -> ConsoleDynamicFiltersResponse:
+    try:
+        payload = ConsoleService(settings).get_dynamic_filters(session_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ConsoleDynamicFiltersResponse(**payload)
+
+
+@compat_router.get("/token-usage/{session_id}/estimate", response_model=TokenUsageEstimateResponse)
+def token_usage_estimate(
+    session_id: str,
+    agents: int = Query(default=250, ge=1, le=2000),
+    rounds: int = Query(default=5, ge=1, le=100),
+    settings: Settings = Depends(get_settings),
+) -> TokenUsageEstimateResponse:
+    payload = ConsoleService(settings).estimate_token_usage(
+        session_id,
+        agents=agents,
+        rounds=rounds,
+    )
+    return TokenUsageEstimateResponse(**payload)
+
+
+@compat_router.get("/token-usage/{session_id}", response_model=TokenUsageRuntimeResponse)
+def token_usage_runtime(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+) -> TokenUsageRuntimeResponse:
+    payload = ConsoleService(settings).get_runtime_token_usage(session_id)
+    return TokenUsageRuntimeResponse(**payload)
 
 
 @router.post("/session/{session_id}/sampling/preview", response_model=PopulationArtifactResponse)
@@ -192,7 +353,22 @@ def simulation_state(
         if state:
             return SimulationStateResponse(**state)
     
-    payload = SimulationStreamService(settings).get_state(session_id)
+    payload = ConsoleService(settings).get_simulation_state(session_id)
+    return SimulationStateResponse(**payload)
+
+
+@router.get("/session/{session_id}/simulation/metrics", response_model=SimulationStateResponse)
+def simulation_metrics(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+) -> SimulationStateResponse:
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        state = demo_service.get_simulation_state(session_id)
+        if state:
+            return SimulationStateResponse(**state)
+
+    payload = ConsoleService(settings).get_simulation_state(session_id)
     return SimulationStateResponse(**payload)
 
 
@@ -214,6 +390,38 @@ def simulation_start(
         session_id,
         policy_summary=req.policy_summary,
         rounds=req.rounds,
+        controversy_boost=req.controversy_boost,
+        mode=req.mode,
+    )
+    return SimulationStateResponse(**payload)
+
+
+@router.post("/session/{session_id}/simulate", response_model=SimulationStateResponse)
+def simulate(
+    session_id: str,
+    req: SimulationQuickStartRequest,
+    settings: Settings = Depends(get_settings),
+) -> SimulationStateResponse:
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        state = demo_service.get_simulation_state(session_id)
+        if state:
+            return SimulationStateResponse(**state)
+
+    service = ConsoleService(settings)
+    policy_summary = str(req.policy_summary or "").strip()
+    if not policy_summary:
+        knowledge = service.store.get_knowledge_artifact(session_id)
+        if knowledge:
+            policy_summary = str(knowledge.get("summary") or "").strip()
+    if not policy_summary:
+        raise HTTPException(status_code=422, detail="Policy summary is required to start a simulation.")
+
+    payload = service.start_simulation(
+        session_id,
+        policy_summary=policy_summary,
+        rounds=req.rounds,
+        controversy_boost=req.controversy_boost,
         mode=req.mode,
     )
     return SimulationStateResponse(**payload)
@@ -247,6 +455,75 @@ def simulation_stream(
     
     stream = SimulationStreamService(settings).sse_iter(session_id)
     return StreamingResponse(stream, media_type="text/event-stream")
+
+
+@router.get("/session/{session_id}/report", response_model=ReportFullResponse)
+def v2_report(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+) -> ReportFullResponse:
+    try:
+        payload = ConsoleService(settings).get_report_full(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ReportFullResponse(**payload)
+
+
+@router.get("/session/{session_id}/report/export")
+def v2_report_export(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    try:
+        filename, payload = ConsoleService(settings).export_v2_report_docx(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(
+        BytesIO(payload),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=headers,
+    )
+
+
+@router.post("/session/{session_id}/chat/group", response_model=V2GroupChatResponse)
+def v2_group_chat(
+    session_id: str,
+    req: dict[str, Any] = Body(...),
+    settings: Settings = Depends(get_settings),
+) -> V2GroupChatResponse:
+    try:
+        parsed = _parse_group_chat_request(req)
+        payload = ConsoleService(settings).group_chat(
+            session_id,
+            segment=parsed.segment,
+            message=parsed.message,
+            top_n=parsed.top_n,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return V2GroupChatResponse(**payload)
+
+
+@router.post("/session/{session_id}/chat/agent/{agent_id}", response_model=V2AgentChatResponse)
+def v2_agent_chat(
+    session_id: str,
+    agent_id: str,
+    req: V2AgentChatRequest,
+    settings: Settings = Depends(get_settings),
+) -> V2AgentChatResponse:
+    try:
+        payload = ConsoleService(settings).agent_chat_v2(session_id, agent_id, req.message)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return V2AgentChatResponse(**payload)
 
 
 @router.get("/session/{session_id}/report/full", response_model=ReportFullResponse)

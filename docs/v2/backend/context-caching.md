@@ -211,9 +211,9 @@ GET /api/v2/token-usage/{session_id}/estimate?agents=250&rounds=5
 
 ## Tests
 
-- [ ] Cache creation succeeds with valid content
-- [ ] `generate_with_cache` returns valid text
-- [ ] Token tracker accumulates correctly across multiple calls
-- [ ] Cost estimate matches expected formula for each provider
-- [ ] Cache auto-deletes when TTL expires
-- [ ] Non-Gemini providers work without caching (graceful fallback)
+- [x] Cache creation succeeds with valid content
+- [x] `generate_with_cache` returns valid text
+- [x] Token tracker accumulates correctly across multiple calls
+- [x] Cost estimate matches expected formula for each provider
+- [x] Cache auto-deletes when TTL expires
+- [x] Non-Gemini providers work without caching (graceful fallback)

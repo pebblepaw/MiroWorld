@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import random
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -9,7 +10,11 @@ import duckdb
 from datasets import load_dataset
 from huggingface_hub import snapshot_download
 
+from mckainsey.config import BACKEND_DIR
 from mckainsey.models.phase_a import PersonaFilterRequest
+
+
+REPO_ROOT = BACKEND_DIR.parent
 
 
 @dataclass
@@ -61,6 +66,7 @@ class PersonaSampler:
         education_levels: list[str] | None = None,
         occupations: list[str] | None = None,
         industries: list[str] | None = None,
+        extra_filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         parquet_glob = self._local_parquet_glob()
         where_clauses: list[str] = []
@@ -81,6 +87,7 @@ class PersonaSampler:
             where_clauses.append(f"occupation IN ({', '.join(_sql_quote(v) for v in occupations)})")
         if industries:
             where_clauses.append(f"industry IN ({', '.join(_sql_quote(v) for v in industries)})")
+        where_clauses.extend(_build_dynamic_filter_clauses(extra_filters))
 
         where_sql = ""
         if where_clauses:
@@ -99,6 +106,67 @@ class PersonaSampler:
         try:
             rows = conn.execute(query).fetch_df().to_dict(orient="records")
             return cast(list[dict[str, Any]], rows)
+        finally:
+            conn.close()
+
+    def infer_filter_schema(self, *, dataset_path: str, filter_fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not filter_fields:
+            return []
+
+        parquet_source = self._resolve_filter_inference_source(dataset_path)
+        available_columns = self._parquet_columns(parquet_source)
+
+        conn = duckdb.connect()
+        try:
+            rows: list[dict[str, Any]] = []
+            for field_cfg in filter_fields:
+                field_name = str(field_cfg.get("field", "")).strip()
+                filter_type = str(field_cfg.get("type", "")).strip()
+                label = str(field_cfg.get("label", field_name)).strip() or field_name
+                if not field_name or not filter_type:
+                    continue
+
+                column_name = _normalize_filter_field_name(field_name)
+                if column_name not in available_columns:
+                    continue
+
+                identifier = _sql_identifier(column_name)
+                payload: dict[str, Any] = {
+                    "field": field_name,
+                    "type": filter_type,
+                    "label": label,
+                }
+
+                if filter_type == "range":
+                    min_max = conn.execute(
+                        f"""
+                        SELECT MIN({identifier}) AS min_value, MAX({identifier}) AS max_value
+                        FROM read_parquet({_sql_quote(parquet_source)})
+                        """
+                    ).fetchone()
+                    if min_max:
+                        payload["min"] = min_max[0]
+                        payload["max"] = min_max[1]
+                    if "default_min" in field_cfg:
+                        payload["default_min"] = field_cfg.get("default_min")
+                    if "default_max" in field_cfg:
+                        payload["default_max"] = field_cfg.get("default_max")
+                else:
+                    values = conn.execute(
+                        f"""
+                        SELECT DISTINCT CAST({identifier} AS VARCHAR) AS value
+                        FROM read_parquet({_sql_quote(parquet_source)})
+                        WHERE {identifier} IS NOT NULL
+                          AND TRIM(CAST({identifier} AS VARCHAR)) <> ''
+                        ORDER BY value
+                        LIMIT 500
+                        """
+                    ).fetchall()
+                    payload["options"] = [str(value[0]) for value in values if value and str(value[0]).strip()]
+                    if "default" in field_cfg:
+                        payload["default"] = field_cfg.get("default")
+                rows.append(payload)
+            return rows
         finally:
             conn.close()
 
@@ -188,7 +256,130 @@ class PersonaSampler:
         finally:
             conn.close()
 
+    def _resolve_filter_inference_source(self, dataset_path: str) -> str:
+        source = str(dataset_path or "").strip()
+        if not source:
+            raise FileNotFoundError(f"Dataset path not found for filter inference: {dataset_path}")
+
+        path = Path(source).expanduser()
+        candidates = [path]
+        if not path.is_absolute():
+            candidates = [REPO_ROOT / path, BACKEND_DIR / path] + candidates
+
+        for candidate in candidates:
+            resolved = self._resolve_filter_candidate(candidate)
+            if resolved is not None:
+                return resolved
+
+        raise FileNotFoundError(f"Dataset path not found for filter inference: {dataset_path}")
+
+    def _resolve_filter_candidate(self, candidate: Path) -> str | None:
+        if candidate.exists():
+            return str(candidate.resolve())
+
+        if candidate.parent.exists():
+            matches = sorted(candidate.parent.glob(candidate.name))
+            if matches:
+                if len(matches) == 1:
+                    return str(matches[0].resolve())
+                return str((candidate.parent.resolve() / candidate.name))
+
+        for directory in (candidate.parent / "data", candidate.parent):
+            if not directory.exists():
+                continue
+            for pattern in ("train-*.parquet", "train-*", "*.parquet"):
+                matches = sorted(directory.glob(pattern))
+                if not matches:
+                    continue
+                if len(matches) == 1:
+                    return str(matches[0].resolve())
+                return str(directory.resolve() / pattern)
+
+        return None
+
+    def _parquet_columns(self, parquet_source: str) -> set[str]:
+        conn = duckdb.connect()
+        try:
+            rows = conn.execute(
+                f"DESCRIBE SELECT * FROM read_parquet({_sql_quote(parquet_source)})"
+            ).fetchall()
+            return {str(row[0]) for row in rows}
+        finally:
+            conn.close()
+
 
 def _sql_quote(value: str) -> str:
     escaped = value.replace("'", "''")
     return f"'{escaped}'"
+
+
+def _sql_identifier(name: str) -> str:
+    cleaned = str(name or "").strip()
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", cleaned):
+        raise ValueError(f"Invalid filter field name: {name!r}")
+    return f'"{cleaned}"'
+
+
+def _build_dynamic_filter_clauses(extra_filters: dict[str, Any] | None) -> list[str]:
+    if not extra_filters:
+        return []
+
+    clauses: list[str] = []
+    reserved_fields = {
+        "min_age",
+        "max_age",
+        "planning_area",
+        "sex",
+        "marital_status",
+        "education_level",
+        "occupation",
+        "industry",
+        "age",
+    }
+    for raw_field, raw_value in (extra_filters or {}).items():
+        field = str(raw_field or "").strip()
+        if not field or field in reserved_fields:
+            continue
+        column_name = _normalize_filter_field_name(field)
+        identifier = _sql_identifier(column_name)
+
+        if isinstance(raw_value, dict):
+            range_clauses: list[str] = []
+            if raw_value.get("min") is not None:
+                min_value = _numeric_literal(raw_value.get("min"))
+                if min_value is not None:
+                    range_clauses.append(f"{identifier} >= {min_value}")
+            if raw_value.get("max") is not None:
+                max_value = _numeric_literal(raw_value.get("max"))
+                if max_value is not None:
+                    range_clauses.append(f"{identifier} <= {max_value}")
+            clauses.extend(range_clauses)
+            continue
+
+        if isinstance(raw_value, list):
+            values = [str(value).strip() for value in raw_value if str(value).strip()]
+            if values:
+                clauses.append(f"{identifier} IN ({', '.join(_sql_quote(value) for value in values)})")
+            continue
+
+        scalar = str(raw_value).strip()
+        if scalar:
+            clauses.append(f"{identifier} = {_sql_quote(scalar)}")
+    return clauses
+
+
+def _numeric_literal(value: Any) -> str | None:
+    try:
+        numeric = float(value)
+    except Exception:  # noqa: BLE001
+        return None
+    if numeric.is_integer():
+        return str(int(numeric))
+    return str(numeric)
+
+
+def _normalize_filter_field_name(name: str) -> str:
+    normalized = str(name or "").strip().lower()
+    if normalized == "gender":
+        return "sex"
+    return normalized

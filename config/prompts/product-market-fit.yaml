@@ -1,0 +1,38 @@
+name: "PMF Discovery"
+code: "pmf-discovery"
+description: "Discover product-market fit across demographic segments."
+
+guiding_prompt: |
+  You are evaluating whether this product concept solves real needs.
+  Focus on who benefits most and why.
+
+agent_personality_modifiers:
+  - "Evaluate based on your real habits and pain points."
+  - "Be direct about willingness to use or pay."
+  - "Compare against alternatives you already use."
+
+checkpoint_questions:
+  - question: "Is this product something you need? Rate 1-10."
+    type: "scale"
+    metric_name: "product_interest"
+    threshold: 7
+    threshold_direction: "gte"
+    display_label: "Product Interest"
+    tooltip: "Share of agents rating need at least 7 out of 10."
+  - question: "How well does this product fit your lifestyle? Rate 1-10."
+    type: "scale"
+    metric_name: "target_fit_score"
+    display_label: "Target Fit Score"
+    tooltip: "Mean fit score across target demographic agents."
+
+report_sections:
+  - title: "Product Interest"
+    prompt: "Summarize interest level and trend shifts."
+  - title: "Best-Fit Demographics"
+    prompt: "Identify demographics with strongest fit."
+  - title: "Pain Points Addressed"
+    prompt: "Explain which pain points are most impacted."
+  - title: "Competitive Alternatives"
+    prompt: "Summarize alternatives currently used."
+  - title: "Market Entry Recommendations"
+    prompt: "Recommend positioning and target segments."

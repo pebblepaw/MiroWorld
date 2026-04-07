@@ -346,17 +346,17 @@ class ConfigService:
 
 ## Refactoring Checklist
 
-- [ ] All hardcoded Singapore field names → read from country YAML
-- [ ] All hardcoded prompts in `simulation_service.py` → `config_service.get_agent_personality_modifiers()`
-- [ ] All hardcoded checkpoint questions → `config_service.get_checkpoint_questions()`
-- [ ] All hardcoded report section prompts → `config_service.get_report_sections()`
-- [ ] `quick_start.sh` no longer exits if Ollama is not installed
-- [ ] Provider detection is lazy (checked when simulation starts, not at boot)
+- [x] All hardcoded Singapore field names → read from country YAML
+- [x] All hardcoded prompts in `simulation_service.py` → `config_service.get_agent_personality_modifiers()`
+- [x] All hardcoded checkpoint questions → `config_service.get_checkpoint_questions()`
+- [x] All hardcoded report section prompts → `config_service.get_report_sections()`
+- [x] `quick_start.sh` no longer exits if Ollama is not installed
+- [x] Provider detection is lazy (checked when simulation starts, not at boot)
 
 ## Tests
 
-- [ ] `ConfigService` loads valid YAML files correctly
-- [ ] `ConfigService` raises `FileNotFoundError` for missing country/use-case
-- [ ] `list_countries()` returns all YAML files in countries dir
-- [ ] `get_checkpoint_questions()` returns correct question format
-- [ ] Invalid YAML gracefully handled (logged, not crashed)
+- [x] `ConfigService` loads valid YAML files correctly
+- [x] `ConfigService` raises `FileNotFoundError` for missing country/use-case
+- [x] `list_countries()` returns all YAML files in countries dir
+- [x] `get_checkpoint_questions()` returns correct question format
+- [x] Invalid YAML gracefully handled (logged, not crashed)

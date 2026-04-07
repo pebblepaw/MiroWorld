@@ -52,10 +52,10 @@ interface OnboardingConfig {
 - `POST /api/v2/session/create` → `{session_id}` — creates session with config
 
 ### Tests
-- [ ] Modal appears on first load
-- [ ] Country selection highlights correctly, disabled countries show tooltip
-- [ ] Provider change updates model dropdown
-- [ ] API key field hides for Ollama
-- [ ] "Launch" validates required fields before proceeding
-- [ ] Session ID is stored in React context after creation
-- [ ] Settings button re-opens modal with saved state
+- [x] Modal appears on first load
+- [x] Country selection highlights correctly, disabled countries show tooltip
+- [x] Provider change updates model dropdown
+- [x] API key field hides for Ollama
+- [x] "Launch" validates required fields before proceeding
+- [x] Session ID is stored in React context after creation
+- [x] Settings button re-opens modal with saved state

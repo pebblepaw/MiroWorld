@@ -5,9 +5,17 @@ import ForceGraph2D from 'react-force-graph-2d';
 import { useApp } from '@/contexts/AppContext';
 import { GlassCard } from '@/components/GlassCard';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { createConsoleSession, uploadKnowledgeFile, KnowledgeArtifact } from '@/lib/console-api';
+import {
+  createConsoleSession,
+  isLiveBootMode,
+  processKnowledgeDocuments,
+  uploadKnowledgeFile,
+  scrapeKnowledgeUrl,
+  KnowledgeArtifact,
+} from '@/lib/console-api';
 import { toast } from '@/hooks/use-toast';
 
 /* ─── Graph Display Constants ─── */
@@ -71,6 +79,122 @@ function resolveKnowledgeExtractionError(
   );
 }
 
+function buildSafeDocumentName(rawName: string, fallback: string) {
+  const trimmed = rawName.trim();
+  if (!trimmed) return fallback;
+  return trimmed.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-").toLowerCase();
+}
+
+function getDefaultGuidingPrompt(useCase: string) {
+  const normalized = String(useCase || '').trim().toLowerCase();
+  if (normalized === 'ad-testing') {
+    return 'Extract key product features, target demographics, and brand positioning statements. Highlight emotional triggers and pricing constraints.';
+  }
+  if (normalized === 'pmf-discovery') {
+    return 'Analyze this product feedback for core pain points, requested features, and user satisfaction signals. Group by user persona.';
+  }
+  return 'Identify all entities, locations, organizations, and the specific impact mechanisms described in this policy document. Focus strongly on sentiment and demographic effects.';
+}
+
+async function readFileText(file: File): Promise<string> {
+  if (typeof file.text === "function") {
+    return file.text();
+  }
+
+  if (typeof file.arrayBuffer === "function") {
+    const bytes = await file.arrayBuffer();
+    return new TextDecoder().decode(bytes);
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read file contents."));
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.readAsText(file);
+  });
+}
+
+function isServerParsedDocument(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return name.endsWith('.pdf') || name.endsWith('.doc') || name.endsWith('.docx');
+}
+
+function mergeKnowledgeArtifacts(
+  sessionId: string,
+  artifacts: KnowledgeArtifact[],
+  guidingPrompt: string | null,
+): KnowledgeArtifact {
+  if (artifacts.length === 0) {
+    throw new Error("No knowledge artifacts were returned from extraction.");
+  }
+  if (artifacts.length === 1) {
+    return {
+      ...artifacts[0],
+      session_id: sessionId,
+      guiding_prompt: guidingPrompt,
+    };
+  }
+
+  const nodes: KnowledgeArtifact["entity_nodes"] = [];
+  const edges: KnowledgeArtifact["relationship_edges"] = [];
+  const logs: string[] = [];
+  const summaries: string[] = [];
+  const sourceDocuments = artifacts.map((artifact) => artifact.document);
+  const seenNodes = new Set<string>();
+  const seenEdges = new Set<string>();
+
+  for (const artifact of artifacts) {
+    const summary = String(artifact.summary || "").trim();
+    if (summary) summaries.push(summary);
+
+    for (const node of artifact.entity_nodes || []) {
+      const key = String(node.id || node.label || "").trim().toLowerCase();
+      if (!key || seenNodes.has(key)) continue;
+      seenNodes.add(key);
+      nodes.push(node);
+    }
+
+    for (const edge of artifact.relationship_edges || []) {
+      const key = [
+        String(edge.source || "").trim().toLowerCase(),
+        String(edge.target || "").trim().toLowerCase(),
+        String(edge.type || "").trim().toLowerCase(),
+        String(edge.label || "").trim().toLowerCase(),
+      ].join("|");
+      if (!key || seenEdges.has(key)) continue;
+      seenEdges.add(key);
+      edges.push(edge);
+    }
+
+    for (const logLine of artifact.processing_logs || []) {
+      const line = String(logLine || "").trim();
+      if (line) logs.push(line);
+    }
+  }
+
+  return {
+    session_id: sessionId,
+    document: {
+      document_id: `merged-${artifacts.length}-documents`,
+      source_path: "merged://knowledge-documents",
+      file_name: "merged-documents",
+      text_length: sourceDocuments.reduce((total, doc) => total + Number(doc?.text_length ?? 0), 0),
+      paragraph_count: sourceDocuments.reduce((total, doc) => total + Number(doc?.paragraph_count ?? 0), 0),
+    },
+    summary: summaries.join("\n\n"),
+    guiding_prompt: guidingPrompt,
+    entity_nodes: nodes,
+    relationship_edges: edges,
+    entity_type_counts: nodes.reduce<Record<string, number>>((counts, node) => {
+      const type = String(node.type || "unknown");
+      counts[type] = (counts[type] || 0) + 1;
+      return counts;
+    }, {}),
+    processing_logs: logs,
+    demographic_focus_summary: artifacts[0]?.demographic_focus_summary ?? null,
+  };
+}
+
 /* ─── Main Component ─── */
 
 export default function PolicyUpload() {
@@ -81,6 +205,7 @@ export default function PolicyUpload() {
     embedModelName,
     modelApiKey,
     modelBaseUrl,
+    useCase,
     uploadedFiles,
     guidingPrompts,
     knowledgeGraphReady,
@@ -91,6 +216,7 @@ export default function PolicyUpload() {
     addUploadedFile,
     removeUploadedFile,
     setUploadedFiles,
+    setGuidingPrompts,
     updateGuidingPrompt,
     addGuidingPrompt,
     removeGuidingPrompt,
@@ -119,6 +245,12 @@ export default function PolicyUpload() {
   const [showTopEntities, setShowTopEntities] = useState(true);
 
   const graphReady = knowledgeGraphReady && knowledgeArtifact !== null;
+
+  useEffect(() => {
+    if (guidingPrompts.length === 1 && guidingPrompts[0].trim() === '') {
+      setGuidingPrompts([getDefaultGuidingPrompt(useCase)]);
+    }
+  }, [guidingPrompts, setGuidingPrompts, useCase]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -179,6 +311,30 @@ export default function PolicyUpload() {
     resetKnowledgeState();
   }, [resetKnowledgeState, addUploadedFile]);
 
+  const ensureSession = useCallback(async () => {
+    if (sessionId) {
+      return sessionId;
+    }
+
+    const created = await createConsoleSession(undefined, {
+      model_provider: modelProvider,
+      model_name: modelName,
+      embed_model_name: embedModelName,
+      api_key: modelApiKey.trim() || undefined,
+      base_url: modelBaseUrl.trim() || undefined,
+    });
+    setSessionId(created.session_id);
+    return created.session_id;
+  }, [
+    embedModelName,
+    modelApiKey,
+    modelBaseUrl,
+    modelName,
+    modelProvider,
+    sessionId,
+    setSessionId,
+  ]);
+
   const handleExtract = useCallback(async () => {
     if (uploadedFiles.length === 0) return;
 
@@ -186,51 +342,69 @@ export default function PolicyUpload() {
       setKnowledgeLoading(true);
       setKnowledgeError(null);
 
-      const resolvedSessionId = sessionId ?? (
-        await createConsoleSession(undefined, {
-          model_provider: modelProvider,
-          model_name: modelName,
-          embed_model_name: embedModelName,
-          api_key: modelApiKey.trim() || undefined,
-          base_url: modelBaseUrl.trim() || undefined,
-        })
-      ).session_id;
-      if (!sessionId) {
-        setSessionId(resolvedSessionId);
+      const resolvedSessionId = await ensureSession();
+      const combinedPrompt = guidingPrompts.map((prompt) => prompt.trim()).filter(Boolean).join('\n\n');
+      const serverParsedFiles = uploadedFiles.filter(isServerParsedDocument);
+      const textFiles = uploadedFiles.filter((file) => !isServerParsedDocument(file));
+      const artifacts: KnowledgeArtifact[] = [];
+
+      if (textFiles.length > 0) {
+        const documents = await Promise.all(
+          textFiles.map(async (file) => ({
+            document_text: await readFileText(file),
+            source_path: file.name,
+          })),
+        );
+        artifacts.push(
+          await processKnowledgeDocuments(resolvedSessionId, {
+            documents,
+            guiding_prompt: combinedPrompt || undefined,
+          }),
+        );
       }
 
-      // For now, process the first file. Multi-file merge would be handled by backend.
-      const combinedPrompt = guidingPrompts.filter(p => p.trim()).join('\n\n');
-      const artifact = await uploadKnowledgeFile(resolvedSessionId, uploadedFiles[0], combinedPrompt);
+      for (const file of serverParsedFiles) {
+        artifacts.push(
+          await uploadKnowledgeFile(
+            resolvedSessionId,
+            file,
+            combinedPrompt || undefined,
+          ),
+        );
+      }
+
+      const artifact = mergeKnowledgeArtifacts(resolvedSessionId, artifacts, combinedPrompt || null);
       setKnowledgeArtifact(artifact);
       setKnowledgeGraphReady(true);
     } catch (error) {
-      // Fallback: try loading demo data from public/demo-output.json
-      try {
-        const demoRes = await fetch('/demo-output.json');
-        if (demoRes.ok) {
-          const demo = await demoRes.json();
-          const knowledgeData = demo.knowledge;
-          if (knowledgeData?.entity_nodes) {
-            const artifact = {
-              session_id: knowledgeData.simulation_id || 'demo-session',
-              document: knowledgeData.document || { document_id: 'demo', paragraph_count: 0 },
-              summary: knowledgeData.summary || '',
-              guiding_prompt: knowledgeData.guiding_prompt || null,
-              entity_nodes: knowledgeData.entity_nodes,
-              relationship_edges: knowledgeData.relationship_edges || [],
-              entity_type_counts: knowledgeData.entity_type_counts || {},
-              processing_logs: [],
-              demographic_focus_summary: knowledgeData.demographic_focus_summary || null,
-            } as KnowledgeArtifact;
-            setKnowledgeArtifact(artifact);
-            setKnowledgeGraphReady(true);
-            setSessionId(artifact.session_id);
-            toast({ title: 'Demo mode', description: 'Loaded cached knowledge graph (backend unavailable)' });
-            return;
+      if (!isLiveBootMode()) {
+        try {
+          // Demo mode can still hydrate from the bundled demo artifact.
+          const demoRes = await fetch('/demo-output.json');
+          if (demoRes.ok) {
+            const demo = await demoRes.json();
+            const knowledgeData = demo.knowledge;
+            if (knowledgeData?.entity_nodes) {
+              const artifact = {
+                session_id: knowledgeData.simulation_id || 'demo-session',
+                document: knowledgeData.document || { document_id: 'demo', paragraph_count: 0 },
+                summary: knowledgeData.summary || '',
+                guiding_prompt: knowledgeData.guiding_prompt || null,
+                entity_nodes: knowledgeData.entity_nodes,
+                relationship_edges: knowledgeData.relationship_edges || [],
+                entity_type_counts: knowledgeData.entity_type_counts || {},
+                processing_logs: [],
+                demographic_focus_summary: knowledgeData.demographic_focus_summary || null,
+              } as KnowledgeArtifact;
+              setKnowledgeArtifact(artifact);
+              setKnowledgeGraphReady(true);
+              setSessionId(artifact.session_id);
+              toast({ title: 'Demo mode', description: 'Loaded cached knowledge graph (backend unavailable)' });
+              return;
+            }
           }
-        }
-      } catch { /* ignore demo fallback errors */ }
+        } catch { /* ignore demo fallback errors */ }
+      }
 
       const message = resolveKnowledgeExtractionError(error, {
         provider: modelProvider,
@@ -261,6 +435,7 @@ export default function PolicyUpload() {
     setSessionId,
     setKnowledgeArtifact,
     setKnowledgeGraphReady,
+    ensureSession,
   ]);
 
   const handleProceed = () => {
@@ -268,25 +443,56 @@ export default function PolicyUpload() {
     setCurrentStep(2);
   };
 
-  const handleUrlScrape = () => {
-    if (!urlValue.trim()) return;
-    // Mock: add a fake file entry for the scraped URL
-    const mockFile = new File([''], urlValue.split('/').pop() || 'scraped-content.txt', { type: 'text/plain' });
-    addUploadedFile(mockFile);
-    setUrlValue('');
-    setShowUrlInput(false);
-    toast({ title: 'URL scraped', description: `Content fetched from ${urlValue}` });
-  };
+  const handleUrlScrape = useCallback(async () => {
+    const url = urlValue.trim();
+    if (!url) return;
 
-  const handlePasteSubmit = () => {
-    if (!pasteValue.trim()) return;
-    const blob = new Blob([pasteValue], { type: 'text/plain' });
+    try {
+      const resolvedSessionId = await ensureSession();
+      const scraped = await scrapeKnowledgeUrl(resolvedSessionId, url);
+      const fileName = `${buildSafeDocumentName(scraped.title || 'scraped-document', 'scraped-document')}.txt`;
+      const scrapedFile = new File([scraped.text || url], fileName, { type: 'text/plain' });
+      addUploadedFile(scrapedFile);
+      resetKnowledgeState();
+      toast({ title: 'URL scraped', description: scraped.title ? scraped.title : `Fetched content from ${url}` });
+    } catch (error) {
+      resetKnowledgeState();
+      const message = error instanceof Error ? error.message : 'Backend scrape failed.';
+      if (!isLiveBootMode()) {
+        const fallbackName = `${buildSafeDocumentName(url, 'scraped-document')}.txt`;
+        const fallbackFile = new File([url], fallbackName, { type: 'text/plain' });
+        addUploadedFile(fallbackFile);
+        toast({
+          title: 'URL scrape fallback',
+          description: `${message} Queued URL as text.`,
+        });
+        return;
+      }
+
+      setKnowledgeError(message);
+      toast({
+        title: 'URL scrape failed',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setUrlValue('');
+      setShowUrlInput(false);
+    }
+  }, [addUploadedFile, ensureSession, resetKnowledgeState, setKnowledgeError, setShowUrlInput, setUrlValue, urlValue]);
+
+  const handlePasteSubmit = useCallback(() => {
+    const text = pasteValue.trim();
+    if (!text) return;
+
+    const blob = new Blob([text], { type: 'text/plain' });
     const mockFile = new File([blob], 'pasted-text.txt', { type: 'text/plain' });
     addUploadedFile(mockFile);
+    resetKnowledgeState();
     setPasteValue('');
     setShowPasteArea(false);
-    toast({ title: 'Text added', description: 'Pasted content added as document' });
-  };
+    toast({ title: 'Text added', description: 'Pasted content queued for backend extraction' });
+  }, [addUploadedFile, pasteValue, resetKnowledgeState, setPasteValue, setShowPasteArea]);
 
   /* ─── Graph Data ─── */
 
@@ -406,21 +612,32 @@ export default function PolicyUpload() {
           {uploadedFiles.length > 0 && (
             <div className="mt-3 space-y-1">
               {uploadedFiles.map((file, index) => (
-                <div key={`${file.name}-${index}`} className="flex items-center justify-between px-3 py-2 rounded bg-card border border-border group">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-sm text-foreground truncate">{file.name}</span>
+                <div key={`${file.name}-${index}`} className="rounded bg-card border border-border group px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <span className="text-sm text-foreground truncate">{file.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-muted-foreground">{formatFileSize(file.size)}</span>
+                      <button
+                        type="button"
+                        onClick={() => { removeUploadedFile(index); resetKnowledgeState(); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-mono text-muted-foreground">{formatFileSize(file.size)}</span>
-                    <button
-                      type="button"
-                      onClick={() => { removeUploadedFile(index); resetKnowledgeState(); }}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  {knowledgeLoading && (
+                    <div className="mt-2">
+                      <Progress
+                        value={50}
+                        aria-label={`${file.name} upload progress`}
+                        className="h-1.5 bg-white/5"
+                      />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -690,6 +907,7 @@ export default function PolicyUpload() {
               graphData={graphData}
               width={dimensions.width}
               height={dimensions.height}
+              enableNodeDrag
               nodeLabel={(node: GraphNodeDatum) => `${node.name || ''}${node.summary ? `: ${node.summary}` : ''}`}
               linkLabel={(link: GraphLinkDatum) => {
                 const summary = link.summary?.trim();

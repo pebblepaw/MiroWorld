@@ -121,6 +121,7 @@ class SimulationStreamService:
         counters = dict(previous_state.get("counters", {}))
         discussion_momentum = dict(previous_state.get("discussion_momentum", {}))
         top_threads = list(previous_state.get("top_threads", []))
+        round_progress = dict(previous_state.get("round_progress", {}))
         checkpoint_status = {
             "baseline": {"status": "pending", "completed_agents": 0, "total_agents": 0},
             "final": {"status": "pending", "completed_agents": 0, "total_agents": 0},
@@ -157,10 +158,52 @@ class SimulationStreamService:
                     counters["comments"] = int(counters.get("comments", 0) or 0) + 1
             elif event_type == "reaction_added":
                 counters["reactions"] = int(counters.get("reactions", 0) or 0) + 1
+                if str(event.get("reaction", "")).strip().lower() == "dislike":
+                    counters["post_dislikes"] = int(counters.get("post_dislikes", 0) or 0) + 1
+            elif event_type == "round_batch_flushed":
+                batch_index = int(event.get("batch_index", event.get("batch", 0)) or 0)
+                batch_count = int(event.get("batch_count", event.get("total_batches", 0)) or 0)
+                round_no = int(event.get("round_no", event.get("round", 0)) or 0)
+                percentage = float(event.get("percentage", 0.0) or 0.0)
+                if batch_count > 0 and percentage <= 0:
+                    percentage = round((batch_index / max(1, batch_count)) * 100, 1)
+                label = str(event.get("label") or f"Round {round_no} ({percentage:.0f}%)")
+                round_progress = {
+                    "round": int(event.get("round", round_no) or round_no),
+                    "batch": int(event.get("batch", batch_index) or batch_index),
+                    "total_batches": int(event.get("total_batches", batch_count) or batch_count),
+                    "percentage": round(percentage, 1),
+                    "label": label,
+                }
             elif event_type == "metrics_updated":
-                latest_metrics = dict(event.get("metrics", {}))
-                counters.update(event.get("counters", {}))
-                counters["active_authors"] = int(event.get("counters", {}).get("active_authors", counters.get("active_authors", len(active_authors))) or len(active_authors))
+                metrics_payload = event.get("metrics", {})
+                latest_metrics = dict(metrics_payload) if isinstance(metrics_payload, dict) else {}
+                event_counters = dict(event.get("counters", {}))
+                counters.update(event_counters)
+                counters["active_authors"] = int(event_counters.get("active_authors", counters.get("active_authors", len(active_authors))) or len(active_authors))
+                event_round_progress = event.get("round_progress")
+                if isinstance(event_round_progress, dict):
+                    round_progress = dict(event_round_progress)
+                if round_progress:
+                    latest_metrics["round_progress"] = round_progress
+                    latest_metrics["round_progress_label"] = str(round_progress.get("label") or "")
+                for key, value in event.items():
+                    if key in {
+                        "event_type",
+                        "session_id",
+                        "timestamp",
+                        "round_no",
+                        "metrics",
+                        "counters",
+                        "discussion_momentum",
+                        "top_threads",
+                        "elapsed_seconds",
+                        "estimated_total_seconds",
+                        "estimated_remaining_seconds",
+                        "id",
+                    }:
+                        continue
+                    latest_metrics[key] = value
                 discussion_momentum = dict(event.get("discussion_momentum", discussion_momentum))
                 top_threads = list(event.get("top_threads", top_threads))
                 elapsed_seconds = int(event.get("elapsed_seconds", elapsed_seconds) or elapsed_seconds)
@@ -193,6 +236,7 @@ class SimulationStreamService:
             "top_threads": top_threads,
             "discussion_momentum": discussion_momentum,
             "latest_metrics": latest_metrics,
+            "round_progress": round_progress,
             "recent_events": events[-10:],
             "events_path": previous_state.get("events_path"),
             "stream_offset_bytes": int(previous_state.get("stream_offset_bytes", 0) or 0),

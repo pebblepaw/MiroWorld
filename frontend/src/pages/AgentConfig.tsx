@@ -5,9 +5,15 @@ import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, X
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useApp } from '@/contexts/AppContext';
-import { previewPopulation } from '@/lib/console-api';
+import {
+  getDynamicFilters,
+  isLiveBootMode,
+  previewPopulation,
+  ConsoleDynamicFilterFieldResponse,
+} from '@/lib/console-api';
 import { toast } from '@/hooks/use-toast';
 import { SingaporeMap } from '@/components/SingaporeMap';
 
@@ -22,11 +28,47 @@ const INDUSTRY_COLORS = [
 
 type SampleMode = 'affected_groups' | 'population_baseline';
 type GroupDimension = 'industry' | 'ageBucket' | 'planningArea' | 'sex' | 'occupation';
+type DynamicFilterSelection = string | string[] | { min: number; max: number };
+
+const FALLBACK_FILTERS: ConsoleDynamicFilterFieldResponse[] = [
+  {
+    field: 'age',
+    type: 'range',
+    label: 'Age Range',
+    min: 18,
+    max: 85,
+    default_min: 20,
+    default_max: 65,
+    options: [],
+  },
+  {
+    field: 'planning_area',
+    type: 'multi-select-chips',
+    label: 'Planning Area',
+    options: ['All Areas', 'Central', 'East', 'West', 'North'],
+    default: ['All Areas'],
+  },
+  {
+    field: 'occupation',
+    type: 'dropdown',
+    label: 'Occupation',
+    options: ['All Occupations', 'Professional', 'Service', 'Clerical'],
+    default: 'All Occupations',
+  },
+  {
+    field: 'gender',
+    type: 'single-select-chips',
+    label: 'Gender',
+    options: ['All', 'Male', 'Female'],
+    default: 'All',
+  },
+];
 
 export default function AgentConfig() {
   const {
     sessionId,
     knowledgeArtifact,
+    country,
     agentCount,
     sampleMode,
     samplingInstructions,
@@ -34,6 +76,7 @@ export default function AgentConfig() {
     populationArtifact,
     populationLoading,
     populationError,
+    simulationRounds,
     setAgentCount,
     setSampleMode,
     setSamplingInstructions,
@@ -51,6 +94,62 @@ export default function AgentConfig() {
   } = useApp();
 
   const [groupCategory, setGroupCategory] = useState<string>('industry');
+  const [dynamicFilters, setDynamicFilters] = useState<ConsoleDynamicFilterFieldResponse[]>([]);
+  const [dynamicFilterValues, setDynamicFilterValues] = useState<Record<string, DynamicFilterSelection>>({});
+  const [dynamicFiltersLoading, setDynamicFiltersLoading] = useState(false);
+  const [dynamicFiltersError, setDynamicFiltersError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const liveMode = isLiveBootMode();
+    if (!sessionId) {
+      if (liveMode) {
+        setDynamicFilters([]);
+        setDynamicFilterValues({});
+        setDynamicFiltersError('Complete Screen 1 before loading live filters.');
+      } else {
+        setDynamicFilters(FALLBACK_FILTERS);
+        setDynamicFilterValues(buildDefaultFilterValues(FALLBACK_FILTERS));
+      }
+      setDynamicFiltersLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDynamicFiltersLoading(true);
+    setDynamicFiltersError(null);
+
+    void getDynamicFilters(sessionId)
+      .then((payload) => {
+        if (cancelled) return;
+        const nextFilters = payload.filters.length > 0 ? payload.filters : (liveMode ? [] : FALLBACK_FILTERS);
+        setDynamicFilters(nextFilters);
+        setDynamicFilterValues((current) => mergeFilterDefaults(nextFilters, current));
+        if (liveMode && nextFilters.length === 0) {
+          setDynamicFiltersError('Live filter discovery returned no filter definitions.');
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (liveMode) {
+          setDynamicFilters([]);
+          setDynamicFilterValues({});
+          setDynamicFiltersError(error instanceof Error ? error.message : 'Unable to load dynamic filters.');
+        } else {
+          setDynamicFilters(FALLBACK_FILTERS);
+          setDynamicFilterValues((current) => mergeFilterDefaults(FALLBACK_FILTERS, current));
+          setDynamicFiltersError(error instanceof Error ? error.message : 'Unable to load dynamic filters.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDynamicFiltersLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   const resetPopulationPreview = useCallback(() => {
     setPopulationArtifact(null);
@@ -80,6 +179,11 @@ export default function AgentConfig() {
     resetPopulationPreview();
   }, [resetPopulationPreview, setSampleMode]);
 
+  const handleFilterChange = useCallback((field: ConsoleDynamicFilterFieldResponse, value: DynamicFilterSelection) => {
+    setDynamicFilterValues((current) => ({ ...current, [field.field]: value }));
+    resetPopulationPreview();
+  }, [resetPopulationPreview]);
+
   const handleInstructionsChange = useCallback((nextValue: string) => {
     setSamplingInstructions(nextValue);
     if (populationArtifact) {
@@ -104,11 +208,16 @@ export default function AgentConfig() {
     try {
       setPopulationLoading(true);
       setPopulationError(null);
+      const payload = buildSamplingPayload(dynamicFilters, dynamicFilterValues);
       const artifact = await previewPopulation(sessionId, {
         agent_count: requestedAgentCount,
         sample_mode: sampleMode,
         sampling_instructions: samplingInstructions.trim() || undefined,
         seed: requestedSeed,
+        min_age: payload.min_age,
+        max_age: payload.max_age,
+        planning_areas: payload.planning_areas,
+        dynamic_filters: payload.dynamic_filters,
       });
       setPopulationArtifact(artifact);
       setSampleSeed(artifact.sample_seed);
@@ -123,31 +232,32 @@ export default function AgentConfig() {
         });
       }
     } catch (error) {
-      // Fallback: try loading demo data from public/demo-output.json
-      try {
-        const demoRes = await fetch('/demo-output.json');
-        if (demoRes.ok) {
-          const demo = await demoRes.json();
-          if (demo.population) {
-            const artifact = demo.population;
-            setPopulationArtifact(artifact);
-            setSampleSeed(artifact.sample_seed);
-            setAgentsGenerated(true);
-            setAgents(artifact.sampled_personas.map((row: any) => sampledPersonaToMockAgent(row)));
-            setSimulationComplete(false);
-            setSimPosts([]);
-            toast({
-              title: 'Demo Population Loaded',
-              description: 'Backend unavailable. Loaded cached demo agents.',
-            });
-            return;
+      const message = error instanceof Error ? error.message : 'Population sampling failed.';
+      if (!isLiveBootMode()) {
+        try {
+          const demoRes = await fetch('/demo-output.json');
+          if (demoRes.ok) {
+            const demo = await demoRes.json();
+            if (demo.population) {
+              const artifact = demo.population;
+              setPopulationArtifact(artifact);
+              setSampleSeed(artifact.sample_seed);
+              setAgentsGenerated(true);
+              setAgents(artifact.sampled_personas.map((row: any) => sampledPersonaToMockAgent(row)));
+              setSimulationComplete(false);
+              setSimPosts([]);
+              toast({
+                title: 'Demo Population Loaded',
+                description: 'Backend unavailable. Loaded cached demo agents.',
+              });
+              return;
+            }
           }
+        } catch (demoError) {
+          // Demo fallback failed
         }
-      } catch (demoError) {
-        // Fallback failed
       }
 
-      const message = error instanceof Error ? error.message : 'Population sampling failed.';
       setPopulationError(message);
       setPopulationArtifact(null);
       setAgentsGenerated(false);
@@ -164,6 +274,7 @@ export default function AgentConfig() {
     knowledgeArtifact,
     sampleMode,
     sampleSeed,
+    dynamicFilterValues,
     samplingInstructions,
     sessionId,
     setAgents,
@@ -192,7 +303,7 @@ export default function AgentConfig() {
   const artifact = populationArtifact;
   const sampledPersonas = artifact?.sampled_personas ?? [];
   const ageBuckets = useMemo(() => buildAgeBuckets(sampledPersonas), [sampledPersonas]);
-  const industryData = useMemo(() => buildIndustryMix(sampledPersonas), [sampledPersonas]);
+  const occupationData = useMemo(() => buildOccupationDistribution(sampledPersonas), [sampledPersonas]);
   const topAreas = useMemo(() => buildTopAreas(artifact?.representativeness?.planning_area_distribution ?? {}), [artifact]);
 
   const waffleGroups = useMemo(() => {
@@ -318,6 +429,25 @@ export default function AgentConfig() {
               onClick={() => handleSampleModeChange('population_baseline')}
             />
           </div>
+
+          <div className="mt-5 pt-5 border-t border-white/5">
+            <div className="flex items-center justify-end gap-3 mb-3">
+              {dynamicFiltersLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+            </div>
+            {dynamicFiltersError && (
+              <p className="text-[11px] text-muted-foreground mb-3">{dynamicFiltersError}</p>
+            )}
+            <div className="space-y-4">
+              {dynamicFilters.map((field) => (
+                <DynamicFilterField
+                  key={field.field}
+                  field={field}
+                  value={dynamicFilterValues[field.field]}
+                  onChange={(nextValue) => handleFilterChange(field, nextValue)}
+                />
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="surface-card border border-white/5 rounded-xl p-5 shadow-sm flex flex-col">
@@ -336,9 +466,6 @@ export default function AgentConfig() {
             placeholder="E.g. Over-sample gig workers under 30. Exclude tourists..."
             className="bg-[#0A0A0A] border-white/10 text-foreground flex-1 min-h-[100px] resize-none focus-visible:ring-1 focus-visible:ring-primary/50 text-sm leading-relaxed"
           />
-          <p className="text-[11px] text-muted-foreground/70 mt-3 flex items-center gap-1.5">
-            <Info className="w-3 h-3" /> System automatically extracts soft boosts, hard filters, and distribution quotas.
-          </p>
           {artifact && artifact.parsed_sampling_instructions?.notes_for_ui?.length > 0 && (
             <div className="mt-4 pt-4 border-t border-white/5 flex-1">
               <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2">Parsed Strategy Notes</div>
@@ -377,9 +504,9 @@ export default function AgentConfig() {
             </div>
 
             <div className="surface-card border border-white/5 rounded-xl p-5">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Industry Sector Mix</h4>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Occupation Distribution</h4>
               <ResponsiveContainer width="100%" height={160}>
-                <BarChart data={industryData} layout="vertical" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
+                <BarChart data={occupationData} layout="vertical" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
                   <XAxis type="number" hide />
                   <YAxis
                     type="category"
@@ -391,7 +518,7 @@ export default function AgentConfig() {
                   />
                   <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.02)' }} content={<CustomBarTooltip />} />
                   <Bar dataKey="value" radius={[0, 2, 2, 0]} maxBarSize={20}>
-                    {industryData.map((entry, index) => (
+                    {occupationData.map((entry, index) => (
                       <Cell key={entry.name} fill={INDUSTRY_COLORS[index % INDUSTRY_COLORS.length]} />
                     ))}
                   </Bar>
@@ -402,7 +529,7 @@ export default function AgentConfig() {
             <div className="surface-card border border-white/5 rounded-xl p-5 flex flex-col">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Top Planning Areas</h4>
               <div className="flex-1 -mx-2 -mb-2 rounded-lg overflow-hidden border border-white/5">
-                <SingaporeMap areaData={topAreas} />
+                <SingaporeMap areaData={topAreas} country={country === 'usa' ? 'usa' : 'singapore'} />
               </div>
             </div>
           </div>
@@ -647,6 +774,268 @@ function WaffleTooltipContent({ data }: { data: any }) {
   );
 }
 
+function DynamicFilterField({
+  field,
+  value,
+  onChange,
+}: {
+  field: ConsoleDynamicFilterFieldResponse;
+  value: DynamicFilterSelection | undefined;
+  onChange: (value: DynamicFilterSelection) => void;
+}) {
+  const type = field.type;
+
+  if (type === 'range') {
+    const current = normalizeRangeValue(field, value);
+    const minBound = Number.isFinite(field.min) ? Number(field.min) : undefined;
+    const maxBound = Number.isFinite(field.max) ? Number(field.max) : undefined;
+    return (
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-foreground">{field.label}</div>
+        <div className="flex items-center gap-2">
+          <Input
+            aria-label={`${field.label} minimum`}
+            type="number"
+            min={minBound}
+            max={maxBound}
+            value={current.min}
+            onChange={(event) =>
+              onChange({
+                min: clampNumber(Number(event.target.value), minBound, maxBound),
+                max: Math.max(clampNumber(Number(event.target.value), minBound, maxBound), current.max),
+              })
+            }
+            className="h-9 bg-[#0A0A0A] border-white/10 text-sm"
+          />
+          <span className="text-xs text-muted-foreground">to</span>
+          <Input
+            aria-label={`${field.label} maximum`}
+            type="number"
+            min={minBound}
+            max={maxBound}
+            value={current.max}
+            onChange={(event) =>
+              onChange({
+                min: current.min,
+                max: Math.max(clampNumber(Number(event.target.value), minBound, maxBound), current.min),
+              })
+            }
+            className="h-9 bg-[#0A0A0A] border-white/10 text-sm"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'multi-select-chips') {
+    const selected = normalizeMultiSelectValue(field, value);
+    return (
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-foreground">{field.label}</div>
+        <div className="flex flex-wrap gap-2">
+          {field.options.map((option) => {
+            const active = selected.includes(option);
+            return (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onChange(toggleMultiSelectOption(field, selected, option))}
+                className={`rounded-full border px-3 py-1 text-[11px] transition-colors ${
+                  active ? 'border-orange-400/50 bg-orange-400/15 text-orange-200' : 'border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground'
+                }`}
+              >
+                {option}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'single-select-chips') {
+    const selected = normalizeSingleSelectValue(field, value);
+    return (
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-foreground">{field.label}</div>
+        <div className="flex flex-wrap gap-2">
+          {field.options.map((option) => {
+            const active = selected === option;
+            return (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onChange(option)}
+                className={`rounded-full border px-3 py-1 text-[11px] transition-colors ${
+                  active ? 'border-orange-400/50 bg-orange-400/15 text-orange-200' : 'border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground'
+                }`}
+              >
+                {option}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  const selected = normalizeSingleSelectValue(field, value);
+  return (
+    <div className="space-y-2">
+      <label className="text-xs font-medium text-foreground" htmlFor={`filter-${field.field}`}>
+        {field.label}
+      </label>
+      <select
+        id={`filter-${field.field}`}
+        value={selected}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-md border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm text-foreground"
+      >
+        {field.options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function buildDefaultFilterValues(filters: ConsoleDynamicFilterFieldResponse[]) {
+  return filters.reduce((acc, field) => {
+    acc[field.field] = defaultFilterValue(field);
+    return acc;
+  }, {} as Record<string, DynamicFilterSelection>);
+}
+
+function mergeFilterDefaults(
+  filters: ConsoleDynamicFilterFieldResponse[],
+  current: Record<string, DynamicFilterSelection>,
+) {
+  const next = { ...current };
+  filters.forEach((field) => {
+    if (next[field.field] === undefined) {
+      next[field.field] = defaultFilterValue(field);
+    }
+  });
+  return next;
+}
+
+function defaultFilterValue(field: ConsoleDynamicFilterFieldResponse): DynamicFilterSelection {
+  if (field.type === 'range') {
+    return {
+      min: Number(field.default_min ?? field.min ?? 0),
+      max: Number(field.default_max ?? field.max ?? 0),
+    };
+  }
+  if (field.type === 'multi-select-chips') {
+    if (Array.isArray(field.default) && field.default.length > 0) {
+      return [...field.default];
+    }
+    if (typeof field.default === 'string' && field.default.trim()) {
+      return [field.default];
+    }
+    return field.options.length > 0 ? [field.options[0]] : [];
+  }
+  if (typeof field.default === 'string' && field.default.trim()) {
+    return field.default;
+  }
+  return field.options[0] ?? '';
+}
+
+function normalizeRangeValue(field: ConsoleDynamicFilterFieldResponse, value: DynamicFilterSelection | undefined) {
+  const defaultValue = defaultFilterValue(field);
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return {
+      min: Number.isFinite(value.min) ? value.min : (defaultValue as { min: number; max: number }).min,
+      max: Number.isFinite(value.max) ? value.max : (defaultValue as { min: number; max: number }).max,
+    };
+  }
+  return defaultValue as { min: number; max: number };
+}
+
+function clampNumber(value: number, min?: number, max?: number) {
+  if (!Number.isFinite(value)) return min ?? max ?? 0;
+  let next = value;
+  if (Number.isFinite(min as number)) {
+    next = Math.max(next, Number(min));
+  }
+  if (Number.isFinite(max as number)) {
+    next = Math.min(next, Number(max));
+  }
+  return next;
+}
+
+function normalizeMultiSelectValue(field: ConsoleDynamicFilterFieldResponse, value: DynamicFilterSelection | undefined) {
+  if (Array.isArray(value)) return value;
+  const defaultValue = defaultFilterValue(field);
+  return Array.isArray(defaultValue) ? defaultValue : [];
+}
+
+function normalizeSingleSelectValue(field: ConsoleDynamicFilterFieldResponse, value: DynamicFilterSelection | undefined) {
+  if (typeof value === 'string') return value;
+  const defaultValue = defaultFilterValue(field);
+  return typeof defaultValue === 'string' ? defaultValue : field.options[0] ?? '';
+}
+
+function toggleMultiSelectOption(
+  field: ConsoleDynamicFilterFieldResponse,
+  selected: string[],
+  option: string,
+) {
+  if (option.toLowerCase().includes('all')) {
+    return [option];
+  }
+
+  const next = selected.filter((item) => !item.toLowerCase().includes('all'));
+  if (next.includes(option)) {
+    return next.filter((item) => item !== option);
+  }
+  return [...next, option];
+}
+
+function buildSamplingPayload(
+  filters: ConsoleDynamicFilterFieldResponse[],
+  values: Record<string, DynamicFilterSelection>,
+) {
+  const payload: {
+    min_age?: number;
+    max_age?: number;
+    planning_areas: string[];
+    dynamic_filters: Record<string, unknown>;
+  } = {
+    planning_areas: [],
+    dynamic_filters: {},
+  };
+
+  filters.forEach((field) => {
+    const value = values[field.field];
+    if (field.type === 'range') {
+      const range = normalizeRangeValue(field, value);
+      payload.dynamic_filters[field.field] = range;
+      if (field.field === 'age') {
+        payload.min_age = range.min;
+        payload.max_age = range.max;
+      }
+      return;
+    }
+
+    if (field.type === 'multi-select-chips') {
+      const selected = normalizeMultiSelectValue(field, value);
+      payload.dynamic_filters[field.field] = selected;
+      if (field.field === 'planning_area') {
+        payload.planning_areas = selected.filter((item) => !item.toLowerCase().includes('all'));
+      }
+      return;
+    }
+
+    const selected = normalizeSingleSelectValue(field, value);
+    payload.dynamic_filters[field.field] = selected;
+  });
+
+  return payload;
+}
+
 // Data Transformers
 
 function buildAgeBuckets(sampledPersonas: Array<{ persona: Record<string, unknown> }>) {
@@ -666,10 +1055,10 @@ function buildAgeBuckets(sampledPersonas: Array<{ persona: Record<string, unknow
   return buckets;
 }
 
-function buildIndustryMix(sampledPersonas: Array<{ persona: Record<string, unknown> }>) {
+function buildOccupationDistribution(sampledPersonas: Array<{ persona: Record<string, unknown> }>) {
   const counts = sampledPersonas.reduce((acc, row) => {
-    const industry = formatLabel(String(row.persona.industry ?? 'Other'));
-    acc[industry] = (acc[industry] || 0) + 1;
+    const occupation = formatLabel(String(row.persona.occupation ?? 'Other'));
+    acc[occupation] = (acc[occupation] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
   return Object.entries(counts)

@@ -1,29 +1,53 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { ArrowRight, Cpu, Globe, Key, Target } from 'lucide-react';
+
 import { useApp } from '@/contexts/AppContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Globe, Cpu, Key, Target, ArrowRight } from 'lucide-react';
+import {
+  createV2Session,
+  displayProviderId,
+  displayUseCaseId,
+  getV2Countries,
+  getV2Providers,
+  isLiveBootMode,
+  normalizeProviderId,
+  normalizeUseCaseId,
+} from '@/lib/console-api';
 
-const COUNTRIES = [
+type CountryCard = {
+  id: string;
+  name: string;
+  emoji: string;
+  available: boolean;
+};
+
+type ProviderCard = {
+  label: string;
+  models: string[];
+  requiresKey: boolean;
+};
+
+const FALLBACK_COUNTRIES: CountryCard[] = [
   { id: 'singapore', name: 'Singapore', emoji: '🇸🇬', available: true },
   { id: 'usa', name: 'USA', emoji: '🇺🇸', available: true },
   { id: 'india', name: 'India', emoji: '🇮🇳', available: false },
   { id: 'japan', name: 'Japan', emoji: '🇯🇵', available: false },
 ];
 
-const PROVIDERS: Record<string, { name: string; models: string[]; requiresKey: boolean }> = {
+const FALLBACK_PROVIDERS: Record<string, ProviderCard> = {
   gemini: {
-    name: 'Google Gemini',
+    label: 'Google Gemini',
     models: ['gemini-2.0-flash', 'gemini-1.5-pro'],
     requiresKey: true,
   },
   openai: {
-    name: 'OpenAI',
+    label: 'OpenAI',
     models: ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
     requiresKey: true,
   },
   ollama: {
-    name: 'Ollama (Local)',
+    label: 'Ollama (Local)',
     models: ['qwen3:4b-instruct-2507-q4_K_M', 'llama3:8b'],
     requiresKey: false,
   },
@@ -36,38 +60,205 @@ const USE_CASES = [
   { id: 'reviews', label: 'Reviews' },
 ];
 
+function toCountryId(code: string, name: string) {
+  const normalizedCode = String(code || '').trim().toLowerCase();
+  const normalizedName = String(name || '').trim().toLowerCase();
+  if (normalizedCode === 'sg' || normalizedName === 'singapore') {
+    return 'singapore';
+  }
+  if (normalizedCode === 'us' || normalizedName === 'usa') {
+    return 'usa';
+  }
+  return normalizedCode || normalizedName;
+}
+
+function toDisplayCountry(country: string) {
+  return toCountryId(country, country);
+}
+
+function toDisplayUseCase(useCase: string) {
+  return displayUseCaseId(useCase) || 'policy-review';
+}
+
+function buildCountryCatalog(countries: Array<{ code: string; name: string; flag_emoji: string; available: boolean }>) {
+  const catalogById = new Map<string, CountryCard>();
+
+  for (const country of countries) {
+    const id = toCountryId(country.code, country.name);
+    if (!id) {
+      continue;
+    }
+
+    catalogById.set(id, {
+      id,
+      name: country.name,
+      emoji: country.flag_emoji,
+      available: country.available,
+    });
+  }
+
+  const merged = FALLBACK_COUNTRIES.map((fallback) => catalogById.get(fallback.id) ?? fallback);
+  for (const [id, country] of catalogById.entries()) {
+    if (!merged.some((item) => item.id === id)) {
+      merged.push(country);
+    }
+  }
+
+  return merged;
+}
+
+function buildProviderCatalog(providers: Array<{ name: string; models: string[]; requires_api_key: boolean }>) {
+  const catalog: Record<string, ProviderCard> = {};
+  for (const provider of providers) {
+    const id = String(provider.name || '').trim().toLowerCase();
+    if (!id) {
+      continue;
+    }
+    catalog[id] = {
+      label:
+        id === 'gemini'
+          ? 'Google Gemini'
+          : id === 'openai'
+            ? 'OpenAI'
+            : id === 'ollama'
+              ? 'Ollama (Local)'
+              : provider.name,
+      models: provider.models.length > 0 ? provider.models : FALLBACK_PROVIDERS[id]?.models ?? [],
+      requiresKey: Boolean(provider.requires_api_key),
+    };
+  }
+  return Object.keys(catalog).length > 0 ? catalog : FALLBACK_PROVIDERS;
+}
+
 export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const app = useApp();
+  const liveMode = isLiveBootMode();
 
-  const [country, setCountry] = useState(app.country || 'singapore');
-  const [provider, setProvider] = useState(app.modelProvider || 'gemini');
-  const [model, setModel] = useState(app.modelName || PROVIDERS['gemini'].models[0]);
-  const [apiKey, setApiKey] = useState(app.modelApiKey || '');
-  const [useCase, setUseCase] = useState(app.useCase || 'policy-review');
+  const [countries, setCountries] = useState<CountryCard[]>(FALLBACK_COUNTRIES);
+  const [providers, setProviders] = useState<Record<string, ProviderCard>>(liveMode ? {} : FALLBACK_PROVIDERS);
+  const [country, setCountry] = useState(() => toDisplayCountry(app.country || 'singapore'));
+  const [provider, setProvider] = useState(() => displayProviderId(app.modelProvider) || 'gemini');
+  const [model, setModel] = useState(() => app.modelName || FALLBACK_PROVIDERS.gemini.models[0]);
+  const [apiKey, setApiKey] = useState(() => app.modelApiKey || '');
+  const [useCase, setUseCase] = useState(() => toDisplayUseCase(app.useCase || 'policy-review'));
+  const [launchError, setLaunchError] = useState('');
 
   useEffect(() => {
-    if (provider && !PROVIDERS[provider].models.includes(model)) {
-      setModel(PROVIDERS[provider].models[0]);
+    if (!isOpen) {
+      return;
     }
-  }, [provider, model]);
+
+    setCountry(toDisplayCountry(app.country || 'singapore'));
+    setProvider(displayProviderId(app.modelProvider) || 'gemini');
+    setModel(app.modelName || FALLBACK_PROVIDERS[displayProviderId(app.modelProvider) || 'gemini']?.models[0] || FALLBACK_PROVIDERS.gemini.models[0]);
+    setApiKey(app.modelApiKey || '');
+    setUseCase(toDisplayUseCase(app.useCase || 'policy-review'));
+  }, [app.country, app.modelApiKey, app.modelName, app.modelProvider, app.useCase, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    let cancelled = false;
+    const loadCatalogs = async () => {
+      try {
+        const payload = await getV2Countries();
+        if (!cancelled && payload.length > 0) {
+          setCountries(buildCountryCatalog(payload));
+        } else if (!cancelled && !liveMode) {
+          setCountries(FALLBACK_COUNTRIES);
+        }
+      } catch {
+        if (!cancelled && !liveMode) {
+          setCountries(FALLBACK_COUNTRIES);
+        }
+      }
+
+      try {
+        const payload = await getV2Providers();
+        if (!cancelled && payload.length > 0) {
+          setProviders(buildProviderCatalog(payload));
+        } else if (!cancelled && liveMode) {
+          setProviders({});
+          setLaunchError('Live provider catalog returned no options.');
+        }
+      } catch {
+        if (liveMode) {
+          setProviders({});
+          setLaunchError('Live provider catalog is unavailable.');
+        }
+      }
+    };
+
+    void loadCatalogs();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    const providerCard = providers[provider];
+    if (!providerCard || providerCard.models.length === 0) {
+      return;
+    }
+
+    if (!providerCard.models.includes(model)) {
+      setModel(providerCard.models[0]);
+    }
+  }, [model, provider, providers]);
 
   if (!isOpen) return null;
 
-  const handleLaunch = () => {
-    app.setCountry(country);
-    app.setModelProvider(provider as any);
-    app.setModelName(model);
-    app.setModelApiKey(apiKey);
-    app.setUseCase(useCase);
-    // In a real app we might call POST /api/v2/session/create here
-    onClose();
+  const handleLaunch = async () => {
+    const resolvedProvider = normalizeProviderId(provider);
+    const resolvedUseCase = normalizeUseCaseId(useCase);
+    const providerCard = providers[provider] ?? (liveMode ? undefined : FALLBACK_PROVIDERS[provider] ?? FALLBACK_PROVIDERS.gemini);
+    const resolvedCountry = country || 'singapore';
+
+    if (!providerCard || providerCard.models.length === 0) {
+      setLaunchError('Select a provider and model before launching.');
+      return;
+    }
+    const resolvedModel = model || providerCard.models[0];
+    const resolvedApiKey = providerCard.requiresKey ? apiKey : '';
+    if (providerCard.requiresKey && !resolvedApiKey.trim()) {
+      setLaunchError('API key is required for this provider.');
+      return;
+    }
+    if (!resolvedCountry || !resolvedModel) {
+      setLaunchError('Country and model are required.');
+      return;
+    }
+
+    try {
+      const payload = await createV2Session({
+        country: resolvedCountry,
+        provider: resolvedProvider,
+        model: resolvedModel,
+        api_key: resolvedApiKey || undefined,
+        use_case: resolvedUseCase,
+      });
+
+      app.setCountry(resolvedCountry);
+      app.setModelProvider(resolvedProvider as any);
+      app.setModelName(resolvedModel);
+      app.setModelApiKey(resolvedApiKey);
+      app.setUseCase(resolvedUseCase);
+      app.setSessionId(payload.session_id);
+      setLaunchError('');
+      onClose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to launch simulation environment.';
+      setLaunchError(message);
+    }
   };
+
+  const selectedProvider = providers[provider] ?? (!liveMode ? FALLBACK_PROVIDERS[provider] ?? FALLBACK_PROVIDERS.gemini : undefined);
 
   return (
     <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="surface-card w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-        
-        {/* Header */}
         <div className="p-6 border-b border-border text-center">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-white/5 border border-white/10 mb-4">
             <Globe className="w-6 h-6 text-foreground" />
@@ -76,26 +267,32 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
           <p className="text-sm text-muted-foreground mt-1">Select your environment parameters to spin up a new OASIS instance.</p>
         </div>
 
-        {/* Scrollable Form Content */}
         <div className="p-6 overflow-y-auto scrollbar-thin space-y-8">
-          
-          {/* Country / Region */}
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Globe className="w-4 h-4 text-muted-foreground" />
               <span className="label-meta">Region & Dataset</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {COUNTRIES.map((c) => {
+              {countries.map((c) => {
                 const isSelected = country === c.id;
                 return (
                   <button
                     key={c.id}
-                    disabled={!c.available}
-                    onClick={() => setCountry(c.id)}
+                    type="button"
+                    onClick={() => {
+                      if (!c.available) {
+                        setLaunchError('Coming soon');
+                        return;
+                      }
+
+                      setLaunchError('');
+                      setCountry(c.id);
+                    }}
+                    title={!c.available ? 'Coming soon' : undefined}
                     className={`
                       relative p-4 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all
-                      ${c.available ? 'cursor-pointer hover:bg-white/5' : 'cursor-not-allowed opacity-40'}
+                      ${c.available ? 'cursor-pointer hover:bg-white/5' : 'cursor-not-allowed opacity-40 hover:bg-white/5'}
                       ${isSelected ? 'border-[hsl(var(--data-blue))] bg-[hsl(var(--data-blue))]/10' : 'border-white/10 bg-transparent'}
                     `}
                   >
@@ -114,7 +311,6 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
             </div>
           </div>
 
-          {/* Core Configuration: Provider & Model */}
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Cpu className="w-4 h-4 text-muted-foreground" />
@@ -128,8 +324,10 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                   onChange={(e) => setProvider(e.target.value)}
                   className="w-full bg-background border border-border rounded-lg outline-none focus:border-white/30 px-3 py-2 text-sm text-foreground appearance-none"
                 >
-                  {Object.entries(PROVIDERS).map(([key, data]) => (
-                    <option key={key} value={key}>{data.name}</option>
+                  {Object.entries(providers).map(([key, data]) => (
+                    <option key={key} value={key}>
+                      {data.label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -138,17 +336,19 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                 <select
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
+                  disabled={!selectedProvider || selectedProvider.models.length === 0}
                   className="w-full bg-background border border-border rounded-lg outline-none focus:border-white/30 px-3 py-2 text-sm text-foreground appearance-none"
                 >
-                  {PROVIDERS[provider].models.map((m) => (
-                    <option key={m} value={m}>{m}</option>
+                  {(selectedProvider?.models ?? []).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
                   ))}
                 </select>
               </div>
             </div>
 
-            {/* API Key */}
-            {PROVIDERS[provider].requiresKey && (
+            {selectedProvider?.requiresKey && (
               <div className="mt-4 space-y-1.5">
                 <label className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
                   <Key className="w-3.5 h-3.5" /> API Key
@@ -164,7 +364,6 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
             )}
           </div>
 
-          {/* Use Case */}
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Target className="w-4 h-4 text-muted-foreground" />
@@ -190,16 +389,15 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
           </div>
         </div>
 
-        {/* Footer / CTA */}
         <div className="p-6 border-t border-border bg-[#050505]">
           <Button
-            onClick={handleLaunch}
+            onClick={() => void handleLaunch()}
             className="w-full bg-[hsl(var(--data-blue))] hover:bg-[hsl(210,100%,50%)] text-white font-medium h-12 text-sm border-0"
           >
             Launch Simulation Environment <ArrowRight className="w-4 h-4 ml-2" />
           </Button>
+          {launchError && <p className="mt-2 text-xs text-destructive">{launchError}</p>}
         </div>
-        
       </div>
     </div>
   );

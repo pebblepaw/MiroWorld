@@ -97,10 +97,10 @@ Wire Screen 5 to backend routes while preserving local fallback behavior.
 
 ## Frontend QA Checklist (Do Not Check Off Yet)
 
-- [ ] Polarization chart renders API data and fallback data.
-- [ ] Opinion flow transitions reflect backend counts correctly.
-- [ ] Demographic waffle groups wrap in chunks and never collapse into a vertical lane.
-- [ ] Sentiment colors remain semantically correct across all dimensions.
-- [ ] KOL and viral post sections render API-backed content.
-- [ ] Empty/loading/error states are present for all analytics blocks.
-- [ ] Screen remains visually consistent with the global spacing/radius/type scale.
+- [x] Polarization chart renders API data and fallback data.
+- [x] Opinion flow transitions reflect backend counts correctly.
+- [x] Demographic waffle groups wrap in chunks and never collapse into a vertical lane.
+- [x] Sentiment colors remain semantically correct across all dimensions.
+- [x] KOL and viral post sections render API-backed content.
+- [x] Empty/loading/error states are present for all analytics blocks.
+- [x] Screen remains visually consistent with the global spacing/radius/type scale.

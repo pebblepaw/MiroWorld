@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -98,6 +98,16 @@ function SeedStage3Context() {
   return null;
 }
 
+function SimulationPostsProbe() {
+  const { simPosts } = useApp();
+  return (
+    <div>
+      <div data-testid="sim-post-count">{simPosts.length}</div>
+      <div data-testid="sim-post-title">{simPosts[0]?.title ?? ""}</div>
+    </div>
+  );
+}
+
 describe("Simulation", () => {
   const originalFetch = global.fetch;
   const originalEventSource = global.EventSource;
@@ -134,13 +144,15 @@ describe("Simulation", () => {
   afterEach(() => {
     global.fetch = originalFetch;
     global.EventSource = originalEventSource;
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
-  it("starts a live simulation, consumes the SSE stream, and renders feed progress plus completion state", async () => {
+  it("uses the v2 simulate contract, defaults controversy boost off to 0, normalizes SSE metrics, and persists sim posts", async () => {
     render(
       <AppProvider>
         <SeedStage3Context />
+        <SimulationPostsProbe />
         <Simulation />
       </AppProvider>,
     );
@@ -150,8 +162,9 @@ describe("Simulation", () => {
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
     const request = vi.mocked(global.fetch).mock.calls[0];
-    expect(request[0]).toContain("/api/v2/console/session/session-screen3/simulation/start");
+    expect(request[0]).toContain("/api/v2/console/session/session-screen3/simulate");
     expect(JSON.parse(String(request[1]?.body)).rounds).toBe(5);
+    expect(JSON.parse(String(request[1]?.body)).controversy_boost).toBe(0);
 
     const source = MockEventSource.instances[0];
     expect(source.url).toContain("/api/v2/console/session/session-screen3/simulation/stream");
@@ -160,8 +173,8 @@ describe("Simulation", () => {
       source.emit("checkpoint_started", { event_type: "checkpoint_started", checkpoint_kind: "baseline", total_agents: 3 });
       source.emit("checkpoint_completed", { event_type: "checkpoint_completed", checkpoint_kind: "baseline", completed_agents: 3, total_agents: 3 });
       source.emit("round_started", { event_type: "round_started", round_no: 1 });
-      source.emit("round_batch_flushed", { event_type: "round_batch_flushed", round_no: 1, batch_index: 1, batch_count: 2 });
-      source.emit("post_created", { event_type: "post_created", round_no: 1, actor_agent_id: "agent-0001", actor_name: "Amir", actor_subtitle: "Woodlands · Student", post_id: 1, title: "Sports access matters", content: "The subsidy would make weekly training affordable." });
+      source.emit("round_batch_flushed", { event_type: "round_batch_flushed", round: 1, batch: 1, total_batches: 2, percentage: 50 });
+      source.emit("post_created", { event_type: "post_created", round_no: 1, actor_agent_id: "agent-0001", actor_name: "Amir", actor_subtitle: "Woodlands · Student", actor_occupation: "Student", post_id: 1, title: "Sports access matters", content: "The subsidy would make weekly training affordable." });
       source.emit("comment_created", { event_type: "comment_created", round_no: 1, actor_agent_id: "agent-0002", actor_name: "Rachel", actor_subtitle: "Woodlands · Coach", post_id: 1, comment_id: 4, content: "This also helps team retention." });
       source.emit("comment_created", { event_type: "comment_created", round_no: 1, actor_agent_id: "agent-0002", actor_name: "Rachel", actor_subtitle: "Woodlands · Coach", post_id: 1, comment_id: 5, content: "Parents can plan activities earlier." });
       source.emit("comment_created", { event_type: "comment_created", round_no: 1, actor_agent_id: "agent-0003", actor_name: "Joel", actor_subtitle: "Yishun · Accountant", post_id: 1, comment_id: 6, content: "Affordability affects participation." });
@@ -176,6 +189,10 @@ describe("Simulation", () => {
         counters: { posts: 1, comments: 1, reactions: 1, active_authors: 2 },
         top_threads: [{ post_id: 1, title: "Sports access matters", engagement: 3 }],
         discussion_momentum: { approval_delta: 0.12, dominant_stance: "support" },
+        metrics: {
+          approval_rate: { value: 73.4, label: "Approval Rate" },
+          net_sentiment: { value: 6.8, label: "Net Sentiment" },
+        },
       });
       source.emit("run_completed", { event_type: "run_completed", round_no: 1, elapsed_seconds: 15 });
     });
@@ -187,9 +204,131 @@ describe("Simulation", () => {
     expect(screen.queryByText("Transport support should be bundled too.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /view 1 more replies/i }));
     expect(screen.getByText("Transport support should be bundled too.")).toBeInTheDocument();
-    expect(screen.getByText("Process Timeline")).toBeInTheDocument();
-    expect(screen.getByText("15s")).toBeInTheDocument();
+    expect(screen.getByText("Round 1 (50%)")).toBeInTheDocument();
+    expect(screen.getByText("0m 15s")).toBeInTheDocument();
     expect(screen.getByText("Generate Report")).toBeInTheDocument();
+    expect(screen.getByText("73.4%")).toBeInTheDocument();
+    expect(screen.getByText("6.8/10")).toBeInTheDocument();
+    expect(screen.getByTestId("sim-post-count")).toHaveTextContent("1");
+    expect(screen.getByTestId("sim-post-title")).toHaveTextContent("Sports access matters");
     expect(screen.getAllByText("1").length).toBeGreaterThan(1);
+  });
+
+  it("sends a 0.5 controversy boost when the binary toggle is enabled", async () => {
+    render(
+      <AppProvider>
+        <SeedStage3Context />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("switch", { name: /controversy boost/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start simulation/i }));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    const request = vi.mocked(global.fetch).mock.calls[0];
+    expect(JSON.parse(String(request[1]?.body)).controversy_boost).toBe(0.5);
+  });
+
+  it("shows hover tooltips for controversy and metric cards while keeping separate scroll regions", async () => {
+    render(
+      <AppProvider>
+        <SeedStage3Context />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    expect(document.querySelector("div.flex.h-full.min-h-0.gap-6.overflow-hidden.p-6")).toBeTruthy();
+    expect(document.querySelectorAll("div.overflow-y-auto.scrollbar-thin").length).toBeGreaterThanOrEqual(2);
+
+    expect(screen.getByText("Controversy Boost").closest("[title]")).toHaveAttribute(
+      "title",
+      "Models social media ragebait amplification by boosting high-engagement controversial content.",
+    );
+    expect(screen.getByText("Approval Rate").closest("[title]")).toHaveAttribute(
+      "title",
+      "Reads the latest approval rate from the simulation metrics payload.",
+    );
+  });
+
+  it("shows missing markers instead of fabricated metric values in live mode when metrics are absent", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    render(
+      <AppProvider>
+        <SeedStage3Context />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    const approvalCard = screen.getByText("Approval Rate").closest('div[title]');
+    const sentimentCard = screen.getByText("Net Sentiment").closest('div[title]');
+
+    expect(approvalCard).toBeTruthy();
+    expect(sentimentCard).toBeTruthy();
+    expect(within(approvalCard as HTMLElement).getByText("—")).toBeInTheDocument();
+    expect(within(sentimentCard as HTMLElement).getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("68.0%")).not.toBeInTheDocument();
+    expect(screen.queryByText("7.2/10")).not.toBeInTheDocument();
+  });
+
+  it("shows a live simulation error instead of generating mock fallback posts", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/simulate")) {
+        return {
+          ok: false,
+          status: 502,
+          statusText: "Bad Gateway",
+          json: async () => ({ detail: "live simulation unavailable" }),
+        } as Response;
+      }
+      if (url.includes("/simulation/metrics")) {
+        return {
+          ok: false,
+          status: 502,
+          statusText: "Bad Gateway",
+          json: async () => ({ detail: "metrics unavailable" }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          session_id: "session-screen3",
+          status: "running",
+          event_count: 0,
+          last_round: 0,
+          platform: "reddit",
+          planned_rounds: 4,
+          current_round: 0,
+          elapsed_seconds: 0,
+          estimated_total_seconds: 55,
+          estimated_remaining_seconds: 55,
+          counters: { posts: 0, comments: 0, reactions: 0, active_authors: 0 },
+          checkpoint_status: {
+            baseline: { status: "pending", completed_agents: 0, total_agents: 3 },
+            final: { status: "pending", completed_agents: 0, total_agents: 3 },
+          },
+          top_threads: [],
+          discussion_momentum: { approval_delta: 0, dominant_stance: "mixed" },
+          latest_metrics: {},
+          recent_events: [],
+        }),
+      } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedStage3Context />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /start simulation/i }));
+
+    expect(await screen.findByText("live simulation unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Simulation Error")).toBeInTheDocument();
+    expect(screen.queryByText(/Demo simulation loaded/i)).not.toBeInTheDocument();
   });
 });

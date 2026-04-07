@@ -110,7 +110,7 @@ describe("Analysis", () => {
 
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(vi.mocked(global.fetch).mock.calls[0][0]).toContain("/api/v2/console/session/session-screen4/report/generate");
-    expect(vi.mocked(global.fetch).mock.calls[1][0]).toContain("/api/v2/console/session/session-screen4/report/full");
+    expect(vi.mocked(global.fetch).mock.calls[1][0]).toContain("/api/v2/console/session/session-screen4/report");
     expect(screen.getByText(/generating ai report/i)).toBeInTheDocument();
 
     await act(async () => {

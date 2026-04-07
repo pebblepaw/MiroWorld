@@ -25,6 +25,7 @@ class RunnerInput:
     api_key: str
     base_url: str
     oasis_db_path: str
+    controversy_boost: float = 0.0
     events_path: str | None = None
     elapsed_offset_seconds: int = 0
     tail_checkpoint_estimate_seconds: int = 0
@@ -330,6 +331,33 @@ def _get_active_agents_for_round(
     return active_agents
 
 
+def _apply_controversy_boost_to_env(env: Any, controversy_boost: float) -> None:
+    boost = max(0.0, min(1.0, float(controversy_boost or 0.0)))
+    if boost <= 0:
+        return
+    recsys = getattr(env, "rec_sys_reddit", None) or getattr(env, "rec_sys", None)
+    if recsys is None:
+        return
+    calculate_hot_score = getattr(recsys, "calculate_hot_score", None)
+    if not callable(calculate_hot_score):
+        return
+
+    def wrapped_hot_score(num_likes: int, num_dislikes: int, created_at, *args, **kwargs):
+        try:
+            return calculate_hot_score(
+                num_likes,
+                num_dislikes,
+                created_at,
+                controversy_boost=boost,
+                *args,
+                **kwargs,
+            )
+        except TypeError:
+            return calculate_hot_score(num_likes, num_dislikes, created_at, *args, **kwargs)
+
+    setattr(recsys, "calculate_hot_score", wrapped_hot_score)
+
+
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
@@ -445,6 +473,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         database_path=str(db_path),
         semaphore=max(1, int(payload.oasis_semaphore)),
     )
+    _apply_controversy_boost_to_env(env, payload.controversy_boost)
 
     await env.reset()
     start_monotonic = time.monotonic()
@@ -534,6 +563,13 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
                 tail_checkpoint_estimate_seconds=payload.tail_checkpoint_estimate_seconds,
             )
 
+            progress_payload = {
+                "round": round_no,
+                "batch": batch_index + 1,
+                "total_batches": batch_count,
+                "percentage": round(((batch_index + 1) / max(1, batch_count)) * 100, 1),
+                "label": f"Round {round_no} ({round(((batch_index + 1) / max(1, batch_count)) * 100, 0):.0f}%)",
+            }
             emit_event(
                 "round_batch_flushed",
                 round_no=round_no,
@@ -541,6 +577,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
                 batch_count=batch_count,
                 batch_size=len(batch),
                 active_agents=len(active_agents),
+                **progress_payload,
             )
 
         emit_event("round_completed", round_no=round_no, active_agents=len(active_agents), batch_count=batch_count)
@@ -666,6 +703,14 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
             }
         )
 
+    prompt_chars = len(payload.policy_summary or "")
+    generated_chars = sum(len(str(event.get("content", "") or "")) for event in interactions)
+    token_usage = {
+        "input_tokens": max(1, int(prompt_chars / 4)) * max(1, len(ordered_personas)),
+        "output_tokens": max(1, int(generated_chars / 4)),
+        "cached_tokens": 0,
+    }
+
     return {
         "simulation_id": payload.simulation_id,
         "agents": agents,
@@ -677,6 +722,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         "oasis_db_path": str(db_path),
         "elapsed_seconds": simulation_elapsed_seconds,
         "counters": counters,
+        "token_usage": token_usage,
         "generated_at": datetime.now(UTC).isoformat(),
     }
 
@@ -881,6 +927,13 @@ def _emit_incremental_db_events(
         elapsed_offset_seconds + (observed_round_seconds * max(1, planned_rounds)) + tail_checkpoint_estimate_seconds
     )
     estimated_remaining_seconds = max(0, estimated_total_seconds - elapsed_seconds)
+    round_progress = {
+        "round": round_no,
+        "batch": 0,
+        "total_batches": 0,
+        "percentage": 100.0,
+        "label": f"Round {round_no} (100%)",
+    }
 
     emit_event(
         "metrics_updated",
@@ -893,6 +946,8 @@ def _emit_incremental_db_events(
             "comments": total_comments,
             "reactions": total_reactions,
             "active_authors": active_authors,
+            "post_dislikes": total_dislike_count,
+            "comment_votes": comment_like_count + comment_dislike_count,
         },
         top_threads=top_threads,
         discussion_momentum={
@@ -901,12 +956,18 @@ def _emit_incremental_db_events(
             "likes": total_like_count,
             "dislikes": total_dislike_count,
         },
+        round_progress=round_progress,
+        round_progress_label=round_progress["label"],
         metrics={
             "posts": total_posts,
             "comments": total_comments,
             "reactions": total_reactions,
             "active_authors": active_authors,
+            "post_dislikes": total_dislike_count,
+            "comment_votes": comment_like_count + comment_dislike_count,
             "top_thread_title": top_threads[0]["title"] if top_threads else None,
+            "round_progress": round_progress,
+            "round_progress_label": round_progress["label"],
         },
     )
 

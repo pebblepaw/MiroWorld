@@ -5,17 +5,34 @@ import 'leaflet/dist/leaflet.css';
 
 interface SingaporeMapProps {
   areaData: Array<{ name: string; count: number }>;
+  country?: 'singapore' | 'usa';
 }
 
-export function SingaporeMap({ areaData }: SingaporeMapProps) {
+const MAP_CONFIG = {
+  singapore: {
+    url: '/maps/singapore_planning_areas.geojson',
+    center: [1.3521, 103.8198] as const,
+    zoom: 10,
+    label: 'Singapore',
+  },
+  usa: {
+    url: '/maps/usa_states.geojson',
+    center: [39.8283, -98.5795] as const,
+    zoom: 4,
+    label: 'USA',
+  },
+} as const;
+
+export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapProps) {
   const [geoData, setGeoData] = useState<FeatureCollection | null>(null);
+  const mapConfig = MAP_CONFIG[country];
 
   useEffect(() => {
-    fetch('/maps/singapore_planning_areas.geojson')
+    fetch(mapConfig.url)
       .then((res) => res.json())
       .then((data) => setGeoData(data))
-      .catch((err) => console.error('Failed to load Singapore GeoJSON:', err));
-  }, []);
+      .catch((err) => console.error(`Failed to load ${mapConfig.label} GeoJSON:`, err));
+  }, [mapConfig.label, mapConfig.url]);
 
   const dataMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -69,8 +86,8 @@ export function SingaporeMap({ areaData }: SingaporeMapProps) {
   return (
     <div className="w-full h-[160px] rounded-md overflow-hidden bg-[#0A0A0A] relative isolate">
       <MapContainer
-        center={[1.3521, 103.8198]} // Singapore center
-        zoom={10}
+        center={mapConfig.center}
+        zoom={mapConfig.zoom}
         zoomControl={false}
         scrollWheelZoom={false}
         dragging={true}

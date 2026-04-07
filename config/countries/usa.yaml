@@ -1,0 +1,32 @@
+name: "United States"
+code: "us"
+flag_emoji: "🇺🇸"
+dataset_path: "backend/data/nemotron/usa_nemotron_cc.parquet"
+available: true
+
+filter_fields:
+  - field: "age"
+    type: "range"
+    label: "Age Range"
+    default_min: 18
+    default_max: 70
+  - field: "state"
+    type: "multi-select-chips"
+    label: "State"
+  - field: "occupation"
+    type: "dropdown"
+    label: "Occupation"
+  - field: "gender"
+    type: "single-select-chips"
+    label: "Gender"
+  - field: "ethnicity"
+    type: "multi-select-chips"
+    label: "Ethnicity"
+
+geo_json_path: "config/countries/usa_geo.json"
+map_center: [39.8283, -98.5795]
+map_zoom: 4
+
+max_agents: 500
+default_agents: 250
+name_regex: "^([A-Z][a-z]+(?:\\s[A-Z][a-z]+){1,3})"

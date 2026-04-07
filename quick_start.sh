@@ -17,6 +17,11 @@ LLM_BASE_URL_DEFAULT="${LLM_BASE_URL:-http://127.0.0.1:11434/v1/}"
 
 PY_BIN="${PY_BIN:-$ROOT_DIR/.venv/bin/python}"
 OASIS_PY_BIN_DEFAULT="$BACKEND_DIR/.venv311/bin/python"
+OLLAMA_LOG="$BACKEND_DIR/log/quick_start_ollama.log"
+OLLAMA_PID=""
+OLLAMA_REACHABILITY_URL="${LLM_BASE_URL_DEFAULT%/}"
+OLLAMA_REACHABILITY_URL="${OLLAMA_REACHABILITY_URL%/v1}"
+OLLAMA_REACHABILITY_URL="$OLLAMA_REACHABILITY_URL/api/tags"
 
 REFRESH_DEMO=false
 LIVE_OASIS=false
@@ -141,15 +146,61 @@ ensure_oasis_runtime() {
   fi
 }
 
-if [[ "$BOOT_MODE" == "live" && "$LLM_PROVIDER_DEFAULT" == "ollama" ]]; then
-  if ! command -v ollama >/dev/null 2>&1; then
-    echo "Live mode default provider is Ollama but 'ollama' is not installed."
-    exit 1
+ollama_server_reachable() {
+  curl -sf "$OLLAMA_REACHABILITY_URL" >/dev/null 2>&1
+}
+
+start_ollama_server_if_needed() {
+  local normalized_provider
+  normalized_provider="$(printf '%s' "$LLM_PROVIDER_DEFAULT" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "$normalized_provider" != "ollama" ]]; then
+    return 0
   fi
-  echo "[ollama] Verifying local models for live mode..."
-  ensure_ollama_model "$LLM_MODEL_DEFAULT"
-  ensure_ollama_model "$LLM_EMBED_MODEL_DEFAULT"
-fi
+
+  if ollama_server_reachable; then
+    echo "[ollama] Local server is already reachable."
+    return 0
+  fi
+
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "[ollama] CLI not found; continuing without local Ollama auto-start."
+    return 0
+  fi
+
+  echo "[ollama] Starting local server in the background..."
+  ollama serve > "$OLLAMA_LOG" 2>&1 &
+  OLLAMA_PID=$!
+
+  for _ in {1..30}; do
+    if ollama_server_reachable; then
+      echo "[ollama] Local server is ready."
+      return 0
+    fi
+
+    if ! kill -0 "$OLLAMA_PID" >/dev/null 2>&1; then
+      echo "[ollama] Server exited before becoming reachable. See log: $OLLAMA_LOG"
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  echo "[ollama] Server is still starting in the background."
+}
+
+cleanup() {
+  if [[ -n "${OLLAMA_PID:-}" ]] && kill -0 "$OLLAMA_PID" >/dev/null 2>&1; then
+    kill "$OLLAMA_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${BACKEND_PID:-}" ]] && kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
+    kill "$BACKEND_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${FRONTEND_PID:-}" ]] && kill -0 "$FRONTEND_PID" >/dev/null 2>&1; then
+    kill "$FRONTEND_PID" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT INT TERM
 
 if [[ "$LIVE_OASIS" == "true" ]]; then
   ensure_oasis_runtime
@@ -176,6 +227,10 @@ mkdir -p "$BACKEND_DIR/log"
 BACKEND_LOG="$BACKEND_DIR/log/quick_start_backend.log"
 FRONTEND_LOG="$BACKEND_DIR/log/quick_start_frontend.log"
 
+if [[ "$LIVE_OASIS" == "true" ]]; then
+  start_ollama_server_if_needed
+fi
+
 BACKEND_ENV=("PYTHONPATH=src")
 BACKEND_ENV+=("LLM_PROVIDER=$LLM_PROVIDER_DEFAULT")
 BACKEND_ENV+=("LLM_MODEL=$LLM_MODEL_DEFAULT")
@@ -194,16 +249,6 @@ echo "[backend] Starting API on http://$BACKEND_HOST:$BACKEND_PORT ..."
   env "${BACKEND_ENV[@]}" "$PY_BIN" -m uvicorn mckainsey.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" > "$BACKEND_LOG" 2>&1
 ) &
 BACKEND_PID=$!
-
-cleanup() {
-  if kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
-    kill "$BACKEND_PID" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "${FRONTEND_PID:-}" ]] && kill -0 "$FRONTEND_PID" >/dev/null 2>&1; then
-    kill "$FRONTEND_PID" >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup EXIT INT TERM
 
 for i in {1..60}; do
   if curl -sf "http://$BACKEND_HOST:$BACKEND_PORT/health" >/dev/null 2>&1; then

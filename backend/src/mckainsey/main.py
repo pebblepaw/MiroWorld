@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from mckainsey.api.routes_health import router as health_router
-from mckainsey.api.routes_console import router as console_router
+from mckainsey.api.routes_analytics import router as analytics_router
+from mckainsey.api.routes_console import compat_router, router as console_router
 from mckainsey.api.routes_phase_a import router as phase_a_router
 from mckainsey.api.routes_phase_b import router as phase_b_router
 from mckainsey.api.routes_phase_c import router as phase_c_router
@@ -23,6 +24,8 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(console_router)
+app.include_router(analytics_router)
+app.include_router(compat_router)
 app.include_router(phase_a_router)
 app.include_router(phase_b_router)
 app.include_router(phase_c_router)

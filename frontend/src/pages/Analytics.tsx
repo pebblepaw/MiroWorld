@@ -12,6 +12,13 @@ import { Activity, Flame, GitBranch, Megaphone, Users2 } from "lucide-react";
 
 import { useApp } from "@/contexts/AppContext";
 import { generateAgents, type Agent } from "@/data/mockData";
+import {
+  getAnalyticsCascades,
+  getAnalyticsInfluence,
+  getAnalyticsOpinionFlow,
+  getAnalyticsPolarization,
+  isLiveBootMode,
+} from "@/lib/console-api";
 
 type PolarizationPoint = {
   round: string;
@@ -239,18 +246,123 @@ const VIRAL_POSTS: ViralPost[] = [
 const STANCE_ORDER: Stance[] = ["supporter", "neutral", "dissenter"];
 
 export default function Analytics() {
-  const { agents, useCase, country, simulationRounds } = useApp();
+  const { agents, useCase, country, simulationRounds, sessionId } = useApp();
+  const liveMode = isLiveBootMode();
 
   const [dimension, setDimension] = useState<DemographicDimension>(() => defaultDimensionForUseCase(useCase));
+  const [polarizationData, setPolarizationData] = useState<PolarizationPoint[]>(() => (liveMode ? [] : POLARIZATION_DATA));
+  const [opinionFlowData, setOpinionFlowData] = useState<OpinionFlowData>(() => (liveMode ? { initial: { supporter: 0, neutral: 0, dissenter: 0 }, final: { supporter: 0, neutral: 0, dissenter: 0 }, flows: [] } : OPINION_FLOW));
+  const [leaderData, setLeaderData] = useState<Leader[]>(() => (liveMode ? [] : KEY_OPINION_LEADERS));
+  const [viralPostData, setViralPostData] = useState<ViralPost[]>(() => (liveMode ? [] : VIRAL_POSTS));
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
   useEffect(() => {
     setDimension(defaultDimensionForUseCase(useCase));
   }, [useCase]);
 
+  useEffect(() => {
+    const isLive = isLiveBootMode();
+    if (!sessionId) {
+      if (isLive) {
+        setPolarizationData([]);
+        setOpinionFlowData({ initial: { supporter: 0, neutral: 0, dissenter: 0 }, final: { supporter: 0, neutral: 0, dissenter: 0 }, flows: [] });
+        setLeaderData([]);
+        setViralPostData([]);
+        setAnalyticsError("Complete Screen 3 before loading live analytics.");
+      } else {
+        setPolarizationData(POLARIZATION_DATA);
+        setOpinionFlowData(OPINION_FLOW);
+        setLeaderData(KEY_OPINION_LEADERS);
+        setViralPostData(VIRAL_POSTS);
+        setAnalyticsError(null);
+      }
+      setAnalyticsLoading(false);
+      return;
+    }
+
+    let active = true;
+    setAnalyticsLoading(true);
+    setAnalyticsError(null);
+
+    void Promise.allSettled([
+      getAnalyticsPolarization(sessionId),
+      getAnalyticsOpinionFlow(sessionId),
+      getAnalyticsInfluence(sessionId),
+      getAnalyticsCascades(sessionId),
+    ]).then(([polarization, flow, influence, cascades]) => {
+      if (!active) return;
+
+      const normalizedPolarization = polarization.status === "fulfilled"
+        ? normalizePolarizationPayload(polarization.value)
+        : null;
+      const normalizedFlow = flow.status === "fulfilled"
+        ? normalizeOpinionFlowPayload(flow.value)
+        : null;
+      const normalizedLeaders = influence.status === "fulfilled"
+        ? normalizeLeadersPayload(influence.value)
+        : null;
+      const normalizedCascades = cascades.status === "fulfilled"
+        ? normalizeCascadesPayload(cascades.value)
+        : null;
+
+      if (isLive) {
+        const hasPolarization = (normalizedPolarization?.length ?? 0) > 0;
+        const hasFlow = Boolean(normalizedFlow && normalizedFlow.flows.length > 0);
+        const hasLeaders = (normalizedLeaders?.length ?? 0) > 0;
+        const hasCascades = (normalizedCascades?.length ?? 0) > 0;
+
+        setPolarizationData(hasPolarization ? normalizedPolarization! : []);
+        setOpinionFlowData(hasFlow ? normalizedFlow! : { initial: { supporter: 0, neutral: 0, dissenter: 0 }, final: { supporter: 0, neutral: 0, dissenter: 0 }, flows: [] });
+        setLeaderData(hasLeaders ? normalizedLeaders! : []);
+        setViralPostData(hasCascades ? normalizedCascades! : []);
+
+        const anyFailure =
+          [polarization, flow, influence, cascades].some((entry) => entry.status === "rejected") ||
+          !hasPolarization ||
+          !hasFlow ||
+          !hasLeaders ||
+          !hasCascades;
+        setAnalyticsError(anyFailure ? "Live analytics returned incomplete data." : null);
+      } else {
+        setPolarizationData(normalizedPolarization ?? POLARIZATION_DATA);
+        setOpinionFlowData(normalizedFlow ?? OPINION_FLOW);
+        setLeaderData(normalizedLeaders ?? KEY_OPINION_LEADERS);
+        setViralPostData(normalizedCascades ?? VIRAL_POSTS);
+
+        const anyFailure = [polarization, flow, influence, cascades].some((entry) => entry.status === "rejected");
+        setAnalyticsError(anyFailure ? "Showing demo analytics data while live analytics is unavailable." : null);
+      }
+      setAnalyticsLoading(false);
+    }).catch(() => {
+      if (!active) return;
+      if (isLive) {
+        setPolarizationData([]);
+        setOpinionFlowData({ initial: { supporter: 0, neutral: 0, dissenter: 0 }, final: { supporter: 0, neutral: 0, dissenter: 0 }, flows: [] });
+        setLeaderData([]);
+        setViralPostData([]);
+        setAnalyticsError("Live analytics request failed.");
+      } else {
+        setPolarizationData(POLARIZATION_DATA);
+        setOpinionFlowData(OPINION_FLOW);
+        setLeaderData(KEY_OPINION_LEADERS);
+        setViralPostData(VIRAL_POSTS);
+        setAnalyticsError("Showing demo analytics data while live analytics is unavailable.");
+      }
+      setAnalyticsLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [sessionId]);
+
   const sourceAgents = useMemo<Agent[]>(() => {
     if (agents.length > 0) return agents;
+    if (liveMode) return [];
+    if (sessionId) return [];
     return generateAgents(220);
-  }, [agents]);
+  }, [agents, liveMode, sessionId]);
 
   const demographicGroups = useMemo(() => {
     const grouped = new Map<string, Agent[]>();
@@ -332,6 +444,9 @@ export default function Analytics() {
     ] as Array<{ key: DemographicDimension; label: string }>;
   }, [useCase]);
 
+  const demographicLoading = analyticsLoading && !!sessionId && agents.length === 0;
+  const showDemographicEmpty = !demographicLoading && demographicGroups.length === 0;
+
   return (
     <div className="h-full overflow-y-auto scrollbar-thin bg-background">
       <div className="mx-auto flex w-full max-w-[1700px] flex-col gap-5 px-6 py-6">
@@ -342,14 +457,28 @@ export default function Analytics() {
           </p>
         </header>
 
+        {analyticsLoading && (
+          <section className="surface-card px-5 py-3">
+            <p className="text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
+              Loading analytics data...
+            </p>
+          </section>
+        )}
+
+        {analyticsError && (
+          <section className="surface-card border border-amber-500/30 bg-amber-500/5 px-5 py-3">
+            <p className="text-xs text-amber-200">{analyticsError}</p>
+          </section>
+        )}
+
         <section className="space-y-3">
           <div className="flex items-center gap-2 px-1">
             <Activity className="h-4 w-4 text-white/70" />
             <h3 className="text-xs font-mono uppercase tracking-[0.15em] text-white/80">Sentiment Dynamics</h3>
           </div>
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-            <PolarizationCard />
-            <OpinionFlowCard />
+            <PolarizationCard data={polarizationData} loading={analyticsLoading} />
+            <OpinionFlowCard data={opinionFlowData} loading={analyticsLoading} />
           </div>
         </section>
 
@@ -377,39 +506,51 @@ export default function Analytics() {
             </div>
           </div>
 
-          <div className="mb-4 flex flex-wrap items-center gap-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[hsl(var(--data-green))]" /> Supporter</span>
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-white/35" /> Neutral</span>
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[hsl(var(--data-red))]" /> Dissenter</span>
-          </div>
-
-          <div className="flex flex-wrap gap-x-8 gap-y-10">
-            {demographicGroups.map((group) => (
-              <div key={group.name} className="flex min-w-[220px] max-w-[340px] shrink-0 flex-col">
-                <div className="mb-3 flex w-full items-baseline justify-between border-b border-white/5 pb-1">
-                  <h4 className="max-w-[260px] truncate text-sm font-semibold text-white/90" title={group.name}>{group.name}</h4>
-                  <span className="ml-3 rounded bg-white/5 px-2 py-0.5 text-[11px] font-mono text-muted-foreground">{group.agents.length}</span>
-                </div>
-
-                <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted-foreground">
-                  <span className="text-[hsl(var(--data-green))]">{group.supporters}</span>
-                  <span className="text-white/35">neutral {group.neutral}</span>
-                  <span className="text-[hsl(var(--data-red))]">{group.dissenters}</span>
-                </div>
-
-                <div className="flex max-w-[340px] flex-wrap gap-1">
-                  {group.agents.map((agent) => (
-                    <span
-                      key={agent.id}
-                      className="h-3.5 w-3.5 cursor-crosshair rounded-[2px] border border-black/20 transition-transform hover:z-10 hover:scale-125"
-                      style={{ backgroundColor: sentimentColor(agent.sentiment) }}
-                      title={`${agent.name} · ${agent.sentiment}`}
-                    />
-                  ))}
-                </div>
+          {demographicLoading ? (
+            <div className="flex min-h-[180px] items-center justify-center rounded border border-white/10 bg-white/[0.02] text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
+              Loading demographic data...
+            </div>
+          ) : showDemographicEmpty ? (
+            <div className="flex min-h-[180px] items-center justify-center rounded border border-white/10 bg-white/[0.02] text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
+              No demographic data yet.
+            </div>
+          ) : (
+            <>
+              <div className="mb-4 flex flex-wrap items-center gap-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[hsl(var(--data-green))]" /> Supporter</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-white/35" /> Neutral</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[hsl(var(--data-red))]" /> Dissenter</span>
               </div>
-            ))}
-          </div>
+
+              <div className="flex flex-wrap gap-x-8 gap-y-10">
+                {demographicGroups.map((group) => (
+                  <div key={group.name} className="flex min-w-[220px] max-w-[340px] shrink-0 flex-col">
+                    <div className="mb-3 flex w-full items-baseline justify-between border-b border-white/5 pb-1">
+                      <h4 className="max-w-[260px] truncate text-sm font-semibold text-white/90" title={group.name}>{group.name}</h4>
+                      <span className="ml-3 rounded bg-white/5 px-2 py-0.5 text-[11px] font-mono text-muted-foreground">{group.agents.length}</span>
+                    </div>
+
+                    <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted-foreground">
+                      <span className="text-[hsl(var(--data-green))]">{group.supporters}</span>
+                      <span className="text-white/35">neutral {group.neutral}</span>
+                      <span className="text-[hsl(var(--data-red))]">{group.dissenters}</span>
+                    </div>
+
+                    <div className="flex max-w-[340px] flex-wrap gap-1">
+                      {group.agents.map((agent) => (
+                        <span
+                          key={agent.id}
+                          className="h-3.5 w-3.5 cursor-crosshair rounded-[2px] border border-black/20 transition-transform hover:z-10 hover:scale-125"
+                          style={{ backgroundColor: sentimentColor(agent.sentiment) }}
+                          title={`${agent.name} · ${agent.sentiment}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </section>
 
         <section className="space-y-3">
@@ -418,8 +559,8 @@ export default function Analytics() {
             <h3 className="text-xs font-mono uppercase tracking-[0.15em] text-white/80">KOL & Viral Posts</h3>
           </div>
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            <KeyOpinionLeadersCard />
-            <ViralPostsCard />
+            <KeyOpinionLeadersCard leaders={leaderData} loading={analyticsLoading} />
+            <ViralPostsCard posts={viralPostData} loading={analyticsLoading} />
           </div>
         </section>
       </div>
@@ -471,8 +612,15 @@ function PolarizationTooltip({ active, label, payload }: PolarizationTooltipProp
   );
 }
 
-function PolarizationCard() {
-  const latest = POLARIZATION_DATA[POLARIZATION_DATA.length - 1];
+function PolarizationCard({ data, loading }: { data: PolarizationPoint[]; loading: boolean }) {
+  if (loading) {
+    return <LoadingAnalyticsCard title="Polarization Index" label="Loading polarization data..." />;
+  }
+  if (data.length === 0) {
+    return <EmptyAnalyticsCard title="Polarization Index" label="No polarization data yet." />;
+  }
+  const safeData = data;
+  const latest = safeData[safeData.length - 1];
 
   return (
     <section className="surface-card p-5">
@@ -491,7 +639,7 @@ function PolarizationCard() {
 
       <div className="h-[210px]">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={POLARIZATION_DATA} margin={{ top: 8, right: 16, left: -16, bottom: 4 }}>
+          <LineChart data={safeData} margin={{ top: 8, right: 16, left: -16, bottom: 4 }}>
             <CartesianGrid stroke="hsl(0 0% 16%)" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="round" tick={{ fill: "hsl(0 0% 72%)", fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis
@@ -521,9 +669,16 @@ function PolarizationCard() {
   );
 }
 
-function OpinionFlowCard() {
-  const total = STANCE_ORDER.reduce((sum, stance) => sum + OPINION_FLOW.initial[stance], 0);
-  const maxFlow = Math.max(...OPINION_FLOW.flows.map((flow) => flow.count));
+function OpinionFlowCard({ data, loading }: { data: OpinionFlowData; loading: boolean }) {
+  if (loading) {
+    return <LoadingAnalyticsCard title="Opinion Flow" label="Loading opinion flow data..." />;
+  }
+  if (data.flows.length === 0) {
+    return <EmptyAnalyticsCard title="Opinion Flow" label="No opinion flow data yet." />;
+  }
+  const safeData = data;
+  const total = STANCE_ORDER.reduce((sum, stance) => sum + safeData.initial[stance], 0);
+  const maxFlow = Math.max(...safeData.flows.map((flow) => flow.count), 1);
   const rowY: Record<Stance, number> = {
     supporter: 28,
     neutral: 86,
@@ -538,11 +693,11 @@ function OpinionFlowCard() {
       </div>
 
       <div className="grid grid-cols-[94px_minmax(0,1fr)_94px] gap-3">
-        <FlowDistributionColumn title="Initial" values={OPINION_FLOW.initial} total={total} />
+        <FlowDistributionColumn title="Initial" values={safeData.initial} total={total} />
 
         <div className="h-[178px] rounded border border-white/10 bg-white/[0.02] p-2">
           <svg viewBox="0 0 220 172" className="h-full w-full" preserveAspectRatio="none">
-            {OPINION_FLOW.flows.map((flow, index) => {
+            {safeData.flows.map((flow, index) => {
               const width = Math.max(2, (flow.count / maxFlow) * 14);
               return (
                 <path
@@ -558,7 +713,7 @@ function OpinionFlowCard() {
           </svg>
         </div>
 
-        <FlowDistributionColumn title="Final" values={OPINION_FLOW.final} total={total} />
+        <FlowDistributionColumn title="Final" values={safeData.final} total={total} />
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -609,10 +764,11 @@ function FlowDistributionColumn({
   );
 }
 
-function KeyOpinionLeadersCard() {
+function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loading: boolean }) {
   const sections = useMemo(() => {
-    const supporters = KEY_OPINION_LEADERS.filter((leader) => leader.stance === "supporter").slice(0, 3);
-    const dissenters = KEY_OPINION_LEADERS.filter((leader) => leader.stance === "dissenter").slice(0, 3);
+    const safeLeaders = leaders;
+    const supporters = safeLeaders.filter((leader) => leader.stance === "supporter").slice(0, 3);
+    const dissenters = safeLeaders.filter((leader) => leader.stance === "dissenter").slice(0, 3);
 
     if (supporters.length > 0 && dissenters.length > 0) {
       return [
@@ -624,10 +780,17 @@ function KeyOpinionLeadersCard() {
     return [
       {
         title: "Top Opinion Leaders",
-        leaders: [...KEY_OPINION_LEADERS].sort((left, right) => right.influence - left.influence).slice(0, 3),
+        leaders: [...safeLeaders].sort((left, right) => right.influence - left.influence).slice(0, 3),
       },
     ];
-  }, []);
+  }, [leaders]);
+
+  if (loading) {
+    return <LoadingAnalyticsCard title="Key Opinion Leaders" label="Loading leader data..." />;
+  }
+  if (leaders.length === 0) {
+    return <EmptyAnalyticsCard title="Key Opinion Leaders" label="No leader data yet." />;
+  }
 
   return (
     <section className="surface-card p-5">
@@ -664,7 +827,14 @@ function KeyOpinionLeadersCard() {
   );
 }
 
-function ViralPostsCard() {
+function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boolean }) {
+  if (loading) {
+    return <LoadingAnalyticsCard title="Viral Posts" label="Loading viral post data..." />;
+  }
+  if (posts.length === 0) {
+    return <EmptyAnalyticsCard title="Viral Posts" label="No viral post data yet." />;
+  }
+  const safePosts = posts;
   return (
     <section className="surface-card p-5">
       <div className="mb-4 flex items-center gap-2">
@@ -673,7 +843,7 @@ function ViralPostsCard() {
       </div>
 
       <div className="space-y-4">
-        {VIRAL_POSTS.slice(0, 3).map((post, index) => (
+        {safePosts.slice(0, 3).map((post, index) => (
           <article key={`${post.author}-${index}`} className="rounded border border-white/10 bg-white/[0.02] p-4">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -722,6 +892,177 @@ function ViralPostsCard() {
       </div>
     </section>
   );
+}
+
+function LoadingAnalyticsCard({ title, label }: { title: string; label: string }) {
+  return (
+    <section className="surface-card p-5">
+      <div className="mb-4 flex items-center gap-2">
+        <span className="h-4 w-4 rounded-full bg-white/10" />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-white">{title}</h3>
+      </div>
+      <div className="flex min-h-[180px] items-center justify-center rounded border border-white/10 bg-white/[0.02] text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
+    </section>
+  );
+}
+
+function EmptyAnalyticsCard({ title, label }: { title: string; label: string }) {
+  return (
+    <section className="surface-card p-5">
+      <div className="mb-4 flex items-center gap-2">
+        <span className="h-4 w-4 rounded-full bg-white/10" />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-white">{title}</h3>
+      </div>
+      <div className="flex min-h-[180px] items-center justify-center rounded border border-white/10 bg-white/[0.02] text-xs text-muted-foreground">
+        {label}
+      </div>
+    </section>
+  );
+}
+
+function normalizePolarizationPayload(payload: Record<string, unknown>): PolarizationPoint[] | null {
+  const candidate = payload.points ?? payload.polarization ?? payload.rounds ?? payload.data;
+  if (!Array.isArray(candidate)) {
+    return null;
+  }
+  const normalized = candidate
+    .map((row, index) => {
+      if (!row || typeof row !== "object") return null;
+      const data = row as Record<string, unknown>;
+      const roundNo = Number(data.round_no ?? data.round ?? index + 1);
+      const indexValue = Number(data.index ?? data.polarization_index ?? data.value ?? 0);
+      if (!Number.isFinite(indexValue)) return null;
+      const severityRaw = String(data.severity ?? "");
+      let severity: PolarizationPoint["severity"] = "moderate";
+      if (severityRaw === "low") severity = "low";
+      if (severityRaw === "high" || severityRaw === "critical") severity = "high";
+      return {
+        round: typeof data.round === "string" ? data.round : `R${Math.max(1, roundNo)}`,
+        index: Math.max(0, Math.min(1, indexValue)),
+        severity,
+      } satisfies PolarizationPoint;
+    })
+    .filter((row): row is PolarizationPoint => Boolean(row));
+  return normalized;
+}
+
+function normalizeOpinionFlowPayload(payload: Record<string, unknown>): OpinionFlowData | null {
+  const initial = payload.initial;
+  const final = payload.final;
+  const flows = payload.flows;
+  if (!initial || !final || !Array.isArray(flows)) {
+    return null;
+  }
+  const initialRecord = initial as Record<string, unknown>;
+  const finalRecord = final as Record<string, unknown>;
+  const normalizedFlows = flows
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const entry = row as Record<string, unknown>;
+      const from = String(entry.from ?? "").toLowerCase() as Stance;
+      const to = String(entry.to ?? "").toLowerCase() as Stance;
+      if (!STANCE_ORDER.includes(from) || !STANCE_ORDER.includes(to)) {
+        return null;
+      }
+      return {
+        from,
+        to,
+        count: Math.max(0, Number(entry.count ?? 0)),
+      };
+    })
+    .filter((row): row is { from: Stance; to: Stance; count: number } => Boolean(row));
+
+  return {
+    initial: {
+      supporter: Math.max(0, Number(initialRecord.supporter ?? 0)),
+      neutral: Math.max(0, Number(initialRecord.neutral ?? 0)),
+      dissenter: Math.max(0, Number(initialRecord.dissenter ?? 0)),
+    },
+    final: {
+      supporter: Math.max(0, Number(finalRecord.supporter ?? 0)),
+      neutral: Math.max(0, Number(finalRecord.neutral ?? 0)),
+      dissenter: Math.max(0, Number(finalRecord.dissenter ?? 0)),
+    },
+    flows: normalizedFlows,
+  };
+}
+
+function normalizeLeadersPayload(payload: Record<string, unknown>): Leader[] | null {
+  const candidates = payload.top_influencers ?? payload.leaders ?? payload.items;
+  if (!Array.isArray(candidates)) {
+    return null;
+  }
+  const normalized = candidates
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const entry = row as Record<string, unknown>;
+      const name = String(entry.name ?? entry.agent_name ?? entry.agent_id ?? "").trim();
+      if (!name) return null;
+      const stanceRaw = String(entry.stance ?? entry.segment ?? "mixed").toLowerCase();
+      const stance: Leader["stance"] =
+        stanceRaw === "supporter" || stanceRaw === "dissenter" || stanceRaw === "mixed"
+          ? stanceRaw
+          : "mixed";
+      return {
+        name,
+        stance,
+        influence: Number(entry.influence ?? entry.influence_score ?? entry.score ?? 0),
+        topView: String(entry.top_view ?? entry.topView ?? entry.core_viewpoint ?? ""),
+        topPost: String(entry.top_post ?? entry.topPost ?? entry.example_post ?? ""),
+      } satisfies Leader;
+    })
+    .filter((row): row is Leader => Boolean(row));
+  return normalized;
+}
+
+function normalizeCascadesPayload(payload: Record<string, unknown>): ViralPost[] | null {
+  const candidates = payload.viral_posts ?? payload.cascades ?? payload.top_threads ?? payload.posts;
+  if (!Array.isArray(candidates)) {
+    return null;
+  }
+  const normalized = candidates
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const entry = row as Record<string, unknown>;
+      const commentsCandidate = entry.comments;
+      const comments = Array.isArray(commentsCandidate)
+        ? commentsCandidate
+            .map((comment) => {
+              if (!comment || typeof comment !== "object") return null;
+              const commentRow = comment as Record<string, unknown>;
+              return {
+                author: String(commentRow.author ?? commentRow.agent_name ?? "Agent"),
+                stance: normalizeStance(commentRow.stance),
+                content: String(commentRow.content ?? commentRow.text ?? ""),
+                likes: Math.max(0, Number(commentRow.likes ?? commentRow.upvotes ?? 0)),
+                dislikes: Math.max(0, Number(commentRow.dislikes ?? commentRow.downvotes ?? 0)),
+              } satisfies ViralComment;
+            })
+            .filter((comment): comment is ViralComment => Boolean(comment))
+        : [];
+
+      return {
+        author: String(entry.author ?? entry.author_name ?? "Agent"),
+        stance: normalizeStance(entry.stance),
+        title: String(entry.title ?? entry.headline ?? "Untitled thread"),
+        content: String(entry.content ?? entry.body ?? ""),
+        likes: Math.max(0, Number(entry.likes ?? entry.upvotes ?? 0)),
+        dislikes: Math.max(0, Number(entry.dislikes ?? entry.downvotes ?? 0)),
+        comments,
+      } satisfies ViralPost;
+    })
+    .filter((row): row is ViralPost => Boolean(row));
+  return normalized;
+}
+
+function normalizeStance(raw: unknown): Stance | "mixed" {
+  const stance = String(raw ?? "").toLowerCase();
+  if (stance === "supporter" || stance === "dissenter" || stance === "neutral" || stance === "mixed") {
+    return stance;
+  }
+  return "mixed";
 }
 
 function stanceColor(stance: Stance | "mixed"): string {

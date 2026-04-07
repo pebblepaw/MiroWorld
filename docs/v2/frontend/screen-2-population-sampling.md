@@ -128,16 +128,16 @@ Shows estimated cost for the upcoming simulation:
 ### Tests
 
 **Frontend**:
-- [ ] Filter UI renders dynamically from API response
-- [ ] Range inputs enforce min/max constraints
-- [ ] Chip selectors toggle correctly (single vs multi)
-- [ ] Sample size slider updates value and helper text
-- [ ] Token cost tracker shows correct estimates
-- [ ] Distribution bar updates after sampling
-- [ ] Map renders for both Singapore and USA
+- [x] Filter UI renders dynamically from API response
+- [x] Range inputs enforce min/max constraints
+- [x] Chip selectors toggle correctly (single vs multi)
+- [x] Sample size slider updates value and helper text
+- [x] Token cost tracker shows correct estimates
+- [x] Distribution bar updates after sampling
+- [x] Map renders for both Singapore and USA
 
 **Backend**:
-- [ ] `/filters` endpoint reads Parquet schema correctly
-- [ ] `/filters` returns different schemas for different countries
-- [ ] Token estimate calculation matches expected formula
-- [ ] Caching savings correctly computed (0 for non-Gemini providers)
+- [x] `/filters` endpoint reads Parquet schema correctly
+- [x] `/filters` returns different schemas for different countries
+- [x] Token estimate calculation matches expected formula
+- [x] Caching savings correctly computed (0 for non-Gemini providers)

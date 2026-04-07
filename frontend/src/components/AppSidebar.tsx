@@ -324,7 +324,7 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
                             ? 'bg-white/8 text-foreground'
                             : locked
                             ? 'text-muted-foreground/30 cursor-not-allowed'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-white/4'
+                            : 'text-muted-foreground/65 hover:text-foreground hover:bg-white/4'
                         }`}
                         disabled={locked}
                       >
@@ -342,7 +342,7 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
                         </div>
                         {!collapsed && (
                           <div className="flex items-center gap-2 ml-1 z-10 relative">
-                            <span className="font-mono text-[9px] opacity-40">{step}</span>
+                            <span className="font-mono text-[9px] opacity-55">{step}</span>
                             <span className="text-sm">{title}</span>
                           </div>
                         )}

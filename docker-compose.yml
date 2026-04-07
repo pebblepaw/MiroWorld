@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE: http://backend:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/src:/app/src
+    networks:
+      - mckainsey
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+      OASIS_SIDECAR_HOST: oasis-sidecar
+      OASIS_SIDECAR_PORT: "8001"
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+    networks:
+      - mckainsey
+
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - mckainsey
+
+  oasis-sidecar:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.oasis
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./backend:/app/backend
+    networks:
+      - mckainsey
+
+networks:
+  mckainsey:
+    driver: bridge
+
+volumes:
+  falkordb_data:

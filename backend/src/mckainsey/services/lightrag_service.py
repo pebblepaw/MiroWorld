@@ -408,6 +408,7 @@ class LightRAGService:
         source_path: str | None,
         guiding_prompt: str | None = None,
         demographic_focus: str | None = None,
+        live_mode: bool = False,
     ) -> dict[str, Any]:
         await self.ensure_ready()
         assert self._rag is not None
@@ -474,6 +475,8 @@ class LightRAGService:
                 f"Adapted LightRAG entity graph ({len(entity_nodes)} nodes, {len(relationship_edges)} edges)"
             )
         else:
+            if live_mode:
+                raise RuntimeError("Live knowledge extraction requires native LightRAG graph output.")
             graph_origin = "fallback_model_extract"
             entity_nodes, relationship_edges = await _build_graph_from_text(
                 document_text=fallback_graph_text,

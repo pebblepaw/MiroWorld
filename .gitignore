@@ -6,7 +6,6 @@ backend/.venv311/
 __pycache__/
 *.pyc
 .playwright-mcp/
-backend/tests/
 .pytest_cache/
 .ruff_cache/
 backend/data/lightrag/

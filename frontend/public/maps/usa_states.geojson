@@ -1,0 +1,47 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "California" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-124.48, 42.0],
+          [-114.13, 42.0],
+          [-114.13, 32.5],
+          [-124.48, 32.5],
+          [-124.48, 42.0]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Texas" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-106.65, 36.5],
+          [-93.51, 36.5],
+          [-93.51, 25.8],
+          [-106.65, 25.8],
+          [-106.65, 36.5]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "New York" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-79.76, 45.1],
+          [-71.85, 45.1],
+          [-71.85, 40.45],
+          [-79.76, 40.45],
+          [-79.76, 45.1]
+        ]]
+      }
+    }
+  ]
+}

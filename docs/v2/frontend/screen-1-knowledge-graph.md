@@ -85,19 +85,19 @@ After extraction completes, show:
 ### Tests
 
 **Frontend**:
-- [ ] Drag-and-drop adds files to upload list
-- [ ] Progress bars show during upload
-- [ ] Multiple files display simultaneously
-- [ ] URL scraper input accepts URLs and shows scraped content
-- [ ] Paste-text area submits correctly
-- [ ] Guiding prompt is pre-populated from config
-- [ ] Guiding prompt is editable
-- [ ] Graph nodes are draggable
-- [ ] Filter chips filter visible nodes
-- [ ] Stats row updates after extraction
+- [x] Drag-and-drop adds files to upload list
+- [x] Progress bars show during upload
+- [x] Multiple files display simultaneously
+- [x] URL scraper input accepts URLs and shows scraped content
+- [x] Paste-text area submits correctly
+- [x] Guiding prompt is pre-populated from config
+- [x] Guiding prompt is editable
+- [x] Graph nodes are draggable
+- [x] Filter chips filter visible nodes
+- [x] Stats row updates after extraction
 
 **Backend**:
-- [ ] URL scraper handles valid URLs and returns text
-- [ ] URL scraper returns 400 for invalid URLs
-- [ ] Multi-file upload merges graphs correctly
-- [ ] Guiding prompt loads from YAML config
+- [x] URL scraper handles valid URLs and returns text
+- [x] URL scraper returns 400 for invalid URLs
+- [x] Multi-file upload merges graphs correctly
+- [x] Guiding prompt loads from YAML config

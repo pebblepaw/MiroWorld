@@ -1,0 +1,38 @@
+name: "Customer Review"
+code: "customer-review"
+description: "Simulate customer reviews and satisfaction feedback."
+
+guiding_prompt: |
+  You are writing authentic customer feedback for the given product or service.
+  Focus on realistic satisfaction, concrete praise, and specific complaints.
+
+agent_personality_modifiers:
+  - "Write as if you actually used the product."
+  - "Include specific details on what worked and what failed."
+  - "Rate satisfaction honestly and avoid default extremes."
+
+checkpoint_questions:
+  - question: "How satisfied are you with this product or service? Rate 1-10."
+    type: "scale"
+    metric_name: "satisfaction"
+    display_label: "Satisfaction"
+    tooltip: "Mean satisfaction score across all agents."
+  - question: "Would you recommend this to a friend? Rate 1-10."
+    type: "scale"
+    metric_name: "nps_like"
+    threshold: 8
+    threshold_direction: "gte"
+    display_label: "Recommendation Intent"
+    tooltip: "Share of agents rating recommendation at least 8 out of 10."
+
+report_sections:
+  - title: "Satisfaction Overview"
+    prompt: "Summarize satisfaction levels and key trends."
+  - title: "Top Positive Themes"
+    prompt: "List recurring positive themes with examples."
+  - title: "Top Pain Points"
+    prompt: "List recurring complaints and friction points."
+  - title: "Segment Differences"
+    prompt: "Highlight differences by demographic segment."
+  - title: "Improvement Priorities"
+    prompt: "Recommend high-impact product improvements."

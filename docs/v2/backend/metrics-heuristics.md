@@ -323,10 +323,10 @@ class MetricsService:
 
 ## Tests
 
-- [ ] Polarization index = 0 for agents with identical scores
-- [ ] Polarization index = 1 for perfectly bimodal distribution (all 1s and all 10s)
-- [ ] Influence score correctly weights engagement (40%), comments (30%), replies (30%)
-- [ ] Opinion flow preserves total agent count (sum(initial) == sum(final))
-- [ ] Stance bucketing: 1-4 = dissenter, 5-6 = neutral, 7-10 = supporter
-- [ ] Group chat selection returns correct segment (e.g., "dissenter" only returns agents with score < 5)
-- [ ] Dynamic metrics computation handles empty agent lists gracefully
+- [x] Polarization index = 0 for agents with identical scores
+- [x] Polarization index = 1 for perfectly bimodal distribution (all 1s and all 10s)
+- [x] Influence score correctly weights engagement (40%), comments (30%), replies (30%)
+- [x] Opinion flow preserves total agent count (sum(initial) == sum(final))
+- [x] Stance bucketing: 1-4 = dissenter, 5-6 = neutral, 7-10 = supporter
+- [x] Group chat selection returns correct segment (e.g., "dissenter" only returns agents with score < 5)
+- [x] Dynamic metrics computation handles empty agent lists gracefully

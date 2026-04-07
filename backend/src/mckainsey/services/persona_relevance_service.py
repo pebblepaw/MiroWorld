@@ -129,12 +129,15 @@ class PersonaRelevanceService:
         instructions: str | None,
         *,
         knowledge_artifact: dict[str, Any] | None = None,
+        live_mode: bool = False,
     ) -> dict[str, Any]:
         if not instructions or not instructions.strip():
             return dict(EMPTY_PARSED_INSTRUCTIONS)
 
         cleaned = instructions.strip()
         if not self.llm.is_enabled():
+            if live_mode:
+                raise RuntimeError("Live sampling instruction parsing requires a configured model provider.")
             raise RuntimeError("Sampling instruction parsing requires a configured model provider.")
 
         prompt = self._build_instruction_prompt(cleaned, knowledge_artifact or {})
@@ -144,6 +147,8 @@ class PersonaRelevanceService:
         )
         parsed = self._extract_json_object(raw)
         if not parsed:
+            if live_mode:
+                raise RuntimeError("Live sampling instruction parsing returned invalid JSON.")
             fallback = self._augment_with_deterministic_constraints(
                 cleaned,
                 self._fallback_parse_sampling_instructions(cleaned),
@@ -169,6 +174,7 @@ class PersonaRelevanceService:
         parsed_sampling_instructions: dict[str, Any] | None = None,
         shortlist_size: int | None = None,
         semantic_pool_size: int | None = None,
+        live_mode: bool = False,
     ) -> list[dict[str, Any]]:
         scored, _ = self.rank_personas(
             personas,
@@ -177,6 +183,7 @@ class PersonaRelevanceService:
             parsed_sampling_instructions=parsed_sampling_instructions,
             shortlist_size=shortlist_size,
             semantic_pool_size=semantic_pool_size,
+            live_mode=live_mode,
         )
         return scored
 
@@ -189,6 +196,7 @@ class PersonaRelevanceService:
         parsed_sampling_instructions: dict[str, Any] | None = None,
         shortlist_size: int | None = None,
         semantic_pool_size: int | None = None,
+        live_mode: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         parsed = self._normalize_parsed_instructions(parsed_sampling_instructions, source=(parsed_sampling_instructions or {}).get("source", "runtime"))
         issue_profile = self._build_issue_profile(knowledge_artifact, parsed)
@@ -273,7 +281,11 @@ class PersonaRelevanceService:
         prelim_rows.sort(key=lambda row: row["pre_score"], reverse=True)
         shortlist_rows = prelim_rows[:shortlist_size]
         semantic_rows = shortlist_rows[:semantic_pool_size]
-        semantic_scores = self._semantic_rerank(issue_profile["semantic_query"], [row["persona"] for row in semantic_rows])
+        semantic_scores = self._semantic_rerank(
+            issue_profile["semantic_query"],
+            [row["persona"] for row in semantic_rows],
+            live_mode=live_mode,
+        )
 
         scored: list[dict[str, Any]] = []
         semantic_index_map = {
@@ -432,6 +444,7 @@ class PersonaRelevanceService:
         sample_mode: str = "affected_groups",
         seed: int | None = None,
         parsed_sampling_instructions: dict[str, Any] | None = None,
+        live_mode: bool = False,
     ) -> dict[str, Any]:
         parsed = self._normalize_parsed_instructions(parsed_sampling_instructions, source=(parsed_sampling_instructions or {}).get("source", "runtime"))
         scored, diagnostics = self.rank_personas(
@@ -441,6 +454,7 @@ class PersonaRelevanceService:
             parsed_sampling_instructions=parsed,
             shortlist_size=max(agent_count * 8, 80),
             semantic_pool_size=max(agent_count * 4, 40),
+            live_mode=live_mode,
         )
         effective_seed = int(seed if seed is not None else random.randint(1, 2_147_483_647))
         if sample_mode == "population_baseline":
@@ -584,18 +598,34 @@ class PersonaRelevanceService:
         union = len(issue_tokens | persona_tokens)
         return round(intersection / union, 4) if union else 0.0
 
-    def _semantic_rerank(self, query_text: str, personas: list[dict[str, Any]]) -> list[float]:
+    def _semantic_rerank_fallback(self, query_text: str, persona: dict[str, Any]) -> float:
+        query_tokens = self._tokens(query_text)
+        persona_tokens = self._tokens(self._persona_long_doc(persona) or self._persona_text(persona))
+        if not query_tokens or not persona_tokens:
+            return 0.0
+        intersection = len(query_tokens & persona_tokens)
+        union = len(query_tokens | persona_tokens)
+        return round(intersection / union, 4) if union else 0.0
+
+    def _semantic_rerank(self, query_text: str, personas: list[dict[str, Any]], *, live_mode: bool = False) -> list[float]:
         candidate_texts = [self._persona_long_doc(persona) for persona in personas]
         if not personas:
             return []
         if not self.embeddings.is_enabled():
-            raise RuntimeError("Semantic reranking requires a configured embedding model.")
+            if live_mode:
+                raise RuntimeError("Live persona ranking requires configured embeddings.")
+            return [self._semantic_rerank_fallback(query_text, persona) for persona in personas]
 
-        vectors = self.embeddings.embed_texts([query_text, *candidate_texts])
-        if len(vectors) != len(candidate_texts) + 1:
-            raise RuntimeError("Semantic reranking failed because the embedding response size was invalid.")
-        query_vector = vectors[0]
-        return [round(self._cosine_similarity(query_vector, vector), 4) for vector in vectors[1:]]
+        try:
+            vectors = self.embeddings.embed_texts([query_text, *candidate_texts])
+            if len(vectors) != len(candidate_texts) + 1:
+                raise RuntimeError("Semantic reranking failed because the embedding response size was invalid.")
+            query_vector = vectors[0]
+            return [round(self._cosine_similarity(query_vector, vector), 4) for vector in vectors[1:]]
+        except Exception as exc:
+            if live_mode:
+                raise RuntimeError("Live persona ranking failed while computing semantic relevance.") from exc
+            return [self._semantic_rerank_fallback(query_text, persona) for persona in personas]
 
     def _geographic_relevance(self, issue_profile: dict[str, Any], persona: dict[str, Any]) -> float:
         area = str(persona.get("planning_area", "")).strip().lower()

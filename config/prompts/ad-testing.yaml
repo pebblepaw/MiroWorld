@@ -1,0 +1,36 @@
+name: "Ad Testing"
+code: "ad-testing"
+description: "Test advertisement effectiveness with target audiences."
+
+guiding_prompt: |
+  You are evaluating reactions to an advertisement.
+  Focus on engagement, conversion intent, and brand perception.
+
+agent_personality_modifiers:
+  - "React authentically as a real consumer."
+  - "Consider whether the offer solves your needs."
+  - "Share skepticism about unsupported claims."
+
+checkpoint_questions:
+  - question: "Would you try or buy this product after seeing this ad? (yes/no)"
+    type: "yes-no"
+    metric_name: "estimated_conversion"
+    display_label: "Estimated Conversion"
+    tooltip: "Percentage of agents expressing buy or try intent."
+  - question: "How engaging is this ad? Rate 1-10."
+    type: "scale"
+    metric_name: "engagement_score"
+    display_label: "Engagement Score"
+    tooltip: "Mean engagement rating across agents."
+
+report_sections:
+  - title: "Conversion Analysis"
+    prompt: "Summarize conversion intent and key purchase drivers."
+  - title: "Engagement Patterns"
+    prompt: "Analyze ad elements that drove discussion."
+  - title: "Skepticism and Objections"
+    prompt: "Identify main objections and concerns."
+  - title: "Target Audience Fit"
+    prompt: "Evaluate demographic fit for this ad."
+  - title: "Optimization Recommendations"
+    prompt: "Suggest concrete changes to improve performance."
