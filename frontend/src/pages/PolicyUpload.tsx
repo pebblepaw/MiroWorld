@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { Upload, FileText, Sparkles, Loader2, ArrowRight, Eye, EyeOff, X, Plus, Link, Type, ChevronDown, ChevronUp } from 'lucide-react';
 import { forceCollide, forceManyBody } from 'd3-force-3d';
 import ForceGraph2D from 'react-force-graph-2d';
-import { useApp } from '@/contexts/AppContext';
+import { useApp, AnalysisQuestion } from '@/contexts/AppContext';
 import { GlassCard } from '@/components/GlassCard';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -10,8 +10,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import {
   createConsoleSession,
+  generateQuestionMetadata,
+  getAnalysisQuestions,
   isLiveBootMode,
   processKnowledgeDocuments,
+  updateV2SessionConfig,
   uploadKnowledgeFile,
   scrapeKnowledgeUrl,
   KnowledgeArtifact,
@@ -85,15 +88,50 @@ function buildSafeDocumentName(rawName: string, fallback: string) {
   return trimmed.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-").toLowerCase();
 }
 
-function getDefaultGuidingPrompt(useCase: string) {
+function getDefaultSystemPrompt(useCase: string) {
   const normalized = String(useCase || '').trim().toLowerCase();
-  if (normalized === 'ad-testing') {
+  if (normalized === 'campaign-content-testing') {
     return 'Extract key product features, target demographics, and brand positioning statements. Highlight emotional triggers and pricing constraints.';
   }
-  if (normalized === 'pmf-discovery') {
+  if (normalized === 'product-market-research') {
     return 'Analyze this product feedback for core pain points, requested features, and user satisfaction signals. Group by user persona.';
   }
   return 'Identify all entities, locations, organizations, and the specific impact mechanisms described in this policy document. Focus strongly on sentiment and demographic effects.';
+}
+
+function getProcessingProviderLabel(provider: string) {
+  const normalized = String(provider || '').trim().toLowerCase();
+  if (normalized === 'google' || normalized === 'gemini') {
+    return 'Google Gemini';
+  }
+  if (normalized === 'openai') {
+    return 'OpenAI';
+  }
+  if (normalized === 'ollama') {
+    return 'Ollama';
+  }
+  return normalized || 'Model';
+}
+
+function normalizeAnalysisQuestion(question: Record<string, unknown>): AnalysisQuestion {
+  return {
+    question: String(question.question ?? ''),
+    type: question.type === 'yes-no' || question.type === 'open-ended' ? question.type : 'scale',
+    metric_name: String(question.metric_name ?? question.metricName ?? `custom_${Date.now()}`),
+    metric_label: question.metric_label ? String(question.metric_label) : undefined,
+    metric_unit: question.metric_unit ? String(question.metric_unit) : undefined,
+    threshold: typeof question.threshold === 'number' ? question.threshold : undefined,
+    threshold_direction: question.threshold_direction ? String(question.threshold_direction) : undefined,
+    report_title: String(question.report_title ?? question.question ?? 'Question'),
+    tooltip: question.tooltip ? String(question.tooltip) : undefined,
+    source: 'preset',
+    metadataStatus: 'ready',
+  };
+}
+
+function stripQuestionMetadata(question: AnalysisQuestion): Record<string, unknown> {
+  const { metadataStatus, ...rest } = question;
+  return rest;
 }
 
 async function readFileText(file: File): Promise<string> {
@@ -207,7 +245,7 @@ export default function PolicyUpload() {
     modelBaseUrl,
     useCase,
     uploadedFiles,
-    guidingPrompts,
+    analysisQuestions,
     knowledgeGraphReady,
     knowledgeArtifact,
     knowledgeLoading,
@@ -215,11 +253,7 @@ export default function PolicyUpload() {
     setSessionId,
     addUploadedFile,
     removeUploadedFile,
-    setUploadedFiles,
-    setGuidingPrompts,
-    updateGuidingPrompt,
-    addGuidingPrompt,
-    removeGuidingPrompt,
+    setAnalysisQuestions,
     setKnowledgeGraphReady,
     setKnowledgeArtifact,
     setKnowledgeLoading,
@@ -243,14 +277,81 @@ export default function PolicyUpload() {
   const [showPasteArea, setShowPasteArea] = useState(false);
   const [pasteValue, setPasteValue] = useState('');
   const [showTopEntities, setShowTopEntities] = useState(true);
+  const [analysisQuestionsState, setAnalysisQuestionsState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [analysisQuestionsError, setAnalysisQuestionsError] = useState<string | null>(null);
+  const hydratedSessionRef = useRef<string | null>(null);
+  const analysisQuestionsRef = useRef<AnalysisQuestion[]>(analysisQuestions);
+  const lastPersistedQuestionsSnapshotRef = useRef<string>('');
 
   const graphReady = knowledgeGraphReady && knowledgeArtifact !== null;
 
   useEffect(() => {
-    if (guidingPrompts.length === 1 && guidingPrompts[0].trim() === '') {
-      setGuidingPrompts([getDefaultGuidingPrompt(useCase)]);
+    analysisQuestionsRef.current = analysisQuestions;
+  }, [analysisQuestions]);
+
+  const persistAnalysisQuestions = useCallback((nextQuestions: AnalysisQuestion[]) => {
+    if (!sessionId) {
+      return;
     }
-  }, [guidingPrompts, setGuidingPrompts, useCase]);
+
+    const cleanQuestions = nextQuestions.map(stripQuestionMetadata);
+    const snapshot = JSON.stringify(cleanQuestions);
+
+    if (snapshot === lastPersistedQuestionsSnapshotRef.current) {
+      return;
+    }
+
+    lastPersistedQuestionsSnapshotRef.current = snapshot;
+    void updateV2SessionConfig(sessionId, {
+      country: undefined,
+      use_case: useCase,
+      provider: modelProvider,
+      model: modelName,
+      api_key: modelApiKey || undefined,
+      analysis_questions: cleanQuestions,
+    }).catch(() => {
+      // Persisting analysis questions is best-effort so extraction can continue.
+    });
+  }, [modelApiKey, modelName, modelProvider, sessionId, useCase]);
+
+  useEffect(() => {
+    if (!sessionId || hydratedSessionRef.current === sessionId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadAnalysisQuestions = async () => {
+      setAnalysisQuestionsState('loading');
+      setAnalysisQuestionsError(null);
+      try {
+        const payload = await getAnalysisQuestions(sessionId);
+        const next = Array.isArray(payload.questions) ? payload.questions.map((question) => normalizeAnalysisQuestion(question)) : [];
+        if (cancelled) {
+          return;
+        }
+        analysisQuestionsRef.current = next;
+        setAnalysisQuestions(next);
+        lastPersistedQuestionsSnapshotRef.current = JSON.stringify(next.map(stripQuestionMetadata));
+        persistAnalysisQuestions(next);
+        setAnalysisQuestionsState('ready');
+        hydratedSessionRef.current = sessionId;
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : 'Failed to load analysis questions.';
+        setAnalysisQuestionsState('error');
+        setAnalysisQuestionsError(message);
+      }
+    };
+
+    void loadAnalysisQuestions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, setAnalysisQuestions]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -296,6 +397,46 @@ export default function PolicyUpload() {
     setKnowledgeArtifact(null);
     setKnowledgeError(null);
   }, [setKnowledgeArtifact, setKnowledgeError, setKnowledgeGraphReady]);
+
+  const replaceAnalysisQuestionAtIndex = useCallback((index: number, updater: (question: AnalysisQuestion) => AnalysisQuestion) => {
+    const next = analysisQuestionsRef.current.map((question, currentIndex) => (
+      currentIndex === index ? updater(question) : question
+    ));
+    analysisQuestionsRef.current = next;
+    setAnalysisQuestions(next);
+    persistAnalysisQuestions(next);
+  }, [persistAnalysisQuestions, setAnalysisQuestions]);
+
+  const addNewAnalysisQuestion = useCallback(() => {
+    const next: AnalysisQuestion = {
+      question: '',
+      type: 'open-ended',
+      metric_name: `custom_${Date.now()}`,
+      report_title: 'Custom Question',
+      source: 'custom',
+      metadataStatus: 'pending',
+    };
+    const updated = [...analysisQuestionsRef.current, next];
+    analysisQuestionsRef.current = updated;
+    setAnalysisQuestions(updated);
+    persistAnalysisQuestions(updated);
+  }, [persistAnalysisQuestions, setAnalysisQuestions]);
+
+  const removeQuestionAtIndex = useCallback((index: number) => {
+    const updated = analysisQuestionsRef.current.filter((_, currentIndex) => currentIndex !== index);
+    analysisQuestionsRef.current = updated;
+    setAnalysisQuestions(updated);
+    persistAnalysisQuestions(updated);
+  }, [persistAnalysisQuestions, setAnalysisQuestions]);
+
+  const updateQuestionText = useCallback((index: number, value: string) => {
+    replaceAnalysisQuestionAtIndex(index, (question) => ({
+      ...question,
+      question: value,
+      source: 'custom',
+      metadataStatus: 'pending',
+    }));
+  }, [replaceAnalysisQuestionAtIndex]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -343,37 +484,81 @@ export default function PolicyUpload() {
       setKnowledgeError(null);
 
       const resolvedSessionId = await ensureSession();
-      const combinedPrompt = guidingPrompts.map((prompt) => prompt.trim()).filter(Boolean).join('\n\n');
+      const currentQuestions = analysisQuestionsRef.current;
+      persistAnalysisQuestions(currentQuestions);
+      const combinedPrompt = currentQuestions.map((q) => q.question.trim()).filter(Boolean).join('\n\n') || getDefaultSystemPrompt(useCase);
       const serverParsedFiles = uploadedFiles.filter(isServerParsedDocument);
       const textFiles = uploadedFiles.filter((file) => !isServerParsedDocument(file));
-      const artifacts: KnowledgeArtifact[] = [];
+      const metadataTargets = currentQuestions
+        .map((question, index) => ({ question, index }))
+        .filter(({ question }) => question.metadataStatus !== 'ready');
 
-      if (textFiles.length > 0) {
-        const documents = await Promise.all(
-          textFiles.map(async (file) => ({
-            document_text: await readFileText(file),
-            source_path: file.name,
-          })),
-        );
-        artifacts.push(
-          await processKnowledgeDocuments(resolvedSessionId, {
-            documents,
-            guiding_prompt: combinedPrompt || undefined,
-          }),
-        );
-      }
+      const metadataGeneration = metadataTargets.map(async ({ question, index }) => {
+        if (!question.question.trim()) {
+          replaceAnalysisQuestionAtIndex(index, (current) => ({
+            ...current,
+            metadataStatus: 'error',
+          }));
+          return;
+        }
 
-      for (const file of serverParsedFiles) {
-        artifacts.push(
-          await uploadKnowledgeFile(
-            resolvedSessionId,
-            file,
-            combinedPrompt || undefined,
-          ),
-        );
-      }
+        replaceAnalysisQuestionAtIndex(index, (current) => ({
+          ...current,
+          metadataStatus: 'loading',
+        }));
 
-      const artifact = mergeKnowledgeArtifacts(resolvedSessionId, artifacts, combinedPrompt || null);
+        try {
+          const metadata = await generateQuestionMetadata(question.question, useCase);
+          replaceAnalysisQuestionAtIndex(index, (current) => ({
+            ...current,
+            ...metadata,
+            source: current.source === 'preset' ? 'preset' : 'custom',
+            metadataStatus: 'ready',
+          }));
+        } catch (error) {
+          replaceAnalysisQuestionAtIndex(index, (current) => ({
+            ...current,
+            metadataStatus: 'error',
+          }));
+          throw error;
+        }
+      });
+
+      const knowledgePromise = (async () => {
+        const artifacts: KnowledgeArtifact[] = [];
+
+        if (textFiles.length > 0) {
+          const documents = await Promise.all(
+            textFiles.map(async (file) => ({
+              document_text: await readFileText(file),
+              source_path: file.name,
+            })),
+          );
+          artifacts.push(
+            await processKnowledgeDocuments(resolvedSessionId, {
+              documents,
+              guiding_prompt: combinedPrompt || undefined,
+            }),
+          );
+        }
+
+        for (const file of serverParsedFiles) {
+          artifacts.push(
+            await uploadKnowledgeFile(
+              resolvedSessionId,
+              file,
+              combinedPrompt || undefined,
+            ),
+          );
+        }
+
+        return mergeKnowledgeArtifacts(resolvedSessionId, artifacts, combinedPrompt || null);
+      })();
+
+      const [artifact] = await Promise.all([
+        knowledgePromise,
+        Promise.allSettled(metadataGeneration),
+      ]);
       setKnowledgeArtifact(artifact);
       setKnowledgeGraphReady(true);
     } catch (error) {
@@ -429,13 +614,14 @@ export default function PolicyUpload() {
     embedModelName,
     modelApiKey,
     modelBaseUrl,
-    guidingPrompts,
     setKnowledgeLoading,
     setKnowledgeError,
     setSessionId,
     setKnowledgeArtifact,
     setKnowledgeGraphReady,
     ensureSession,
+    replaceAnalysisQuestionAtIndex,
+    useCase,
   ]);
 
   const handleProceed = () => {
@@ -585,7 +771,7 @@ export default function PolicyUpload() {
           {/* Use-case badge */}
           <div className="mt-3">
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-transparent text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">
-              {modelProvider === 'gemini' ? 'Gemini 2.0' : modelProvider} · Document Processing
+              {getProcessingProviderLabel(modelProvider)} · Document Processing
             </span>
           </div>
         </div>
@@ -696,53 +882,90 @@ export default function PolicyUpload() {
           )}
         </div>
 
-        {/* Guiding Prompts */}
+        {/* Analysis Questions */}
         <div className="p-5 border-b border-border">
-          <div className="flex items-center justify-between mb-3">
-            <span className="label-meta">Guiding Prompts</span>
-            <div className="flex items-center gap-3">
-              <select
-                className="bg-transparent border border-border text-[10px] text-muted-foreground uppercase tracking-widest px-2 py-1 rounded cursor-pointer hover:text-foreground"
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === 'policy') updateGuidingPrompt(0, "Identify all entities, locations, organizations, and the specific impact mechanisms described in this policy document. Focus strongly on sentiment and demographic effects.");
-                  if (val === 'ad') updateGuidingPrompt(0, "Extract key product features, target demographics, and brand positioning statements. Highlight emotional triggers and pricing constraints.");
-                  if (val === 'pmf') updateGuidingPrompt(0, "Analyze this product feedback for core pain points, requested features, and user satisfaction signals. Group by user persona.");
-                }}
-              >
-                <option value="policy">Policy Review</option>
-                <option value="ad">Ad Testing</option>
-                <option value="pmf">PMF Discovery</option>
-              </select>
-              <button
-                type="button"
-                onClick={addGuidingPrompt}
-                className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Plus className="w-3 h-3" /> Add Prompt
-              </button>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <span className="label-meta">Analysis Questions</span>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                These questions drive the simulation checkpoints, report sections, and metric generation.
+              </p>
             </div>
+            <button
+              type="button"
+              onClick={addNewAnalysisQuestion}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground transition-colors hover:border-white/15 hover:bg-white/[0.03] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <Plus className="w-3 h-3" /> Add Question
+            </button>
           </div>
-          <div className="space-y-3">
-            {guidingPrompts.map((prompt, index) => (
-              <div key={index} className="relative group">
-                <Textarea
-                  value={prompt}
-                  onChange={(e) => updateGuidingPrompt(index, e.target.value)}
-                  placeholder={index === 0 ? 'What should the system extract from this document?' : 'Additional extraction guidance...'}
-                  className={`text-sm bg-card border-border ${index === 0 ? 'min-h-[132px]' : 'min-h-[104px]'} resize-y pr-8`}
-                />
-                {guidingPrompts.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeGuidingPrompt(index)}
-                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            ))}
+          <div className="space-y-2">
+            {analysisQuestionsState === 'loading' && (
+              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Loading analysis questions...</p>
+            )}
+            {analysisQuestionsError && (
+              <p className="text-xs text-destructive">{analysisQuestionsError}</p>
+            )}
+            {analysisQuestions.length === 0 && analysisQuestionsState !== 'loading' && (
+              <p className="text-xs text-muted-foreground italic py-3 text-center">
+                No analysis questions loaded yet.
+              </p>
+            )}
+            {analysisQuestions.map((q, index) => {
+              const statusLabel = q.metadataStatus === 'loading'
+                ? 'Loading metadata...'
+                : q.metadataStatus === 'ready'
+                  ? 'Ready'
+                  : q.metadataStatus === 'error'
+                    ? 'Metadata error'
+                    : 'Pending regeneration';
+              const statusClass = q.metadataStatus === 'loading'
+                ? 'bg-amber-500/10 text-amber-300'
+                : q.metadataStatus === 'ready'
+                  ? 'bg-emerald-500/10 text-emerald-400'
+                  : q.metadataStatus === 'error'
+                    ? 'bg-red-500/10 text-red-400'
+                    : 'bg-white/5 text-muted-foreground';
+
+              return (
+                <div key={`${q.metric_name}-${index}`} className="group relative rounded-lg border border-border bg-card p-3 transition-colors hover:border-white/20">
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <Textarea
+                        value={q.question}
+                        onChange={(e) => updateQuestionText(index, e.target.value)}
+                        placeholder="Type your analysis question..."
+                        className="min-h-[58px] resize-none border-0 bg-transparent p-0 text-sm text-foreground focus-visible:ring-0"
+                      />
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
+                          q.type === 'scale' ? 'bg-blue-500/10 text-blue-400' :
+                          q.type === 'yes-no' ? 'bg-emerald-500/10 text-emerald-400' :
+                          'bg-white/5 text-muted-foreground'
+                        }`}>
+                          {q.type}
+                        </span>
+                        {q.source === 'preset' && (
+                          <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground/70">PRESET</span>
+                        )}
+                        <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${statusClass}`}>
+                          {statusLabel}
+                        </span>
+                        {q.metric_label && <span className="text-[9px] text-muted-foreground">{q.metric_label}</span>}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeQuestionAtIndex(index)}
+                      className="opacity-0 transition-opacity text-muted-foreground hover:text-foreground group-hover:opacity-100 mt-1"
+                      title="Delete question"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 

@@ -323,7 +323,7 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
                           active
                             ? 'bg-white/8 text-foreground'
                             : locked
-                            ? 'text-muted-foreground/30 cursor-not-allowed'
+                            ? 'text-muted-foreground/72 cursor-not-allowed'
                             : 'text-muted-foreground/65 hover:text-foreground hover:bg-white/4'
                         }`}
                         disabled={locked}
@@ -335,14 +335,14 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
                           {completed && !active ? (
                             <Check className="w-3.5 h-3.5 text-white/60" />
                           ) : locked ? (
-                            <Lock className="w-3.5 h-3.5" />
+                            <Lock className="w-3.5 h-3.5 text-muted-foreground/80" />
                           ) : (
                             <Icon className="w-3.5 h-3.5" />
                           )}
                         </div>
                         {!collapsed && (
                           <div className="flex items-center gap-2 ml-1 z-10 relative">
-                            <span className="font-mono text-[9px] opacity-55">{step}</span>
+                            <span className={`font-mono text-[9px] ${locked ? 'opacity-70' : 'opacity-55'}`}>{step}</span>
                             <span className="text-sm">{title}</span>
                           </div>
                         )}

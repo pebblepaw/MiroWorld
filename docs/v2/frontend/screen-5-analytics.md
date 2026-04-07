@@ -1,106 +1,81 @@
 # Screen 5 — Analytics
 
-> Status: Frontend implemented with demo/local data wiring. Backend endpoint linking pending.
-> Primary File: frontend/src/pages/Analytics.tsx
-> Last Updated: 2026-04-06
-
 ## Overview
 
-Screen 5 is implemented as a full analytics dashboard with three major blocks:
+Screen 5 visualizes the live simulation outputs that sit beside the narrative report. It is fed by analytics endpoints in live mode and can still use local constants in demo mode.
 
-1. Sentiment Dynamics
-2. Demographic Sentiment Map
-3. KOL & Viral Posts
+## Current Blocks
 
-This screen is accessible via step 5 in the app shell and is intended to be the post-simulation analytics surface.
+### 1. Sentiment Dynamics
 
-## Current Frontend Implementation
+- Polarization Index
+- Opinion Flow
 
-### A. Sentiment Dynamics
+### 2. Demographic Sentiment Map
 
-Two cards are rendered side-by-side.
+- dimension chips vary by use case
+- cohorts are rendered as grouped sentiment cells
 
-1. Polarization Index
-- Recharts line chart with round axis (R1 to R5)
-- Severity-aware dot colors (low, moderate, high)
-- Tooltip with round, percentage, and severity badge
+### 3. KOL & Viral Posts
 
-2. Opinion Flow
-- Initial vs final stance distributions
-- Center flow panel drawn via SVG path bands
-- Flow width proportional to migration count
+- key opinion leaders
+- viral posts / cascades
 
-### B. Demographic Sentiment Map
+## Current Live Endpoints
 
-This section mirrors Screen 2 chunked waffle layout pattern (layout parity), with only color logic changed by sentiment.
+- `GET /api/v2/console/session/{id}/analytics/polarization`
+- `GET /api/v2/console/session/{id}/analytics/opinion-flow`
+- `GET /api/v2/console/session/{id}/analytics/influence`
+- `GET /api/v2/console/session/{id}/analytics/cascades`
 
-1. Dimension filter chips
-- Industry, Planning Area, Income, Age, Occupation, Gender
-- Default dimension varies by use case
+## Current Runtime Behavior
 
-2. Group cards rendered as chunked waffle groups
-- Groups sorted by largest population first
-- Top groups shown explicitly with overflow grouped into Other
-- Each group shows:
-  - Group title
-  - n count
-  - Supporter/Neutral/Dissenter counts
-  - Wrapped mini-cell grid (not vertical single-lane)
+### Live Mode
 
-3. Sentiment color logic for mini-cells
-- Positive sentiment -> green
-- Negative sentiment -> red
-- Neutral sentiment -> gray
+- consume analytics endpoints directly
+- normalize payload shape differences in the frontend
+- show warning/empty states when analytics are incomplete
+- do not silently fall back to fake local analytics in live mode
 
-### C. KOL & Viral Posts
+### Demo Mode
 
-Two cards are rendered.
+- local constants are still allowed so the page remains usable without a backend
 
-1. Key Opinion Leaders
-- Split into Top Supporters and Top Dissenters (or fallback Top Opinion Leaders)
-- Influence score shown per leader
-- Core viewpoint and top post text
+## Current Rendering Expectations
 
-2. Viral Posts
-- Top posts with author, stance, title, body, likes/dislikes
-- Nested top comments with stance and engagement
+### Polarization
 
-## Data Source Behavior (Current)
+- render a round-by-round time series
+- show an empty state when there is no usable data
+- severity labeling is derived from the normalized payload
 
-Current frontend behavior is intentionally hybrid.
+### Opinion Flow
 
-1. Agent list source
-- Uses AppContext agents when available
-- Falls back to generateAgents(220) when empty
+- initial and final stance buckets
+- flow bands between buckets
 
-2. Analytics content source
-- Polarization, opinion flow, KOL, and viral post datasets are local constants in Analytics.tsx
-- This keeps Screen 5 usable before backend analytics routes are linked
+### Key Opinion Leaders
 
-No checkboxes are marked complete yet because backend linkage and end-to-end validation are still pending.
+Each leader card should prefer:
 
-## Backend Linking Requirements (Next Agent)
+- agent name
+- stance
+- influence score
+- concise top-viewpoint summary
 
-Wire Screen 5 to backend routes while preserving local fallback behavior.
+It should not render raw serial ids when a name is available, and it should not mistake raw post titles like “Analysis Question 3” for the agent’s viewpoint summary when better data exists.
 
-1. GET /api/v2/console/session/{id}/analytics/polarization
-2. GET /api/v2/console/session/{id}/analytics/opinion-flow
-3. GET /api/v2/console/session/{id}/analytics/influence
-4. GET /api/v2/console/session/{id}/analytics/cascades
+### Viral Posts
 
-### Expected Integration Approach
+Each post card should prefer:
 
-1. Replace hardcoded constants with API-backed state.
-2. Keep defensive fallback to local demo constants when API is unavailable.
-3. Ensure use-case-dependent demographic dimensions still drive group slicing.
-4. Preserve Screen 2 parity for chunked waffle layout in demographic map.
+- author name
+- stance
+- readable title/body
+- nested comment summaries
+- engagement counts
 
-## Frontend QA Checklist (Do Not Check Off Yet)
+## Notes
 
-- [x] Polarization chart renders API data and fallback data.
-- [x] Opinion flow transitions reflect backend counts correctly.
-- [x] Demographic waffle groups wrap in chunks and never collapse into a vertical lane.
-- [x] Sentiment colors remain semantically correct across all dimensions.
-- [x] KOL and viral post sections render API-backed content.
-- [x] Empty/loading/error states are present for all analytics blocks.
-- [x] Screen remains visually consistent with the global spacing/radius/type scale.
+- some sessions may legitimately have sparse analytics if the simulation produced too little structured signal
+- repeated near-identical comments are a simulation-quality issue, not an analytics-UI requirement

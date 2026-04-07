@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import re
 import subprocess
@@ -20,6 +21,7 @@ from mckainsey.services.storage import SimulationStore
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -102,7 +104,13 @@ class SimulationService:
         on_progress: Callable[[Path, int], None] | None = None,
         elapsed_offset_seconds: int = 0,
         tail_checkpoint_estimate_seconds: int = 0,
+        seed_discussion_threads: list[str] | None = None,
     ) -> dict[str, Any]:
+        resolved_seed_threads = [
+            str(item).strip()
+            for item in (seed_discussion_threads or [])
+            if str(item).strip()
+        ]
         token_usage: dict[str, Any] | None = None
         if force_live or self.settings.enable_real_oasis:
             result = self._run_oasis_with_inputs(
@@ -115,6 +123,7 @@ class SimulationService:
                 on_progress=on_progress,
                 elapsed_offset_seconds=elapsed_offset_seconds,
                 tail_checkpoint_estimate_seconds=tail_checkpoint_estimate_seconds,
+                seed_discussion_threads=resolved_seed_threads,
             )
             agents = result["agents"]
             interactions = result["interactions"]
@@ -128,6 +137,19 @@ class SimulationService:
         else:
             agents = self._build_agents(personas)
             interactions = []
+            if resolved_seed_threads and agents:
+                for index, question in enumerate(resolved_seed_threads):
+                    actor = agents[index % len(agents)]
+                    interactions.append(
+                        {
+                            "round_no": 0,
+                            "actor_agent_id": actor["agent_id"],
+                            "target_agent_id": None,
+                            "action_type": "create_post",
+                            "content": f"Analysis question seed {index + 1}: {question}",
+                            "delta": 0.0,
+                        }
+                    )
             for round_no in range(1, rounds + 1):
                 round_delta = self._run_round(policy_summary, agents, round_no, interactions)
                 for agent in agents:
@@ -387,6 +409,7 @@ class SimulationService:
         on_progress: Callable[[Path, int], None] | None = None,
         elapsed_offset_seconds: int = 0,
         tail_checkpoint_estimate_seconds: int = 0,
+        seed_discussion_threads: list[str] | None = None,
     ) -> dict[str, Any]:
         runner = Path(self.settings.oasis_runner_script)
         if not runner.is_absolute():
@@ -394,14 +417,7 @@ class SimulationService:
         if not runner.exists():
             raise RuntimeError(f"OASIS runner script not found: {runner}")
 
-        python_bin = Path(self.settings.oasis_python_bin)
-        if not python_bin.is_absolute():
-            python_bin = BACKEND_ROOT / python_bin
-        if not python_bin.exists():
-            raise RuntimeError(
-                f"OASIS python runtime not found: {python_bin}. "
-                "Create backend/.venv311 and install camel-oasis first."
-            )
+        python_bin = self._resolve_oasis_python_bin()
 
         provider_key = self.settings.resolved_gemini_key
         if not provider_key:
@@ -435,6 +451,7 @@ class SimulationService:
             "elapsed_offset_seconds": elapsed_offset_seconds,
             "tail_checkpoint_estimate_seconds": tail_checkpoint_estimate_seconds,
             "oasis_semaphore": oasis_semaphore,
+            "seed_discussion_threads": [item for item in (seed_discussion_threads or []) if str(item).strip()],
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -503,6 +520,65 @@ class SimulationService:
                 raise RuntimeError("OASIS runner completed but no output payload was produced.")
 
             return json.loads(output_path.read_text(encoding="utf-8"))
+
+    def _resolve_oasis_python_bin(self) -> Path:
+        configured = Path(self.settings.oasis_python_bin)
+        if not configured.is_absolute():
+            configured = BACKEND_ROOT / configured
+
+        fallback = BACKEND_ROOT / ".venv311" / "bin" / "python"
+        candidates: list[Path] = []
+        for candidate in (configured, fallback):
+            if candidate in candidates:
+                continue
+            candidates.append(candidate)
+
+        failures: list[tuple[Path, str]] = []
+        for candidate in candidates:
+            reason = self._validate_oasis_python_bin(candidate)
+            if reason is None:
+                if candidate != configured and failures:
+                    logger.warning(
+                        "Configured OASIS runtime %s is invalid; using fallback %s (%s)",
+                        configured,
+                        candidate,
+                        failures[0][1],
+                    )
+                return candidate
+            failures.append((candidate, reason))
+
+        details = "; ".join(f"{path}: {reason}" for path, reason in failures)
+        raise RuntimeError(
+            "OASIS Python runtime is unavailable. "
+            "Install backend/.venv311 or point OASIS_PYTHON_BIN to a valid Python 3.11 environment with camel-oasis installed."
+            + (f" Details: {details}" if details else "")
+        )
+
+    def _validate_oasis_python_bin(self, python_bin: Path) -> str | None:
+        if not python_bin.exists():
+            return "runtime not found"
+
+        check_script = BACKEND_ROOT / "scripts" / "check_oasis_runtime.py"
+        if not check_script.exists():
+            return f"runtime check script not found: {check_script}"
+
+        try:
+            result = subprocess.run(
+                [str(python_bin), str(check_script)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return str(exc)
+
+        if result.returncode == 0:
+            return None
+
+        output = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+        output = re.sub(r"\s+", " ", output)
+        return output[:240]
 
     def _resolve_oasis_timeout_seconds(self, *, rounds: int, persona_count: int) -> int:
         configured_timeout = max(120, int(self.settings.oasis_timeout_seconds))

@@ -1,103 +1,78 @@
-# Screen 1 — Knowledge Graph (Document Upload)
-
-> **Paper MCP Reference**: Artboard `F6-0` ("Screen 1 — Knowledge Graph (V2)")
-> **UserInput Refs**: C1, C2, C3, A5
+# Screen 1 — Knowledge Graph
 
 ## Overview
 
-Two-panel layout. Left: document upload controls, guiding prompts, and extraction stats. Right: interactive force-directed knowledge graph visualization.
+Screen 1 handles document ingestion and question definition. The left rail manages uploads and `analysis_questions`; the right panel renders the extracted graph.
 
-## Layout
+This screen is no longer centered around a user-facing guiding prompt. The main runtime object is the session-scoped `analysis_questions` array.
 
-```
-┌─────────────── 1440px ─────────────────┐
-│  ┌──── 480px ────┐  ┌──── flex:1 ────┐ │
-│  │  Left Panel   │  │  Graph Panel   │ │
-│  │  - Upload     │  │  Interactive   │ │
-│  │  - Prompts    │  │  Force Graph   │ │
-│  │  - Actions    │  │                │ │
-│  │  - Stats      │  │                │ │
-│  └───────────────┘  └────────────────┘ │
-└────────────────────────────────────────┘
-```
+## Main Responsibilities
 
-## Left Panel
+1. Load the current session’s analysis questions
+2. Allow add/edit/delete for custom questions
+3. Generate metadata for custom questions
+4. Persist the normalized question list back to session config
+5. Run knowledge extraction on uploaded documents
+6. Render the merged graph artifact
 
-### 1. Header
-- Title: "Document Upload"
-- Subtitle: "Upload policy documents to build a knowledge graph using LightRAG"
+## Current Question Workflow
 
-### 2. Use-Case Badge
-- Small pill showing current use case + country: `Policy Review · Singapore`
-- Read-only indicator (set in onboarding)
+### Preset Questions
 
-### 3. Upload Zone (`MultiDocUpload.tsx`)
-- **Drag-and-drop area** with dashed green border
-- Supported formats: PDF, DOCX, TXT, MD, HTML, JSON, CSV, YAML
-- **Multi-file support**: Each uploaded file shows as a row with:
-  - File icon + filename
-  - File size
-  - Progress bar during upload/parsing
-  - Remove (×) button
-- **URL scraper**: Input field at bottom — paste URL → backend fetches + parses
-  - Endpoint: `POST /api/v2/console/session/{id}/scrape` with `{url: string}`
-- **Paste text**: "Or paste text directly" — expandable textarea
-  - Submits as inline document to the same upload pipeline
+- seeded from the active session
+- initially come from the canonical use-case YAML
+- marked as preset in the UI
 
-### 4. Guiding Prompt Card
-- Title: "Guiding Prompt"
-- Content: Pre-populated from `config/prompts/{use_case}.yaml → guiding_prompt`
-- **Editable**: User can modify the text before extraction
-- Custom prompts: "Add custom prompt" button → appends new editable text field
+### Custom Questions
 
-### 5. Action Buttons (side by side)
-- **"Extract Knowledge Graph"** (orange, primary): Triggers LightRAG extraction
-  - Merges graphs from all uploaded documents into one combined graph
-  - Endpoint: existing upload + LightRAG pipeline
-- **"Proceed →"** (green, secondary): Navigate to Screen 2
+- can be added, edited, and removed on Screen 1
+- use `POST /api/v2/questions/generate-metadata`
+- metadata generation infers:
+  - `type`
+  - `metric_name`
+  - `metric_label`
+  - `metric_unit`
+  - `threshold` when relevant
+  - `report_title`
+  - `tooltip`
 
-### 6. Stats Row
-After extraction completes, show:
-- **Entities**: count (e.g., "47")
-- **Relations**: count (e.g., "83")
-- **Paragraphs**: count (e.g., "12")
+### Persistence
 
-## Right Panel — Knowledge Graph
+- the current question list is persisted through `PATCH /api/v2/session/{id}/config`
+- later screens must consume this persisted question list, not re-read raw YAML
 
-### Component: `InteractiveKnowledgeGraph.tsx`
+## Knowledge Ingestion Paths
 
-- **Force-directed graph** using D3.js or react-force-graph
-- **Node colors by type**: Organization (gray), Persons (green), Location (amber), Concept (cyan)
-- **Draggable nodes**: User can click and drag nodes to explore the graph
-  - Reference: This feature existed in the deprecated frontend V2: https://github.com/pebblepaw/Nemotron-Frontend-V2.0
-- **Legend**: Color-coded at top-right corner
-- **Filter chips** below header: "All" (active/orange), "Nemotron Entities", "Other"
-  - Matches existing filter system from V1 (bucket filters)
-- **Bottom-right hint**: "Interactive Force Graph · Drag nodes to explore"
+### Supported Inputs
 
-### Backend Requirements
-- Existing LightRAG pipeline handles extraction
-- `POST /api/v2/console/session/{id}/scrape` — NEW endpoint for URL scraping
-  - Uses `requests` + `BeautifulSoup` to fetch and extract text from URLs
-  - Returns `{text: string, title: string, length: number}`
-- Multi-file merge: When multiple documents are uploaded, LightRAG processes each and merges entity/relation lists into a single graph
+- file upload
+- URL scrape
+- pasted text
 
-### Tests
+### Runtime Endpoints
 
-**Frontend**:
-- [x] Drag-and-drop adds files to upload list
-- [x] Progress bars show during upload
-- [x] Multiple files display simultaneously
-- [x] URL scraper input accepts URLs and shows scraped content
-- [x] Paste-text area submits correctly
-- [x] Guiding prompt is pre-populated from config
-- [x] Guiding prompt is editable
-- [x] Graph nodes are draggable
-- [x] Filter chips filter visible nodes
-- [x] Stats row updates after extraction
+- `POST /api/v2/console/session/{id}/knowledge/process`
+- `POST /api/v2/console/session/{id}/knowledge/upload`
+- `POST /api/v2/console/session/{id}/scrape`
+- `GET /api/v2/session/{id}/analysis-questions`
 
-**Backend**:
-- [x] URL scraper handles valid URLs and returns text
-- [x] URL scraper returns 400 for invalid URLs
-- [x] Multi-file upload merges graphs correctly
-- [x] Guiding prompt loads from YAML config
+## Current Extraction Behavior
+
+- multiple documents are merged into one knowledge artifact
+- metadata generation for questions runs in parallel with extraction
+- live mode does not fabricate extraction output
+- live failures should surface short provider/runtime messages
+- demo mode may still hydrate a cached artifact when the backend is unavailable
+
+## Graph Expectations
+
+- draggable force graph
+- bucket/type filtering
+- optional relationship labels
+- stats row based on the merged artifact
+
+## Compatibility Notes
+
+- a backend `guiding_prompt` field still exists for extraction compatibility
+- the frontend currently derives that compatibility prompt from the active analysis question text when needed
+- this compatibility field should not be treated as the product-level source of truth

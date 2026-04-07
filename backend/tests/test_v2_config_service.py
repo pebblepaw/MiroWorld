@@ -44,11 +44,11 @@ name_regex: "^[A-Z].*$"
 """.strip(),
     )
     _write(
-        prompts_dir / "customer-review.yaml",
+        prompts_dir / "product-market-research.yaml",
         """
-name: "Customer Review"
-code: "customer-review"
-description: "Simulate customer reviews."
+name: "Product & Market Research"
+code: "product-market-research"
+description: "Simulate product and market research."
 guiding_prompt: "Prompt body"
 agent_personality_modifiers:
   - "Modifier 1"
@@ -69,7 +69,7 @@ report_sections:
 
     assert country["code"] == "sg"
     assert country["name"] == "Singapore"
-    assert use_case["code"] == "customer-review"
+    assert use_case["code"] == "product-market-research"
 
 
 def test_config_service_missing_country_or_use_case_raises_file_not_found(tmp_path):

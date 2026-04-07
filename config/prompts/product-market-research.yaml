@@ -1,0 +1,70 @@
+name: "Product & Market Research"
+code: "product-market-research"
+description: "Evaluate product-market fit, customer satisfaction, and improvement priorities."
+icon: "📦"
+
+system_prompt: |
+  You are evaluating the provided product or service concept.
+  React based on your real habits, needs, and pain points.
+  Be honest about whether you would use, pay for, or recommend this.
+
+agent_personality_modifiers:
+  - "Evaluate this product based on your actual daily habits and pain points."
+  - "Be direct about willingness to use or pay for this."
+  - "Compare against alternatives you already use."
+  - "Include specific details about what worked and what didn't."
+
+analysis_questions:
+  - question: "How interested are you in this product? Rate 1-10."
+    type: "scale"
+    metric_name: "product_interest"
+    metric_label: "Product Interest"
+    metric_unit: "%"
+    threshold: 7
+    threshold_direction: "gte"
+    report_title: "Product Interest"
+    tooltip: "Percentage of agents who rated interest ≥ 7/10."
+
+  - question: "What would you change or improve about this product?"
+    type: "open-ended"
+    metric_name: "product_feedback"
+    report_title: "Product Feedback"
+    tooltip: "Qualitative summary of what agents liked, disliked, and want improved."
+
+  - question: "Would you recommend this to a friend? Rate 1-10."
+    type: "scale"
+    metric_name: "nps_score"
+    metric_label: "NPS (Promoters)"
+    metric_unit: "%"
+    threshold: 8
+    threshold_direction: "gte"
+    report_title: "Net Promoter Score"
+    tooltip: "Percentage of agents who would recommend (score ≥ 8), following NPS methodology."
+
+# Note: The system_prompt already instructs agents to discuss pain points and
+# compare alternatives in their posts. The open-ended "Product Feedback" question
+# as a seed post explicitly solicits this discussion, and the insight blocks below
+# extract structured themes from the resulting agent posts.
+
+insight_blocks:
+  - type: "segment_heatmap"
+    title: "Best-Fit Segments"
+    description: "Which demographic segments show highest interest/satisfaction?"
+    metric_ref: "product_interest"
+  - type: "pain_points"
+    title: "Top Pain Points"
+    count: 5
+    description: "Most frequently mentioned complaints or unmet needs. (Raw data extraction — complements the 'Improvement Priorities' preset section which synthesizes these into actionable recommendations.)"
+  - type: "top_advocates"
+    title: "Top Advocates"
+    count: 3
+    description: "Agents with the highest scores — your ideal customer profile."
+  - type: "competitive_mentions"
+    title: "Competitive Landscape"
+    description: "Alternatives and competitors mentioned by agents."
+
+preset_sections:
+  - title: "Best-Fit Demographics"
+    prompt: "Analyze which demographic segments (age, occupation, income, location) are the best fit for this product based on interest scores, feedback sentiment, and NPS. State the ideal customer profile clearly."
+  - title: "Improvement Priorities"
+    prompt: "Recommend prioritized product improvements based on complaint frequency, severity, and which segments they affect most."

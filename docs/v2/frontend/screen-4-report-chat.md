@@ -1,179 +1,109 @@
 # Screen 4 — Report + Chat
 
-> **Paper MCP References**: Artboards `NW-0` (Option A 60/40 split), `CZ-0` (Option B drawer), `PN-0` (Option C full-page chat)
-> **UserInput Refs**: F1–F6
-> **Final Decision**: 60/40 split layout with three-way view toggle
-
 ## Overview
 
-The Report+Chat screen replaces the old separate Analysis and AgentChat pages. It combines the report and interactive focus group into a single unified experience with a view toggle.
+Screen 4 is the unified report and chat surface. It contains three view modes inside a single routed page:
 
-## View Toggle (Segmented Control)
+- Report Only
+- Report + Chat
+- Chat Only
 
-A three-way segmented control in the header bar:
+There is no separate routed Screen 6 in the current implementation.
 
-| Mode | Left Panel | Right Panel | When to use |
-|:-----|:-----------|:------------|:------------|
-| **Report Only** | Full-width report | Hidden | Reading/exporting report |
-| **Report + Chat** | 60% width report | 40% width chat | Default — simultaneous reading and questioning |
-| **Chat Only** | Hidden | Full-width chat with sidebar | Deep-dive conversations |
+## Current Report Contract
 
-The toggle is a `<SegmentedControl>` component with three buttons. Current mode stored in component state.
+### Primary Endpoint
 
-## Layout: Report + Chat Mode (Default)
+- `GET /api/v2/console/session/{id}/report`
+- `POST /api/v2/console/session/{id}/report/generate`
+- `GET /api/v2/console/session/{id}/report/export`
 
-```
-┌────────────────────── 1440px ──────────────────────┐
-│  Header: "Analysis Report" + [Toggle] + [Export]   │
-├────────────── 60% ──────────┬──────── 40% ─────────┤
-│  Report Panel               │  Chat Panel          │
-│  (scrollable)               │  (fixed input bar)   │
-└─────────────────────────────┴──────────────────────┘
-```
+### Current Payload Shape
 
-## Report Panel
+- `executive_summary`
+- `metric_deltas`
+- `quick_stats`
+- `sections`
+- `insight_blocks`
+- `preset_sections`
 
-### 1. Header
-- Title: "Analysis Report"
-- Subtitle: "{Country} · {Use Case} · {n} agents · {rounds} rounds"
-- Buttons: View Toggle + "Export DOCX"
+## Rendering Rules
 
-### 2. Executive Summary Card
-- Icon badge + "EXECUTIVE SUMMARY" label
-- Narrative paragraph: LLM-generated summary of simulation results
-- **Quick stats row** (below divider):
-  - Initial metric value (green) → arrow → Final metric value (red)
-  - Total agents simulated
-  - Shows dramatic shift clearly
+### Executive Summary
 
-### 3. Report Sections (Generated from Guiding Prompts — F2)
+- plain-text narrative only
+- grounded in the original document context plus simulation evidence
 
-The report structure mirrors the guiding prompts from Screen 1. Each prompt becomes a report section:
+### Metric Delta Cards
 
-```
-Section 1: [Guiding Prompt 1 question] → [LLM answer with evidence]
-Section 2: [Guiding Prompt 2 question] → [LLM answer with evidence]
-...
-Section N: [Guiding Prompt N question] → [LLM answer with evidence]
-```
+For each quantitative analysis question:
 
-Each section includes:
-- Section title (the original guiding prompt question)
-- Narrative answer (LLM-generated)
-- Evidence citations: post IDs, agent IDs, excerpt quotes
+- display label
+- initial value
+- final value
+- delta direction
+- `initial -> final` summary string
 
-### 4. Supporting vs Dissenting Views
+Examples:
 
-Two side-by-side cards:
-- **Supporting Views** (green header): Top arguments in favor
-- **Dissenting Views** (red header): Top arguments against
-- Each view is a bullet point pulled from actual agent posts
-[#NEW User Input: this wouldn't make sense for the other use cases e.g. finding product market fit. Let's just remove it.]
+- thresholded `scale` questions: percentage
+- `yes-no` questions: percentage
+- unthresholded `scale` questions: `/10`
 
-### 5. Additional Report Sections
-- **Demographic Breakdown**: Approval/score by demographic group
-- **Key Recommendations**: LLM-generated action items based on simulation results
-- **Methodology**: How the simulation was configured (agents, rounds, controversy boost, model)
-[#NEW User Input to frontend agent: This is actually already in Screen 5 Analytics, as the grid, so maybe we can safely remove this from this Screen]
+`0Text` or raw text-unit leakage is always a bug.
 
-## Chat Panel
+### Analysis Question Sections
 
-### Component: `ChatPanel.tsx`
+Every analysis question in the current session should produce a section, including user-added questions, subject to the persisted session config.
 
-#### Chat Header
-- "Agent Chat" + mode badge ("Group" in purple)
-- Close button (×) — hides chat, switches to Report Only mode
+Each section may include:
 
-#### Segment Tabs
-Row of tabs to switch chat groups:
-- **Top Dissenters** (active/purple) — top 5 most influential agents with negative stance
-- **Top Supporters** — top 5 most influential agents with positive stance
-- **1:1 Chat** — dropdown to select individual agent
+- `report_title`
+- original question text
+- plain-text answer
+- evidence rows
+- optional metric spotlight for quantitative questions
 
-Selection algorithm (from BRD §3.11):
-```
-influence = 0.4 × normalized_post_engagement
-          + 0.3 × normalized_comment_count
-          + 0.3 × normalized_reply_received
-```
+### Evidence
 
-#### Chat Messages
+Evidence rows should prefer:
 
-**User messages**: Right-aligned, orange-tinted bubble
-**Agent messages**: Left-aligned with:
-- Avatar (colored by stance): initials
-- Name + role label ("Tan Li Wei · Dissenter")
-- Message bubble (dark bg)
+- `agent_name`
+- `agent_id` as a fallback
+- `post_id`
+- `quote`
 
-In **Group mode**: Multiple agents respond to each user question. Each agent maintains its persona and refers to its simulation posts/opinions as context.
+Raw serial ids should not be the primary display label when a name is available.
 
-#### Input Bar
-- Text input: "Ask the group a question..."
-- Send button (orange circle with arrow)
-- Endpoint: `POST /api/v2/console/session/{id}/chat/group` with `{segment, message}`
+### Text Cleanup
 
-### Agent Click → Side Panel (`AgentSidebar.tsx`) — F5
+The report view does not render markdown. Report text should therefore be cleaned before display so literal `**` and backticks do not leak into the UI.
 
-When any agent name/avatar is clicked in posts or chat:
-- Slide-in panel from right (overlays or pushes content)
-- Shows:
-  - Agent avatar (large) + name + verified badge (if name confirmed)
-  - Demographics: Age, occupation, location/area, income bracket
-  - **Core viewpoint**: LLM-generated 1-sentence summary of their stance
-  - **Stance score**: Visual indicator (1-10 scale, colored)
-  - **Key posts**: List of their most-engaged posts/comments with vote counts
-  - **"Chat 1:1"** button → Opens direct 1:1 conversation
+## Current Chat Contract
 
-## Layout: Chat Only Mode
+### Endpoints
 
-When toggle is set to "Chat Only", the chat panel expands to full width and shows:
-- Left sidebar (320px): Group segments list + 1:1 Agent Chat list (see Paper MCP artboard `PN-0`)
-- Main area: Full-width chat with larger message bubbles, more context
+- `POST /api/v2/console/session/{id}/chat/group`
+- `POST /api/v2/console/session/{id}/chat/agent/{agent_id}`
 
-This matches the "Screen 6 — Full Page Chat (Option C)" mockup.
+### Current Modes
 
-## DOCX Export — F6
+- Top Dissenters
+- Top Supporters
+- 1:1 Chat
 
-**Button**: "Export DOCX" in header
-**Endpoint**: `GET /api/v2/console/session/{id}/report/export`
-**Implementation**: `python-docx` server-side:
-- Cover page: McKAInsey logo, country, use case, date, agent count
-- Executive Summary section
-- Each guiding prompt section with answers
-- Supporting/Dissenting views
-- Demographic breakdown table
-- Methodology section
-- Embedded chart images (polarization, etc.) rendered as PNG server-side
+Current chat behavior should use the real backend path in live mode. Fabricated replies are acceptable only in demo fallback flows.
 
-## Backend Requirements
+## DOCX Export Contract
 
-### Modified: `report_service.py`
-- Implement **plan-first ReportAgent** pattern:
-  1. LLM generates analysis plan (list of sections to cover)
-  2. Backend executes deterministic metric calculations
-  3. LLM synthesizes narrative for each section, citing evidence post/agent IDs
-- Structure report around guiding prompts from config
+Current export should serialize the V2 structure only:
 
-### New: `routes_analytics.py` (or extend `routes_console.py`)
-- `GET /api/v2/console/session/{id}/report` → Full report JSON
-- `GET /api/v2/console/session/{id}/report/export` → DOCX binary download
-- `POST /api/v2/console/session/{id}/chat/group` → `{segment, message}` → array of agent responses
-- `POST /api/v2/console/session/{id}/chat/agent/{agent_id}` → 1:1 response
+- executive summary
+- quick stats
+- metric deltas
+- analysis question sections with evidence
+- insight blocks
+- preset sections
+- short methodology footer
 
-### Tests
-
-**Frontend**:
-- [x] View toggle switches between 3 modes correctly
-- [x] Report scrolls independently from chat
-- [x] Chat messages display with correct alignment and styling
-- [x] Segment tabs switch chat groups
-- [x] Agent click opens side panel with correct data
-- [x] DOCX export triggers file download
-- [x] Report sections correspond to guiding prompts
-
-**Backend**:
-- [x] ReportAgent generates plan before metrics
-- [x] Report sections map to guiding prompt questions
-- [x] Group chat returns responses from top-N agents in segment
-- [x] 1:1 chat maintains agent persona context
-- [x] DOCX export includes all sections and is valid .docx
+Legacy report sections should not be reintroduced for V2 sessions.

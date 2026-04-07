@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 import io
 import json
+import sqlite3
 from typing import Any
 
 from docx import Document
@@ -13,6 +14,19 @@ from mckainsey.services.config_service import ConfigService
 from mckainsey.services.llm_client import GeminiChatClient
 from mckainsey.services.memory_service import MemoryService
 from mckainsey.services.storage import SimulationStore
+
+
+def _clean_report_text(value: Any) -> str:
+    text = str(value or "").replace("**", "").replace("`", "").strip()
+    return " ".join(text.split())
+
+
+def _format_metric_value(value: float, unit: str) -> str:
+    if unit == "%":
+        return f"{value:.1f}%"
+    if unit == "/10":
+        return f"{value:.1f}/10"
+    return f"{value:.1f}"
 
 
 class ReportService:
@@ -247,12 +261,15 @@ class ReportService:
     def report_chat_payload(self, simulation_id: str, message: str) -> dict[str, Any]:
         report = self.build_report(simulation_id)
         zep_context = self.memory.search_simulation_context(simulation_id, message, limit=8)
+        knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
         zep_excerpt = "\n".join(
             f"- {item['content']}"
             for item in zep_context["episodes"][:6]
         )
+        knowledge_excerpt = "\n".join(self._knowledge_context_lines(knowledge))
         prompt = (
             f"Report JSON:\n{report}\n\n"
+            f"Original document context:\n{knowledge_excerpt or '- none'}\n\n"
             f"Relevant Zep Cloud memory search results:\n{zep_excerpt or '- none'}\n\n"
             f"User asks: {message}\n"
             "Provide a direct, data-grounded answer with concrete cohort references."
@@ -269,76 +286,136 @@ class ReportService:
         }
 
     def build_v2_report(self, simulation_id: str, use_case: str | None = None) -> dict[str, Any]:
+        from mckainsey.services.metrics_service import MetricsService
+
         agents = self.store.get_agents(simulation_id)
         interactions = self.store.get_interactions(simulation_id)
         if not agents:
             raise ValueError(f"Simulation not found: {simulation_id}")
+        knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
 
-        pre_scores = [float(agent.get("opinion_pre", 5.0) or 5.0) for agent in agents]
-        post_scores = [float(agent.get("opinion_post", 5.0) or 5.0) for agent in agents]
-        round_count = max((int(item.get("round_no", 0) or 0) for item in interactions), default=0)
-        metric_label = "Approval Rate"
-        initial_metric = round(_approval(pre_scores) * 100.0, 1)
-        final_metric = round(_approval(post_scores) * 100.0, 1)
+        config_service = ConfigService(self.settings)
+        metrics_service = MetricsService(config_service)
 
-        questions = self._resolve_guiding_questions(use_case)
-        evidence_pool = self._extract_evidence(interactions)
+        # Resolve analysis questions and metadata
+        analysis_questions = self._resolve_analysis_questions(simulation_id=simulation_id, use_case=use_case)
+        insight_block_configs = self._resolve_insight_blocks(use_case)
+        preset_section_configs = self._resolve_preset_sections(use_case)
+
+        simulation = self.store.get_simulation(simulation_id) or {}
+        stored_round_count = int(simulation.get("rounds", 0) or 0)
+        interaction_round_count = max((int(item.get("round_no", 0) or 0) for item in interactions), default=0)
+        round_count = stored_round_count or interaction_round_count
+        evidence_pool = self._extract_evidence(interactions, agents)
+
+        # ── Metric deltas for quantitative questions ──
+        baseline_records = self.store.list_checkpoint_records(simulation_id, checkpoint_kind="baseline")
+        final_records = self.store.list_checkpoint_records(simulation_id, checkpoint_kind="final")
+        metric_deltas: list[dict[str, Any]] = []
+        for q in analysis_questions:
+            if q.get("type") == "open-ended":
+                continue
+            name = q.get("metric_name", "")
+            if not name:
+                continue
+            # Compute R1 and final values
+            r1_agents = self._agents_from_checkpoint(baseline_records) or agents
+            final_agents = self._agents_from_checkpoint(final_records) or agents
+            r1_val = self._compute_metric_value(q, r1_agents)
+            final_val = self._compute_metric_value(q, final_agents)
+            metric_unit = "%" if q.get("type") == "yes-no" or "threshold" in q or str(q.get("metric_unit", "")).strip() == "%" else str(q.get("metric_unit", "/10") or "/10")
+            initial_display = _format_metric_value(r1_val, metric_unit)
+            final_display = _format_metric_value(final_val, metric_unit)
+            metric_deltas.append({
+                "metric_name": name,
+                "metric_label": q.get("metric_label", name),
+                "metric_unit": metric_unit,
+                "initial_value": r1_val,
+                "final_value": final_val,
+                "delta": round(final_val - r1_val, 2),
+                "direction": "up" if final_val > r1_val else ("down" if final_val < r1_val else "flat"),
+                "report_title": q.get("report_title", name),
+                "initial_display": initial_display,
+                "final_display": final_display,
+                "delta_display": f"{initial_display} -> {final_display}",
+            })
+
+        # ── Build report sections from analysis questions ──
         sections: list[dict[str, Any]] = []
-        for question in questions:
-            answer = self._answer_guiding_question(simulation_id, question, agents, interactions)
-            sections.append(
-                {
-                    "question": question,
-                    "answer": answer,
-                    "evidence": evidence_pool[:3],
-                }
+        for q in analysis_questions:
+            question_text = q.get("question", "")
+            q_type = q.get("type", "scale")
+            answer = self._answer_guiding_question(simulation_id, question_text, agents, interactions)
+            answer = _clean_report_text(answer)
+
+            section: dict[str, Any] = {
+                "question": question_text,
+                "report_title": q.get("report_title", question_text[:60]),
+                "type": q_type,
+                "answer": answer,
+                "evidence": evidence_pool[:3],
+            }
+
+            # Add metric spotlight for quantitative questions
+            if q_type != "open-ended":
+                delta_entry = next((d for d in metric_deltas if d["metric_name"] == q.get("metric_name")), None)
+                if delta_entry:
+                    section["metric"] = delta_entry
+
+            sections.append(section)
+
+        # ── Compute insight blocks ──
+        insight_blocks: list[dict[str, Any]] = []
+        for block_cfg in insight_block_configs:
+            block_type = block_cfg.get("type", "")
+            result = metrics_service.compute_insight_block(
+                block_type=block_type,
+                agents=agents,
+                interactions=interactions,
+                analysis_questions=analysis_questions,
+                metric_ref=block_cfg.get("metric_ref"),
+                count=block_cfg.get("count", 5),
             )
+            insight_blocks.append({
+                "type": block_type,
+                "title": block_cfg.get("title", block_type),
+                "description": block_cfg.get("description", ""),
+                "data": result,
+            })
 
-        supporting_views = [
-            str(item.get("content", "")).strip()
-            for item in sorted(interactions, key=lambda row: float(row.get("delta", 0.0) or 0.0), reverse=True)
-            if float(item.get("delta", 0.0) or 0.0) > 0 and str(item.get("content", "")).strip()
-        ][:5]
-        dissenting_views = [
-            str(item.get("content", "")).strip()
-            for item in sorted(interactions, key=lambda row: float(row.get("delta", 0.0) or 0.0))
-            if float(item.get("delta", 0.0) or 0.0) < 0 and str(item.get("content", "")).strip()
-        ][:5]
+        # ── Generate preset sections via LLM ──
+        preset_sections: list[dict[str, Any]] = []
+        for preset in preset_section_configs:
+            title = preset.get("title", "")
+            prompt = preset.get("prompt", "")
+            if prompt:
+                answer = self._answer_guiding_question(simulation_id, prompt, agents, interactions)
+            else:
+                answer = ""
+            preset_sections.append({"title": title, "answer": answer})
 
-        demographic_breakdown = self._build_demographic_breakdown(agents)
-        recommendations = self._build_v2_recommendations(demographic_breakdown, dissenting_views)
-        executive_summary = self._build_v2_executive_summary(
+        # ── Executive summary ──
+        executive_summary = self._build_v2_executive_summary_from_metrics(
             simulation_id=simulation_id,
-            initial_metric=initial_metric,
-            final_metric=final_metric,
+            metric_deltas=metric_deltas,
             round_count=round_count,
-            supporting_views=supporting_views,
-            dissenting_views=dissenting_views,
+            agent_count=len(agents),
         )
 
         return {
             "session_id": simulation_id,
             "generated_at": datetime.now(UTC).isoformat(),
-            "executive_summary": executive_summary,
+            "executive_summary": _clean_report_text(executive_summary),
+            "metric_deltas": metric_deltas,
             "quick_stats": {
-                "initial_metric_value": initial_metric,
-                "final_metric_value": final_metric,
-                "metric_label": metric_label,
                 "agent_count": len(agents),
                 "round_count": round_count,
-            },
-            "sections": sections,
-            "supporting_views": supporting_views,
-            "dissenting_views": dissenting_views,
-            "demographic_breakdown": demographic_breakdown,
-            "key_recommendations": recommendations,
-            "methodology": {
-                "agents": len(agents),
-                "rounds": round_count,
                 "model": self.llm.model_name,
                 "provider": self.llm.provider,
-                "memory_backend_order": "graphiti->zep->local",
             },
+            "sections": sections,
+            "insight_blocks": insight_blocks,
+            "preset_sections": preset_sections,
         }
 
     def export_v2_report_docx(self, simulation_id: str, report: dict[str, Any] | None = None, use_case: str | None = None) -> bytes:
@@ -355,18 +432,36 @@ class ReportService:
         if isinstance(quick_stats, dict):
             document.add_heading("Quick Stats", level=1)
             document.add_paragraph(
-                f"{quick_stats.get('metric_label', 'Metric')}: "
-                f"{quick_stats.get('initial_metric_value', 0)} -> {quick_stats.get('final_metric_value', 0)}"
-            )
-            document.add_paragraph(
                 f"Agents: {quick_stats.get('agent_count', 0)} | Rounds: {quick_stats.get('round_count', 0)}"
             )
+            document.add_paragraph(
+                f"Model: {quick_stats.get('model', '')} ({quick_stats.get('provider', '')})"
+            )
 
-        document.add_heading("Guiding Prompt Sections", level=1)
+        metric_deltas = payload.get("metric_deltas", [])
+        if isinstance(metric_deltas, list) and metric_deltas:
+            document.add_heading("Metric Deltas", level=1)
+            for metric in metric_deltas:
+                if not isinstance(metric, dict):
+                    continue
+                label = str(metric.get("metric_label", metric.get("metric_name", "Metric")))
+                initial_value = metric.get("initial_value", 0)
+                final_value = metric.get("final_value", 0)
+                delta = metric.get("delta", 0)
+                unit = str(metric.get("metric_unit", ""))
+                document.add_paragraph(
+                    f"{label}: {initial_value}{unit} -> {final_value}{unit} ({delta:+}{unit})",
+                    style="List Bullet",
+                )
+
+        document.add_heading("Analysis Question Sections", level=1)
         for section in payload.get("sections", []):
             if not isinstance(section, dict):
                 continue
-            document.add_heading(str(section.get("question", "Section")), level=2)
+            section_title = str(section.get("report_title") or section.get("question") or "Section")
+            document.add_heading(section_title, level=2)
+            if section.get("question"):
+                document.add_paragraph(f"Question: {section.get('question')}")
             document.add_paragraph(str(section.get("answer", "")))
             evidence = section.get("evidence", [])
             if isinstance(evidence, list) and evidence:
@@ -381,41 +476,31 @@ class ReportService:
                             style="List Bullet",
                         )
 
-        document.add_heading("Supporting Views", level=1)
-        for text in payload.get("supporting_views", []):
-            document.add_paragraph(str(text), style="List Bullet")
-
-        document.add_heading("Dissenting Views", level=1)
-        for text in payload.get("dissenting_views", []):
-            document.add_paragraph(str(text), style="List Bullet")
-
-        demographic_rows = payload.get("demographic_breakdown", [])
-        if isinstance(demographic_rows, list) and demographic_rows:
-            document.add_heading("Demographic Breakdown", level=1)
-            table = document.add_table(rows=1, cols=4)
-            header = table.rows[0].cells
-            header[0].text = "Segment"
-            header[1].text = "Supporter"
-            header[2].text = "Neutral"
-            header[3].text = "Dissenter"
-            for row in demographic_rows:
-                if not isinstance(row, dict):
+        insight_blocks = payload.get("insight_blocks", [])
+        if isinstance(insight_blocks, list) and insight_blocks:
+            document.add_heading("Use-Case Insights", level=1)
+            for block in insight_blocks:
+                if not isinstance(block, dict):
                     continue
-                cells = table.add_row().cells
-                cells[0].text = str(row.get("segment", ""))
-                cells[1].text = str(row.get("supporter", 0))
-                cells[2].text = str(row.get("neutral", 0))
-                cells[3].text = str(row.get("dissenter", 0))
+                document.add_heading(str(block.get("title", "Insight")), level=2)
+                description = str(block.get("description", "")).strip()
+                if description:
+                    document.add_paragraph(description)
 
-        document.add_heading("Key Recommendations", level=1)
-        for item in payload.get("key_recommendations", []):
-            document.add_paragraph(str(item), style="List Bullet")
+        preset_sections = payload.get("preset_sections", [])
+        if isinstance(preset_sections, list) and preset_sections:
+            document.add_heading("Preset Sections", level=1)
+            for section in preset_sections:
+                if not isinstance(section, dict):
+                    continue
+                document.add_heading(str(section.get("title", "Section")), level=2)
+                document.add_paragraph(str(section.get("answer", "")))
 
-        methodology = payload.get("methodology", {})
-        if isinstance(methodology, dict):
-            document.add_heading("Methodology", level=1)
-            for key, value in methodology.items():
-                document.add_paragraph(f"{key}: {value}")
+        document.add_paragraph(
+            f"Methodology: Simulated agents={quick_stats.get('agent_count', 0)}, "
+            f"rounds={quick_stats.get('round_count', 0)}, "
+            f"model={quick_stats.get('model', '')} ({quick_stats.get('provider', '')})."
+        )
 
         buffer = io.BytesIO()
         document.save(buffer)
@@ -453,20 +538,63 @@ class ReportService:
             "Which arguments most strongly oppose the policy?",
         ]
 
-    def _extract_evidence(self, interactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _extract_evidence(self, interactions: list[dict[str, Any]], agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        agent_names: dict[str, str] = {}
+        for agent in agents:
+            agent_id = str(agent.get("agent_id") or agent.get("id") or "").strip()
+            if not agent_id:
+                continue
+            display_name = _clean_report_text(
+                agent.get("name")
+                or agent.get("agent_name")
+                or agent.get("display_name")
+                or agent.get("label")
+                or agent_id
+            )
+            agent_names[agent_id] = display_name or agent_id
+
         evidence: list[dict[str, Any]] = []
         for row in interactions:
             quote = str(row.get("content", "")).strip()
             if not quote:
                 continue
+            agent_id = str(row.get("actor_agent_id", "")).strip()
             evidence.append(
                 {
-                    "agent_id": str(row.get("actor_agent_id", "")),
+                    "agent_id": agent_id,
+                    "agent_name": agent_names.get(agent_id, agent_id),
                     "post_id": str(row.get("post_id") or row.get("id") or ""),
                     "quote": quote[:280],
                 }
             )
         return evidence
+
+    def _knowledge_context_lines(self, knowledge: dict[str, Any]) -> list[str]:
+        if not isinstance(knowledge, dict):
+            return []
+
+        lines: list[str] = []
+        summary = _clean_report_text(knowledge.get("summary"))
+        if summary:
+            lines.append(f"Document summary: {summary}")
+
+        document = knowledge.get("document")
+        if isinstance(document, dict):
+            source_path = _clean_report_text(document.get("source_path"))
+            if source_path:
+                lines.append(f"Source document: {source_path}")
+            text_length = document.get("text_length")
+            if text_length is not None:
+                lines.append(f"Document length: {text_length}")
+            sources = document.get("sources")
+            if isinstance(sources, list):
+                for source in sources[:3]:
+                    if not isinstance(source, dict):
+                        continue
+                    source_path = _clean_report_text(source.get("source_path"))
+                    if source_path:
+                        lines.append(f"Document source: {source_path}")
+        return lines
 
     def _answer_guiding_question(
         self,
@@ -475,9 +603,12 @@ class ReportService:
         agents: list[dict[str, Any]],
         interactions: list[dict[str, Any]],
     ) -> str:
+        knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
+        knowledge_context = "\n".join(self._knowledge_context_lines(knowledge))
         prompt = (
             f"Simulation ID: {simulation_id}\n"
             f"Guiding question: {question}\n"
+            f"Original document context:\n{knowledge_context or '- none'}\n"
             f"Agent sample size: {len(agents)}\n"
             f"Recent interactions: {json.dumps(interactions[-20:], ensure_ascii=False)[:6000]}\n"
             "Respond in 2-4 sentences and reference evidence from the interactions."
@@ -551,6 +682,150 @@ class ReportService:
                 f"Across {round_count} rounds, overall approval {direction} from {initial_metric} to {final_metric}. "
                 "Observed interactions show concentrated disagreement around affordability and rollout fairness."
             )
+
+    # ── New V2 helper methods ──
+
+    def _session_analysis_questions(self, simulation_id: str) -> list[dict[str, Any]]:
+        try:
+            conn = sqlite3.connect(self.settings.simulation_db_path)
+            row = conn.execute(
+                "SELECT analysis_questions FROM session_configs WHERE session_id = ?",
+                (simulation_id,),
+            ).fetchone()
+            conn.close()
+        except Exception:  # noqa: BLE001
+            return []
+        if not row or row[0] is None:
+            return []
+        raw = row[0]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                return []
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
+
+    def _resolve_analysis_questions(self, *, simulation_id: str, use_case: str | None) -> list[dict[str, Any]]:
+        """Resolve analysis questions from session config first, then fall back to use-case YAML."""
+        session_questions = self._session_analysis_questions(simulation_id)
+        if session_questions:
+            return session_questions
+
+        if use_case:
+            config_service = ConfigService(self.settings)
+            try:
+                questions = config_service.get_analysis_questions(use_case)
+                if questions:
+                    return questions
+                sections = config_service.get_report_sections(use_case)
+                normalized_from_sections = [
+                    {
+                        "question": str(item.get("prompt") or item.get("title") or "").strip(),
+                        "type": "open-ended",
+                        "metric_name": str(item.get("title", "")).strip().lower().replace(" ", "_") or "section",
+                        "report_title": str(item.get("title") or item.get("prompt") or "Section").strip(),
+                        "tooltip": "",
+                    }
+                    for item in sections
+                    if isinstance(item, dict) and str(item.get("prompt") or item.get("title") or "").strip()
+                ]
+                if normalized_from_sections:
+                    return normalized_from_sections
+            except Exception:  # noqa: BLE001
+                pass
+        return []
+
+    def _resolve_insight_blocks(self, use_case: str | None) -> list[dict[str, Any]]:
+        """Resolve insight block configs from the use-case YAML."""
+        if use_case:
+            config_service = ConfigService(self.settings)
+            try:
+                return config_service.get_insight_blocks(use_case)
+            except Exception:  # noqa: BLE001
+                pass
+        return []
+
+    def _resolve_preset_sections(self, use_case: str | None) -> list[dict[str, Any]]:
+        """Resolve preset section configs from the use-case YAML."""
+        if use_case:
+            config_service = ConfigService(self.settings)
+            try:
+                return config_service.get_preset_sections(use_case)
+            except Exception:  # noqa: BLE001
+                pass
+        return []
+
+    def _agents_from_checkpoint(self, checkpoint_records: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+        """Convert checkpoint records into agent-like dicts for metric computation."""
+        if not checkpoint_records:
+            return None
+        rows: list[dict[str, Any]] = []
+        for record in checkpoint_records:
+            if not isinstance(record, dict):
+                continue
+            row: dict[str, Any] = {}
+            metric_answers = record.get("metric_answers")
+            if isinstance(metric_answers, dict):
+                for metric_name, value in metric_answers.items():
+                    clean_name = str(metric_name or "").strip()
+                    if not clean_name:
+                        continue
+                    row[f"checkpoint_{clean_name}"] = value
+            if row:
+                rows.append(row)
+            else:
+                rows.append(record)
+        return rows
+
+    def _compute_metric_value(self, question: dict[str, Any], agents: list[dict[str, Any]]) -> float:
+        """Compute a single metric value for one analysis question across agents."""
+        name = question.get("metric_name", "")
+        field = f"checkpoint_{name}"
+        q_type = question.get("type", "scale")
+        total = max(len(agents), 1)
+
+        if q_type == "scale":
+            scores = [float(a.get(field, a.get("opinion_post", 5.0)) or 5.0) for a in agents]
+            if "threshold" in question:
+                threshold = float(question.get("threshold", 7))
+                pct = sum(1 for s in scores if s >= threshold) / total * 100
+                return round(pct, 1)
+            return round(sum(scores) / len(scores) if scores else 0.0, 1)
+        elif q_type == "yes-no":
+            yes_count = sum(1 for a in agents if str(a.get(field, "")).strip().lower() in {"yes", "y"})
+            return round(yes_count / total * 100, 1)
+        return 0.0
+
+    def _build_v2_executive_summary_from_metrics(
+        self,
+        *,
+        simulation_id: str,
+        metric_deltas: list[dict[str, Any]],
+        round_count: int,
+        agent_count: int,
+    ) -> str:
+        """Build executive summary using metric deltas instead of raw scores."""
+        if not metric_deltas:
+            return f"Simulation {simulation_id} completed with {agent_count} agents over {round_count} rounds."
+
+        metrics_summary = "; ".join(
+            f"{d['metric_label']}: {d['initial_display']} -> {d['final_display']} ({'+' if d['delta'] > 0 else ''}{d['delta']}{d['metric_unit']})"
+            for d in metric_deltas
+        )
+        knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
+        knowledge_context = "\n".join(self._knowledge_context_lines(knowledge))
+        prompt = (
+            f"Simulation {simulation_id}. {agent_count} agents over {round_count} rounds.\n"
+            f"Original document context:\n{knowledge_context or '- none'}\n"
+            f"Key metrics: {metrics_summary}\n"
+            "Write a concise executive summary in 3-4 sentences highlighting the most important findings."
+        )
+        try:
+            return self.llm.complete_required(prompt, system_prompt="You are McKAInsey ReportAgent.")
+        except Exception:  # noqa: BLE001
+            return f"Across {round_count} rounds with {agent_count} agents: {metrics_summary}."
 
     def _recommend(
         self,

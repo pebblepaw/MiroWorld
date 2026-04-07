@@ -4,6 +4,7 @@ import zipfile
 
 from mckainsey.config import Settings
 from mckainsey.services.report_service import ReportService
+from mckainsey.services.console_service import ConsoleService
 
 
 def test_generate_structured_report_returns_fixed_schema(tmp_path, monkeypatch):
@@ -281,6 +282,313 @@ report_sections: []
     assert payload["sections"][0]["answer"] == "Narrative answer grounded in evidence."
 
 
+def test_build_v2_report_prefers_session_scoped_analysis_questions(tmp_path, monkeypatch):
+    prompts_dir = tmp_path / "prompts"
+    _write(
+        prompts_dir / "public-policy-testing.yaml",
+        """
+name: "Public Policy Testing"
+code: "public-policy-testing"
+description: "Policy testing"
+analysis_questions:
+  - question: "Do you approve of this policy? Rate 1-10."
+    type: "scale"
+    metric_name: "approval_rate"
+    report_title: "Policy Approval"
+  - question: "What specific aspects of this policy do you support or oppose, and why?"
+    type: "open-ended"
+    metric_name: "policy_viewpoints"
+    report_title: "Key Viewpoints"
+preset_sections: []
+insight_blocks: []
+""".strip(),
+    )
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        config_prompts_dir=str(prompts_dir),
+    )
+    service = ReportService(settings)
+    console_service = ConsoleService(settings)
+    console_service._upsert_session_config(
+        "session-1",
+        {
+            "use_case": "public-policy-testing",
+            "analysis_questions": [
+                {
+                    "question": "Do you approve of this policy? Rate 1-10.",
+                    "type": "scale",
+                    "metric_name": "approval_rate",
+                    "report_title": "Policy Approval",
+                },
+                {
+                    "question": "What specific aspects of this policy do you support or oppose, and why?",
+                    "type": "open-ended",
+                    "metric_name": "policy_viewpoints",
+                    "report_title": "Key Viewpoints",
+                },
+                {
+                    "question": "How clear and practical are the eligibility rules, payout timing, and spending rules for the $500 Child LifeSG Credits? Rate 1-10.",
+                    "type": "scale",
+                    "metric_name": "child_life_sg_credits_clarity_practicality",
+                    "report_title": "Child LifeSG Credits Clarity and Practicality",
+                },
+            ],
+        },
+    )
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agents",
+        lambda simulation_id: [
+            {"agent_id": "agent-0001", "persona": {"planning_area": "Ang Mo Kio"}, "opinion_pre": 7, "opinion_post": 6},
+        ],
+    )
+    monkeypatch.setattr(
+        service.store,
+        "get_interactions",
+        lambda simulation_id: [
+            {
+                "id": 1,
+                "round_no": 1,
+                "actor_agent_id": "agent-0001",
+                "target_agent_id": None,
+                "action_type": "create_post",
+                "content": "Families need clearer rules on eligibility, payout timing, and how the credits can be spent.",
+                "delta": -0.1,
+            }
+        ],
+    )
+    monkeypatch.setattr(service.store, "get_simulation", lambda simulation_id: {"rounds": 3})
+    monkeypatch.setattr(service.store, "list_checkpoint_records", lambda simulation_id, checkpoint_kind=None: [])
+    monkeypatch.setattr(service, "_answer_guiding_question", lambda simulation_id, question, agents, interactions: f"Answer for {question}")
+
+    payload = service.build_v2_report("session-1", use_case="public-policy-testing")
+
+    assert [section["question"] for section in payload["sections"]] == [
+        "Do you approve of this policy? Rate 1-10.",
+        "What specific aspects of this policy do you support or oppose, and why?",
+        "How clear and practical are the eligibility rules, payout timing, and spending rules for the $500 Child LifeSG Credits? Rate 1-10.",
+    ]
+    assert payload["sections"][2]["report_title"] == "Child LifeSG Credits Clarity and Practicality"
+
+
+def test_build_v2_report_enriches_evidence_with_agent_names_and_strips_markdown(tmp_path, monkeypatch):
+    prompts_dir = tmp_path / "prompts"
+    _write(
+        prompts_dir / "public-policy-testing.yaml",
+        """
+name: "Public Policy Testing"
+code: "public-policy-testing"
+analysis_questions:
+  - question: "Do you approve of this policy? Rate 1-10."
+    type: "scale"
+    metric_name: "approval_rate"
+    metric_label: "Approval Rate"
+    report_title: "Policy Approval"
+  - question: "What specific aspects of this policy do you support or oppose, and why?"
+    type: "open-ended"
+    metric_name: "policy_viewpoints"
+    report_title: "Key Viewpoints"
+preset_sections: []
+insight_blocks: []
+""".strip(),
+    )
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        config_prompts_dir=str(prompts_dir),
+    )
+    service = ReportService(settings)
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agents",
+        lambda simulation_id: [
+            {
+                "agent_id": "agent-0001",
+                "name": "Agent One",
+                "persona": {"planning_area": "Ang Mo Kio"},
+                "opinion_pre": 7,
+                "opinion_post": 6,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        service.store,
+        "get_interactions",
+        lambda simulation_id: [
+            {
+                "id": 1,
+                "round_no": 1,
+                "actor_agent_id": "agent-0001",
+                "target_agent_id": None,
+                "action_type": "create_post",
+                "content": "Families need clearer rules on eligibility and payout timing.",
+                "delta": -0.1,
+            }
+        ],
+    )
+    monkeypatch.setattr(service.store, "get_simulation", lambda simulation_id: {"rounds": 3})
+    monkeypatch.setattr(service.store, "list_checkpoint_records", lambda simulation_id, checkpoint_kind=None: [])
+    monkeypatch.setattr(
+        service.store,
+        "get_knowledge_artifact",
+        lambda session_id: {"summary": "Sports voucher policy.", "document": {"source_path": "/tmp/policy.pdf", "text_length": 1234}},
+    )
+    monkeypatch.setattr(service, "_answer_guiding_question", lambda simulation_id, question, agents, interactions: "**Bold narrative** with markdown markers.")
+
+    payload = service.build_v2_report("session-1", use_case="public-policy-testing")
+
+    assert [section["question"] for section in payload["sections"]] == [
+        "Do you approve of this policy? Rate 1-10.",
+        "What specific aspects of this policy do you support or oppose, and why?",
+    ]
+    assert payload["sections"][0]["evidence"][0]["agent_name"] == "Agent One"
+    assert "**" not in payload["sections"][0]["answer"]
+
+
+def test_build_v2_report_formats_yes_no_metrics_as_percentages_with_delta_display(tmp_path, monkeypatch):
+    prompts_dir = tmp_path / "prompts"
+    _write(
+        prompts_dir / "public-policy-testing.yaml",
+        """
+name: "Public Policy Testing"
+code: "public-policy-testing"
+analysis_questions:
+  - question: "Would you support this policy? (yes/no)"
+    type: "yes-no"
+    metric_name: "policy_support"
+    metric_label: "Policy Support"
+    metric_unit: "Text"
+    report_title: "Policy Support"
+preset_sections: []
+insight_blocks: []
+""".strip(),
+    )
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        config_prompts_dir=str(prompts_dir),
+    )
+    service = ReportService(settings)
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agents",
+        lambda simulation_id: [
+            {"agent_id": "agent-0001", "persona": {"planning_area": "Ang Mo Kio"}, "opinion_pre": 7, "opinion_post": 8},
+            {"agent_id": "agent-0002", "persona": {"planning_area": "Yishun"}, "opinion_pre": 6, "opinion_post": 7},
+        ],
+    )
+    monkeypatch.setattr(service.store, "get_interactions", lambda simulation_id: [])
+    monkeypatch.setattr(service.store, "get_simulation", lambda simulation_id: {"rounds": 3})
+    monkeypatch.setattr(
+        service.store,
+        "list_checkpoint_records",
+        lambda simulation_id, checkpoint_kind=None: (
+            [
+                {"agent_id": "agent-0001", "metric_answers": {"policy_support": "yes"}},
+                {"agent_id": "agent-0002", "metric_answers": {"policy_support": "no"}},
+            ]
+            if checkpoint_kind == "baseline"
+            else [
+                {"agent_id": "agent-0001", "metric_answers": {"policy_support": "yes"}},
+                {"agent_id": "agent-0002", "metric_answers": {"policy_support": "yes"}},
+            ]
+        ),
+    )
+    monkeypatch.setattr(service, "_answer_guiding_question", lambda simulation_id, question, agents, interactions: "Narrative answer.")
+
+    payload = service.build_v2_report("session-1", use_case="public-policy-testing")
+
+    metric = payload["metric_deltas"][0]
+    assert metric["metric_unit"] == "%"
+    assert metric["initial_value"] == 50.0
+    assert metric["final_value"] == 100.0
+    assert metric["delta_display"] == "50.0% -> 100.0%"
+
+
+def test_build_v2_report_includes_document_context_in_section_prompts(tmp_path, monkeypatch):
+    prompts_dir = tmp_path / "prompts"
+    _write(
+        prompts_dir / "public-policy-testing.yaml",
+        """
+name: "Public Policy Testing"
+code: "public-policy-testing"
+analysis_questions:
+  - question: "Do you approve of this policy? Rate 1-10."
+    type: "scale"
+    metric_name: "approval_rate"
+    metric_label: "Approval Rate"
+    report_title: "Policy Approval"
+preset_sections: []
+insight_blocks: []
+""".strip(),
+    )
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        config_prompts_dir=str(prompts_dir),
+    )
+    service = ReportService(settings)
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agents",
+        lambda simulation_id: [{"agent_id": "agent-0001", "persona": {"planning_area": "Ang Mo Kio"}, "opinion_pre": 7, "opinion_post": 8}],
+    )
+    monkeypatch.setattr(service.store, "get_interactions", lambda simulation_id: [])
+    monkeypatch.setattr(service.store, "get_simulation", lambda simulation_id: {"rounds": 3})
+    monkeypatch.setattr(service.store, "list_checkpoint_records", lambda simulation_id, checkpoint_kind=None: [])
+    monkeypatch.setattr(
+        service.store,
+        "get_knowledge_artifact",
+        lambda session_id: {
+            "summary": "Sports voucher policy for families.",
+            "document": {"source_path": "/tmp/policy.pdf", "text_length": 4321},
+        },
+    )
+
+    captured_prompts: list[str] = []
+
+    def fake_complete_required(prompt, system_prompt=None):
+        captured_prompts.append(prompt)
+        return "Narrative answer."
+
+    monkeypatch.setattr(service.llm, "complete_required", fake_complete_required)
+
+    service.build_v2_report("session-1", use_case="public-policy-testing")
+
+    assert captured_prompts
+    assert "Sports voucher policy for families." in captured_prompts[0]
+    assert "/tmp/policy.pdf" in captured_prompts[0]
+
+
+def test_report_chat_payload_includes_document_context(tmp_path, monkeypatch):
+    settings = Settings(simulation_db_path=str(tmp_path / "sim.db"))
+    service = ReportService(settings)
+
+    monkeypatch.setattr(service, "build_report", lambda simulation_id: {"simulation_id": simulation_id, "executive_summary": "Summary"})
+    monkeypatch.setattr(
+        service.store,
+        "get_knowledge_artifact",
+        lambda session_id: {
+            "summary": "Sports voucher policy for families.",
+            "document": {"source_path": "/tmp/policy.pdf", "text_length": 4321},
+        },
+    )
+    monkeypatch.setattr(service.memory, "search_simulation_context", lambda simulation_id, query, limit=8: {"episodes": [], "zep_context_used": False})
+
+    captured: dict[str, str] = {}
+
+    def fake_complete_required(prompt, system_prompt=None):
+        captured["prompt"] = prompt
+        return "Chat response."
+
+    monkeypatch.setattr(service.llm, "complete_required", fake_complete_required)
+
+    payload = service.report_chat_payload("session-1", "What does the document say?")
+
+    assert payload["response"] == "Chat response."
+    assert "Sports voucher policy for families." in captured["prompt"]
+    assert "/tmp/policy.pdf" in captured["prompt"]
 def test_export_v2_report_docx_generates_valid_docx_with_sections(tmp_path, monkeypatch):
     settings = Settings(simulation_db_path=str(tmp_path / "sim.db"))
     service = ReportService(settings)
@@ -302,15 +610,13 @@ def test_export_v2_report_docx_generates_valid_docx_with_sections(tmp_path, monk
             "sections": [
                 {
                     "question": "Do you approve of this policy? Rate 1-10.",
+                    "report_title": "Policy Approval",
                     "answer": "Approval dropped over later rounds.",
                     "evidence": [{"agent_id": "agent-0002", "post_id": "post-22", "quote": "Rent pressure rose."}],
                 }
             ],
-            "supporting_views": ["Some agents still support long-term outcomes."],
-            "dissenting_views": ["Household cost pressure dominates dissent."],
-            "demographic_breakdown": [{"segment": "Woodlands lower-income", "supporter": 12, "neutral": 4, "dissenter": 19}],
-            "key_recommendations": ["Phase safeguards by district."],
-            "methodology": {"agents": 220, "rounds": 5, "model": "gemini-2.0-flash", "controversy_boost": 0.4},
+            "insight_blocks": [{"type": "polarization_index", "title": "Polarization Over Time", "description": "How divided views changed.", "data": {"status": "ok"}}],
+            "preset_sections": [{"title": "Recommendations", "answer": "Phase safeguards by district."}],
         },
     )
 
@@ -321,7 +627,12 @@ def test_export_v2_report_docx_generates_valid_docx_with_sections(tmp_path, monk
         assert "word/document.xml" in archive.namelist()
         document_xml = archive.read("word/document.xml").decode("utf-8")
     assert "Sentiment polarized after affordability arguments intensified." in document_xml
-    assert "Do you approve of this policy? Rate 1-10." in document_xml
+    assert "Policy Approval" in document_xml
+    assert "Recommendations" in document_xml
+    assert "Supporting Views" not in document_xml
+    assert "Dissenting Views" not in document_xml
+    assert "Demographic Breakdown" not in document_xml
+    assert "Methodology: Simulated agents=220, rounds=5" in document_xml
 
 
 def test_build_v2_report_uses_report_sections_when_checkpoint_questions_are_missing(tmp_path, monkeypatch):
@@ -364,3 +675,110 @@ report_sections:
         "Summarize approval trends.",
         "List concrete actions.",
     ]
+
+
+def test_build_v2_report_metric_deltas_use_checkpoint_metric_answers(tmp_path, monkeypatch):
+    prompts_dir = tmp_path / "prompts"
+    _write(
+        prompts_dir / "public-policy-testing.yaml",
+        """
+name: "Public Policy Testing"
+code: "public-policy-testing"
+analysis_questions:
+  - question: "Do you approve of this policy? Rate 1-10."
+    type: "scale"
+    metric_name: "approval_rate"
+    metric_label: "Approval Rate"
+    metric_unit: "%"
+    threshold: 7
+    threshold_direction: "gte"
+    report_title: "Policy Approval"
+preset_sections: []
+""".strip(),
+    )
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        config_prompts_dir=str(prompts_dir),
+    )
+    service = ReportService(settings)
+    monkeypatch.setattr(
+        service.store,
+        "get_agents",
+        lambda simulation_id: [
+            {"agent_id": "agent-1", "persona": {"planning_area": "Woodlands"}, "opinion_pre": 8, "opinion_post": 4},
+            {"agent_id": "agent-2", "persona": {"planning_area": "Yishun"}, "opinion_pre": 7, "opinion_post": 3},
+        ],
+    )
+    monkeypatch.setattr(service.store, "get_interactions", lambda simulation_id: [])
+    monkeypatch.setattr(
+        service.store,
+        "list_checkpoint_records",
+        lambda simulation_id, checkpoint_kind=None: (
+            [
+                {"agent_id": "agent-1", "metric_answers": {"approval_rate": 8}},
+                {"agent_id": "agent-2", "metric_answers": {"approval_rate": 7}},
+            ]
+            if checkpoint_kind == "baseline"
+            else [
+                {"agent_id": "agent-1", "metric_answers": {"approval_rate": 4}},
+                {"agent_id": "agent-2", "metric_answers": {"approval_rate": 3}},
+            ]
+        ),
+    )
+    monkeypatch.setattr(service.llm, "complete_required", lambda prompt, system_prompt=None: "Narrative answer.")
+
+    payload = service.build_v2_report("session-1", use_case="public-policy-testing")
+
+    assert payload["metric_deltas"][0]["initial_value"] == 100.0
+    assert payload["metric_deltas"][0]["final_value"] == 0.0
+    assert payload["metric_deltas"][0]["delta"] == -100.0
+
+
+def test_build_v2_report_uses_stored_simulation_rounds_when_interactions_stop_early(tmp_path, monkeypatch):
+    prompts_dir = tmp_path / "prompts"
+    _write(
+        prompts_dir / "public-policy-testing.yaml",
+        """
+name: "Public Policy Testing"
+code: "public-policy-testing"
+analysis_questions:
+  - question: "Do you approve of this policy? Rate 1-10."
+    type: "scale"
+    metric_name: "approval_rate"
+    display_label: "Approval Rate"
+""".strip(),
+    )
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        config_prompts_dir=str(prompts_dir),
+    )
+    service = ReportService(settings)
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agents",
+        lambda simulation_id: [
+            {"agent_id": "agent-0001", "persona": {"planning_area": "Woodlands"}, "opinion_pre": 9, "opinion_post": 8},
+        ],
+    )
+    monkeypatch.setattr(
+        service.store,
+        "get_interactions",
+        lambda simulation_id: [
+            {
+                "id": 1,
+                "round_no": 2,
+                "actor_agent_id": "agent-0001",
+                "target_agent_id": None,
+                "action_type": "create_post",
+                "content": "Approval stayed strong.",
+                "delta": 0.1,
+            }
+        ],
+    )
+    monkeypatch.setattr(service.store, "get_simulation", lambda simulation_id: {"simulation_id": simulation_id, "rounds": 5})
+    monkeypatch.setattr(service.llm, "complete_required", lambda prompt, system_prompt=None: "Narrative answer grounded in evidence.")
+
+    payload = service.build_v2_report("session-1", use_case="public-policy-testing")
+
+    assert payload["quick_stats"]["round_count"] == 5

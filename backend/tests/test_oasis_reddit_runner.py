@@ -1,4 +1,16 @@
+import importlib.util
 from pathlib import Path
+import sys
+
+
+def _load_runner_module():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "oasis_reddit_runner.py"
+    spec = importlib.util.spec_from_file_location("oasis_reddit_runner_test", script_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _runner_script_text() -> str:
@@ -17,13 +29,62 @@ def test_seed_post_builder_uses_policy_summary_excerpt():
     source = _runner_script_text()
 
     assert "summary_excerpt = \" \".join(str(policy_summary or \"\").split()).strip()[:220]" in source
-    assert "Policy thread kickoff {index + 1}: {summary_excerpt}" in source
+    assert "Policy context for discussion:" in source
 
 
-def test_policy_kickoff_is_limited_to_single_seed_post():
-    source = _runner_script_text()
+def test_seed_posts_are_analysis_question_threads_only_when_questions_exist():
+    runner = _load_runner_module()
 
-    assert "seed_agents = [agent for _, agent in env.agent_graph.get_agents()][: min(1, len(profiles))]" in source
+    seed_posts = runner._resolve_seed_posts(
+        "A means-tested public transport subsidy is being proposed for lower-income workers in Singapore.",
+        [
+            "Do you approve of this subsidy? Rate 1-10.",
+            "What concerns do you have about implementation fairness?",
+        ],
+    )
+
+    assert len(seed_posts) == 2
+    assert all(post.startswith("Analysis question ") for post in seed_posts)
+    assert all("Policy thread kickoff" not in post for post in seed_posts)
+    assert all("Policy context:" in post for post in seed_posts)
+
+
+def test_seed_posts_fallback_uses_policy_context_without_legacy_kickoff_label():
+    runner = _load_runner_module()
+
+    seed_posts = runner._resolve_seed_posts(
+        "A CPF top-up enhancement is under review for seniors aged 65+.",
+        [],
+    )
+
+    assert len(seed_posts) == 1
+    assert seed_posts[0].startswith("Policy context for discussion:")
+    assert "Policy thread kickoff" not in seed_posts[0]
+
+
+def test_seed_posts_preserve_policy_context_when_analysis_questions_exist():
+    runner = _load_runner_module()
+
+    seed_posts = runner._resolve_seed_posts(
+        "The Child LifeSG Credits policy provides a one-off $500 credit for Singapore Citizen children aged 0 to 12 in 2026 for groceries, utilities, and pharmacy items.",
+        [
+            "Do you approve of this policy? Rate 1-10.",
+            "How useful would the $500 Child LifeSG Credits be for your household's day-to-day expenses? Rate 1-10.",
+        ],
+    )
+
+    assert len(seed_posts) == 2
+    assert "Analysis question 1:" in seed_posts[0]
+    assert "Child LifeSG Credits" in seed_posts[0]
+    assert "Analysis question 2:" in seed_posts[1]
+    assert "day-to-day expenses" in seed_posts[1]
+
+
+def test_first_round_batching_is_single_agent_to_reduce_same_state_comment_clones():
+    runner = _load_runner_module()
+
+    assert runner._determine_batch_size(active_agent_count=35, round_no=1) == 1
+    assert runner._determine_batch_size(active_agent_count=35, round_no=2) > 1
 
 
 def test_round_execution_uses_active_agent_batches_with_flush_events():

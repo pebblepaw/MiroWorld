@@ -13,7 +13,7 @@ const countriesResponse = [
 ];
 
 const providersResponse = [
-  { name: "gemini", models: ["gemini-2.0-flash", "gemini-1.5-pro"], requires_api_key: true },
+  { name: "gemini", models: ["gemini-2.0-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"], requires_api_key: true },
   { name: "openai", models: ["gpt-4o", "gpt-4o-mini"], requires_api_key: true },
   { name: "ollama", models: ["qwen3:4b-instruct-2507-q4_K_M"], requires_api_key: false },
 ];
@@ -77,7 +77,7 @@ describe("OnboardingModal", () => {
       </AppProvider>,
     );
 
-    expect(screen.getByText("Configure Simulation")).toBeInTheDocument();
+    expect(screen.getByText("Configure your simulation environment")).toBeInTheDocument();
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
     expect(String(vi.mocked(global.fetch).mock.calls[0][0])).toContain("/api/v2/countries");
@@ -95,15 +95,15 @@ describe("OnboardingModal", () => {
 
     expect(screen.getByPlaceholderText("sk-...")).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "test-key" } });
-    await waitFor(() => expect(modelSelect).toHaveValue("gemini-2.0-flash"));
+    await waitFor(() => expect(modelSelect).toHaveValue("gemini-2.5-flash-lite"));
 
     fireEvent.change(providerSelect, { target: { value: "ollama" } });
     expect(screen.queryByPlaceholderText("sk-...")).not.toBeInTheDocument();
 
     fireEvent.change(providerSelect, { target: { value: "gemini" } });
-    await waitFor(() => expect(modelSelect).toHaveValue("gemini-2.0-flash"));
+    await waitFor(() => expect(modelSelect).toHaveValue("gemini-2.5-flash-lite"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Reviews" }));
+    fireEvent.click(screen.getByRole("button", { name: /product & market research/i }));
     fireEvent.click(screen.getByRole("button", { name: /launch simulation environment/i }));
 
     await waitFor(() => expect(screen.getByTestId("session-id")).toHaveTextContent("session-screen0"));
@@ -114,8 +114,8 @@ describe("OnboardingModal", () => {
     const payload = JSON.parse(String(sessionCreateCall?.[1]?.body));
     expect(payload.country).toBe("usa");
     expect(payload.provider).toBe("google");
-    expect(payload.use_case).toBe("customer-review");
-    expect(payload.model).toBe("gemini-2.0-flash");
+    expect(payload.use_case).toBe("product-market-research");
+    expect(payload.model).toBe("gemini-2.5-flash-lite");
   });
 
   it("shows India and Japan as unavailable in live mode and keeps them unselectable", async () => {
@@ -191,7 +191,7 @@ describe("OnboardingModal", () => {
         setModelProvider("openai");
         setModelName("gpt-4o-mini");
         setModelApiKey("test-key");
-        setUseCase("policy-review");
+        setUseCase("public-policy-testing");
       }, [setCountry, setModelApiKey, setModelName, setModelProvider, setUseCase]);
 
       return (
@@ -213,7 +213,7 @@ describe("OnboardingModal", () => {
     await waitFor(() => expect(screen.getAllByRole("combobox")[0]).toHaveValue("openai"));
 
     fireEvent.click(screen.getByRole("button", { name: /launch simulation environment/i }));
-    await waitFor(() => expect(screen.queryByText("Configure Simulation")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Configure your simulation environment")).not.toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "reopen modal" }));
 
@@ -297,7 +297,7 @@ describe("OnboardingModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /launch simulation environment/i }));
 
     expect(await screen.findByText("session creation unavailable")).toBeInTheDocument();
-    expect(screen.getByText("Configure Simulation")).toBeInTheDocument();
+    expect(screen.getByText("Configure your simulation environment")).toBeInTheDocument();
     expect(screen.getByTestId("session-id")).toHaveTextContent("none");
     expect(screen.queryByText(/demo/i)).not.toBeInTheDocument();
   });

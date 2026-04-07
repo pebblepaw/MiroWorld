@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -301,10 +302,12 @@ def test_run_with_personas_threads_controversy_boost_to_oasis_runtime(tmp_path, 
         elapsed_offset_seconds=0,
         tail_checkpoint_estimate_seconds=0,
         controversy_boost=0.0,
+        seed_discussion_threads=None,
     ):
         del self, policy_summary, rounds, personas, events_path, on_progress, elapsed_offset_seconds, tail_checkpoint_estimate_seconds
         captured["simulation_id"] = simulation_id
         captured["controversy_boost"] = controversy_boost
+        captured["seed_discussion_threads"] = seed_discussion_threads
         return {
             "agents": [{"agent_id": "agent-0001", "persona": {"planning_area": "Woodlands"}, "opinion_pre": 5.0, "opinion_post": 5.5}],
             "interactions": [],
@@ -324,11 +327,40 @@ def test_run_with_personas_threads_controversy_boost_to_oasis_runtime(tmp_path, 
         personas=[{"agent_id": "agent-0001", "planning_area": "Woodlands"}],
         force_live=True,
         controversy_boost=0.7,
+        seed_discussion_threads=["Do you approve?"],
     )
 
     assert result["runtime"] == "oasis"
     assert captured["simulation_id"] == "session-controversy"
     assert captured["controversy_boost"] == 0.7
+    assert captured["seed_discussion_threads"] == ["Do you approve?"]
+
+
+def test_run_with_personas_injects_seed_discussion_threads_before_rounds(tmp_path):
+    settings = Settings(simulation_db_path=str(tmp_path / "sim.db"))
+    service = SimulationService(settings)
+
+    result = service.run_with_personas(
+        simulation_id="session-seeds",
+        policy_summary="Support package",
+        rounds=1,
+        personas=[
+            {"agent_id": "agent-0001", "planning_area": "Woodlands", "age": 30, "occupation": "Teacher"},
+            {"agent_id": "agent-0002", "planning_area": "Yishun", "age": 35, "occupation": "Nurse"},
+        ],
+        force_live=False,
+        seed_discussion_threads=[
+            "Do you approve of this policy? Rate 1-10.",
+            "What specific aspects do you support or oppose?",
+        ],
+    )
+
+    assert result["runtime"] == "heuristic"
+    interactions = service.store.get_interactions("session-seeds")
+    seed_posts = [row for row in interactions if str(row.get("action_type")) == "create_post" and int(row.get("round_no", 0)) == 0]
+    assert len(seed_posts) == 2
+    assert "Do you approve of this policy?" in seed_posts[0]["content"]
+    assert "What specific aspects do you support or oppose?" in seed_posts[1]["content"]
 
 
 def test_run_opinion_checkpoint_reports_estimated_token_usage(tmp_path, monkeypatch):
@@ -385,3 +417,53 @@ def test_run_with_personas_live_mode_propagates_real_runtime_failure(tmp_path, m
             personas=[{"planning_area": "Woodlands", "age": 31, "occupation": "Teacher"}],
             force_live=True,
         )
+
+
+def test_resolve_oasis_python_bin_falls_back_to_sidecar_when_configured_runtime_is_invalid(tmp_path, monkeypatch):
+    custom_python = tmp_path / "python-custom"
+    fallback_python = tmp_path / ".venv311" / "bin" / "python"
+    custom_python.parent.mkdir(parents=True, exist_ok=True)
+    fallback_python.parent.mkdir(parents=True, exist_ok=True)
+    custom_python.write_text("", encoding="utf-8")
+    fallback_python.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("mckainsey.services.simulation_service.BACKEND_ROOT", tmp_path)
+
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        oasis_python_bin=str(custom_python),
+    )
+    service = SimulationService(settings)
+
+    def fake_validate(path: Path) -> str | None:
+        if path == custom_python:
+            return "missing camel"
+        if path == fallback_python:
+            return None
+        raise AssertionError(f"Unexpected path validated: {path}")
+
+    monkeypatch.setattr(service, "_validate_oasis_python_bin", fake_validate)
+
+    assert service._resolve_oasis_python_bin() == fallback_python
+
+
+def test_resolve_oasis_python_bin_errors_when_no_valid_runtime_exists(tmp_path, monkeypatch):
+    custom_python = tmp_path / "python-custom"
+    fallback_python = tmp_path / ".venv311" / "bin" / "python"
+    custom_python.parent.mkdir(parents=True, exist_ok=True)
+    fallback_python.parent.mkdir(parents=True, exist_ok=True)
+    custom_python.write_text("", encoding="utf-8")
+    fallback_python.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("mckainsey.services.simulation_service.BACKEND_ROOT", tmp_path)
+
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        oasis_python_bin=str(custom_python),
+    )
+    service = SimulationService(settings)
+
+    monkeypatch.setattr(service, "_validate_oasis_python_bin", lambda path: "missing dependencies")
+
+    with pytest.raises(RuntimeError, match="OASIS Python runtime is unavailable"):
+        service._resolve_oasis_python_bin()

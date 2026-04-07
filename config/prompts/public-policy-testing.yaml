@@ -1,0 +1,54 @@
+name: "Public Policy Testing"
+code: "public-policy-testing"
+description: "Simulate public reaction to government policies, regulations, and proposals."
+icon: "🏛️"
+
+system_prompt: |
+  You are a citizen reacting to the provided policy document.
+  Express genuine opinions based on your demographic background.
+  Focus on how this policy affects your daily life, family, and community.
+
+agent_personality_modifiers:
+  - "Express genuine concern about how this policy affects your daily life and family."
+  - "When responding to other comments, engage directly with their specific arguments."
+  - "If you strongly disagree, explain why with concrete personal examples."
+
+analysis_questions:
+  - question: "Do you approve of this policy? Rate 1-10."
+    type: "scale"
+    metric_name: "approval_rate"
+    metric_label: "Approval Rate"
+    metric_unit: "%"
+    threshold: 7
+    threshold_direction: "gte"
+    report_title: "Policy Approval"
+    tooltip: "Percentage of agents who rated approval ≥ 7/10."
+
+  - question: "What specific aspects of this policy do you support or oppose, and why?"
+    type: "open-ended"
+    metric_name: "policy_viewpoints"
+    report_title: "Key Viewpoints"
+    tooltip: "Qualitative summary of the main arguments for and against the policy."
+
+# Note: The system_prompt already instructs agents to discuss daily life impact,
+# so a separate metric for that is unnecessary. The open-ended question above
+# as a seed post explicitly solicits structured pro/con viewpoints.
+
+insight_blocks:
+  - type: "polarization_index"
+    title: "Polarization Over Time"
+    description: "How divided is public opinion across rounds?"
+  - type: "opinion_flow"
+    title: "Opinion Migration"
+    description: "How did stances shift from Round 1 to final?"
+  - type: "top_influencers"
+    title: "Key Opinion Leaders"
+    count: 3
+    description: "Agents whose posts drove the most opinion change."
+  - type: "viral_cascade"
+    title: "Pivotal Discussion"
+    description: "The thread that caused the largest aggregate opinion shift."
+
+preset_sections:
+  - title: "Recommendations"
+    prompt: "Provide actionable recommendations for the policy maker based on the simulation results, citing specific evidence from agent discussions."

@@ -183,6 +183,140 @@ describe("Analytics", () => {
     });
   });
 
+  it("normalizes object top_post payloads into readable leader text", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/analytics/polarization")) {
+        return { ok: true, json: async () => ({ points: [] }) } as Response;
+      }
+      if (url.includes("/analytics/opinion-flow")) {
+        return {
+          ok: true,
+          json: async () => ({
+            initial: { supporter: 1, neutral: 0, dissenter: 0 },
+            final: { supporter: 1, neutral: 0, dissenter: 0 },
+            flows: [],
+          }),
+        } as Response;
+      }
+      if (url.includes("/analytics/influence")) {
+        return {
+          ok: true,
+          json: async () => ({
+            top_influencers: [
+              {
+                name: "Object Leader",
+                stance: "supporter",
+                influence: 0.88,
+                top_view: "Object-backed lead view.",
+                top_post: {
+                  content: "Readable top post excerpt.",
+                  body: "Readable top post body.",
+                  title: "Readable top post title.",
+                },
+              },
+            ],
+          }),
+        } as Response;
+      }
+      if (url.includes("/analytics/cascades")) {
+        return { ok: true, json: async () => ({ viral_posts: [] }) } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedAnalyticsContext />
+        <Analytics />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Object Leader")).toBeInTheDocument();
+    expect(screen.getByText("Object-backed lead view.")).toBeInTheDocument();
+    expect(screen.queryByText("Readable top post excerpt.")).not.toBeInTheDocument();
+    expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
+  });
+
+  it("resolves agent ids to names and prefers viewpoint summaries over raw post text", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/analytics/polarization")) {
+        return { ok: true, json: async () => ({ points: [] }) } as Response;
+      }
+      if (url.includes("/analytics/opinion-flow")) {
+        return {
+          ok: true,
+          json: async () => ({
+            initial: { supporter: 1, neutral: 0, dissenter: 0 },
+            final: { supporter: 1, neutral: 0, dissenter: 0 },
+            flows: [{ from: "supporter", to: "supporter", count: 1 }],
+          }),
+        } as Response;
+      }
+      if (url.includes("/analytics/influence")) {
+        return {
+          ok: true,
+          json: async () => ({
+            top_influencers: [
+              {
+                agent_id: "agent-1",
+                stance: "supporter",
+                influence: 0.91,
+                summary: "Supporters want clearer safeguards and rollout timing.",
+                top_view: "Analysis Question 3: raw post text that should not be shown.",
+                top_post: "Raw post body that should stay hidden.",
+              },
+            ],
+          }),
+        } as Response;
+      }
+      if (url.includes("/analytics/cascades")) {
+        return {
+          ok: true,
+          json: async () => ({
+            viral_posts: [
+              {
+                author: "agent-2",
+                stance: "dissenter",
+                title: "Raw author id should be resolved",
+                content: "Agents are reacting to the policy.",
+                likes: 12,
+                dislikes: 3,
+                comments: [
+                  {
+                    author: "agent-3",
+                    stance: "mixed",
+                    content: "Comment author ids should also resolve.",
+                    likes: 4,
+                    dislikes: 1,
+                  },
+                ],
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedAnalyticsContextWithAgents />
+        <Analytics />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Supporter One")).toBeInTheDocument();
+    expect(screen.getByText("Supporters want clearer safeguards and rollout timing.")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis Question 3: raw post text that should not be shown.")).not.toBeInTheDocument();
+    expect(screen.getByText("Neutral Two")).toBeInTheDocument();
+    expect(screen.getByText("Dissenter Three")).toBeInTheDocument();
+    expect(screen.queryByText("agent-2")).not.toBeInTheDocument();
+    expect(screen.queryByText("agent-3")).not.toBeInTheDocument();
+    expect(screen.getByText("Raw author id should be resolved")).toBeInTheDocument();
+  });
+
   it("shows an error notice and falls back to local demo analytics when API calls fail", async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("analytics unavailable")) as typeof fetch;
 

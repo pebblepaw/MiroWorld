@@ -1,61 +1,68 @@
 # Screen 0 — Onboarding Modal
 
-> **Paper MCP Reference**: Artboard `8A-0` ("Screen 0 — Onboarding Modal")
-> **UserInput Refs**: A1, A2, B1, B2
-
 ## Overview
 
-A fullscreen modal that appears on first load. Users configure their simulation environment: country, LLM provider, model, API key, and use case. After clicking "Launch Simulation Environment", the modal dismisses and the user proceeds to Screen 1.
+The onboarding modal creates or reconfigures the active V2 session. It is the canonical entry point for:
 
-The modal can be re-opened via the Settings button on the sidebar. The selected country and model should be permanently displayed at the bottom of the sidebar.
+- country
+- provider
+- model
+- API key
+- use case
 
-## Component: `OnboardingModal.tsx`
+The selected environment is reflected in the sidebar after launch.
 
-### Props & State
-```typescript
-interface OnboardingConfig {
-  country: string;          // "singapore" | "usa"
-  provider: string;         // "gemini" | "openai" | "ollama"
-  model: string;            // e.g. "gemini-2.0-flash"
-  apiKey: string;           // masked after entry
-  useCase: string;          // "policy-review" | "ad-testing" | "pmf-discovery" | "customer-review"
-}
-```
+## Current Runtime Contract
 
-### UI Sections (top to bottom)
+### Frontend State
 
-1. **Header**: McKAInsey logo + "Configure your simulation environment"
-2. **Country / Region selector**: Grid of 4 cards (Singapore, USA, India, Japan). India/Japan are disabled (greyed out) with "Coming Soon" badge. Selected card has orange border + text.
-   - Each card shows a flag emoji and country name
-   - On select: calls `GET /api/v2/countries` to verify dataset exists
-3. **LLM Provider + Model row** (side by side):
-   - Provider: Dropdown — Gemini, OpenAI, Ollama
-   - Model: Dropdown — populated dynamically based on provider
-   - Source: `GET /api/v2/providers` returns `[{name, models[], requires_api_key}]`
-4. **API Key**: Password input field, masked with dots showing first 4 and last 2 chars
-   - Hidden when provider = "ollama" (no key needed)
-5. **Use Case selector**: Row of 4 pill buttons. Selected has orange border + fill.
-   - "Policy Review" | "Ad Testing" | "PMF Discovery" | "Reviews"
-6. **Launch button**: Full-width orange CTA: "Launch Simulation Environment →"
-   - On click: `POST /api/v2/session/create` with the config, stores `session_id` in React context
-   - Validates: country selected, model selected, API key provided (if required)
+`OnboardingModal.tsx` owns:
 
-### Behavior
-- **First load**: Modal opens automatically with Singapore pre-selected
-- **Settings button**: Re-opens modal with current config pre-filled
-- **Sidebar display**: After dismissal, show small text at sidebar bottom: "🇸🇬 Singapore · Gemini"
-- **Startup fix (B2)**: Backend must NOT exit if Ollama is not installed. The frontend lets users choose any provider.
+- selected country
+- selected provider/model
+- API key input
+- canonical use case id
 
-### Backend Requirements
-- `GET /api/v2/countries` → `[{name, code, flag_emoji, dataset_path, available}]`
-- `GET /api/v2/providers` → `[{name, models, requires_api_key}]`
-- `POST /api/v2/session/create` → `{session_id}` — creates session with config
+### Backend Endpoints
 
-### Tests
-- [x] Modal appears on first load
-- [x] Country selection highlights correctly, disabled countries show tooltip
-- [x] Provider change updates model dropdown
-- [x] API key field hides for Ollama
-- [x] "Launch" validates required fields before proceeding
-- [x] Session ID is stored in React context after creation
-- [x] Settings button re-opens modal with saved state
+- `GET /api/v2/countries`
+- `GET /api/v2/providers`
+- `POST /api/v2/session/create`
+- `PATCH /api/v2/session/{id}/config`
+
+## Current Behavior
+
+### Countries
+
+- Singapore and United States are currently available
+- country availability comes from YAML-backed config, not hardcoded UI assumptions
+
+### Providers and Models
+
+- provider list is hydrated from `/api/v2/providers`
+- Gemini entries are surfaced as `gemini` in the compatibility API even though the backend runtime provider id is `google`
+- retired Gemini models should not be the default choice
+- current Gemini flows should prefer active models such as `gemini-2.5-flash-lite`
+
+### API Keys
+
+- API key entry is required for Gemini/OpenAI
+- API key input is hidden for Ollama
+- provider/runtime failures should be surfaced as short actionable errors
+
+### Use Cases
+
+Canonical values:
+
+- `public-policy-testing`
+- `product-market-research`
+- `campaign-content-testing`
+
+Legacy ids may still be accepted by the backend, but Screen 0 should write canonical ids.
+
+## Validation Notes
+
+- reopening the modal should preserve current session selections
+- changing provider should refresh model choices
+- starting a new session should seed session-scoped `analysis_questions`
+- if a previously saved session uses a retired model, later screens should surface the real provider error until the model is changed

@@ -1,95 +1,66 @@
 # McKAInsey V2 — Documentation Index
 
-> Quick-reference for any agent or developer joining this project.
-> Read this file first, then follow the links to only the documents relevant to your task.
+Read this file first, then open only the documents relevant to the task at hand.
 
-## Reading Order for New Agents
+## Recommended Reading Order
 
-1. **This file** → understand the doc layout
-2. [BRD_V2.md](BRD_V2.md) → skim §1 (Executive Summary) and §5 (Phases) for scope
-3. The sub-document for your assigned phase → implementation detail
-4. [handoffs/latest_handoff.md](handoffs/latest_handoff.md) → what happened last, what to do next
+1. [BRD_V2.md](BRD_V2.md)
+2. The screen or backend spec you are actively changing
+3. [architecture.md](architecture.md) if you need cross-cutting context
+4. [handoffs/latest_handoff.md](handoffs/latest_handoff.md) for the most recent implementation status
 
-Do **not** read all documents. Load only what your current task requires.
+## Core Documents
 
----
+### Master References
 
-## Document Map
+- [BRD_V2.md](BRD_V2.md): current V2 product and runtime contract
+- [architecture.md](architecture.md): system layout, data flow, and state ownership
+- [handoffs/latest_handoff.md](handoffs/latest_handoff.md): current implementation snapshot
 
-### Master Document
-| File | Purpose |
-|:-----|:--------|
-| [BRD_V2.md](BRD_V2.md) | Single source of truth: architecture, decisions, phases, API contracts |
+### Frontend Specs
 
-### Frontend Specs (one per screen)
-| File | Screen | Key Features |
-|:-----|:-------|:-------------|
-| [frontend/screen-0-onboarding.md](frontend/screen-0-onboarding.md) | Screen 0 | Country, provider, model, use case selection |
-| [frontend/screen-1-knowledge-graph.md](frontend/screen-1-knowledge-graph.md) | Screen 1 | Multi-doc upload, URL scraper, draggable graph |
-| [frontend/screen-2-population-sampling.md](frontend/screen-2-population-sampling.md) | Screen 2 | Dynamic filters, token cost tracker |
-| [frontend/screen-3-simulation.md](frontend/screen-3-simulation.md) | Screen 3 | Controversy slider, dynamic metrics, viewport fix |
-| [frontend/screen-4-report-chat.md](frontend/screen-4-report-chat.md) | Screen 4 | 60/40 split, 3-mode toggle, group chat, DOCX export |
-| [frontend/screen-5-analytics.md](frontend/screen-5-analytics.md) | Screen 5 | Polarization, Sankey, Influence graph, Cascade tree |
+- [frontend/screen-0-onboarding.md](frontend/screen-0-onboarding.md)
+- [frontend/screen-1-knowledge-graph.md](frontend/screen-1-knowledge-graph.md)
+- [frontend/screen-2-population-sampling.md](frontend/screen-2-population-sampling.md)
+- [frontend/screen-3-simulation.md](frontend/screen-3-simulation.md)
+- [frontend/screen-4-report-chat.md](frontend/screen-4-report-chat.md)
+- [frontend/screen-5-analytics.md](frontend/screen-5-analytics.md)
+- [frontend/frontend-final-check-2026-04-06.md](frontend/frontend-final-check-2026-04-06.md)
 
-### Backend Specs (one per feature domain)
-| File | Domain | Key Deliverables |
-|:-----|:-------|:-----------------|
-| [backend/config-system.md](backend/config-system.md) | Configuration | YAML schemas, ConfigService, prompt externalization |
-| [backend/controversy-boost.md](backend/controversy-boost.md) | OASIS RecSys | `calculate_hot_score` modification |
-| [backend/context-caching.md](backend/context-caching.md) | Token Optimization | Gemini caching wrapper, TokenTracker |
-| [backend/metrics-heuristics.md](backend/metrics-heuristics.md) | Analytics | Polarization, influence, cascade computation |
+### Backend Specs
 
-### Infrastructure
-| File | Domain | Key Deliverables |
-|:-----|:-------|:-----------------|
-| [infrastructure/docker.md](infrastructure/docker.md) | Deployment | docker-compose, Dockerfiles, graceful degradation |
-| [infrastructure/graphiti.md](infrastructure/graphiti.md) | Memory | Graphiti + FalkorDB, Zep migration |
+- [backend/config-system.md](backend/config-system.md)
+- [backend/context-caching.md](backend/context-caching.md)
+- [backend/controversy-boost.md](backend/controversy-boost.md)
+- [backend/metrics-heuristics.md](backend/metrics-heuristics.md)
 
-### Operational
-| File | Purpose |
-|:-----|:--------|
-| [handoffs/latest_handoff.md](handoffs/latest_handoff.md) | Last session state, next actions |
+### Infrastructure Specs
 
----
+- [infrastructure/docker.md](infrastructure/docker.md)
+- [infrastructure/graphiti.md](infrastructure/graphiti.md)
 
-## Phase → Document Mapping
+## Current V2 Artboard Map
 
-| Phase | Documents to Read |
-|:------|:------------------|
-| **Q: Foundation** | BRD §5, [config-system.md](backend/config-system.md), [docker.md](infrastructure/docker.md), [context-caching.md](backend/context-caching.md) |
-| **R: Multi-Country** | [screen-0-onboarding.md](frontend/screen-0-onboarding.md), [screen-2-population-sampling.md](frontend/screen-2-population-sampling.md), [config-system.md](backend/config-system.md) |
-| **S: Screen 1** | [screen-1-knowledge-graph.md](frontend/screen-1-knowledge-graph.md) |
-| **T: Simulation** | [screen-3-simulation.md](frontend/screen-3-simulation.md), [controversy-boost.md](backend/controversy-boost.md), [metrics-heuristics.md](backend/metrics-heuristics.md) |
-| **U: Report+Chat** | [screen-4-report-chat.md](frontend/screen-4-report-chat.md), [metrics-heuristics.md](backend/metrics-heuristics.md) |
-| **U2: Analytics** | [screen-5-analytics.md](frontend/screen-5-analytics.md), [metrics-heuristics.md](backend/metrics-heuristics.md) |
-| **V: Memory** | [graphiti.md](infrastructure/graphiti.md) |
-| **W: Polish** | All documents (E2E validation) |
+The Paper MCP references still correspond to the original visual design exploration, but the runtime behavior has converged on the current screen model below:
 
----
+| Runtime Screen | Artboard ID | Notes |
+|:---------------|:------------|:------|
+| Screen 0 — Onboarding | `8A-0` | canonical onboarding modal |
+| Screen 1 — Knowledge Graph | `F6-0` | upload + analysis question workflow |
+| Screen 2 — Population Sampling | `H9-0` | cohort sampling |
+| Screen 3 — Simulation | `9U-0` | live OASIS feed |
+| Screen 4 — Report + Chat | `NW-0`, `CZ-0`, `PN-0` | all three references now map to the same routed page with view modes |
+| Screen 5 — Analytics | `K5-0` | analytics visual language |
 
-## Paper MCP Mockup Reference
+Important:
 
-All UI designs exist as artboards in the Paper MCP file. Use `get_jsx(artboard_id)` to extract CSS/JSX structure.
+- There is no separate routed Screen 6 in the current implementation.
+- “Chat Only” is a Screen 4 view mode.
 
-| Screen | Artboard ID | Name |
-|:-------|:------------|:-----|
-| 0 | `8A-0` | Screen 0 — Onboarding Modal |
-| 1 | `F6-0` | Screen 1 — Knowledge Graph (V2) |
-| 2 | `H9-0` | Screen 2 — Population Sampling (V2) |
-| 3 | `9U-0` | Screen 3 — Simulation (V2) |
-| 4 (drawer) | `CZ-0` | Screen 4 — Report + Chat Drawer |
-| 4 (split) | `NW-0` | Screen 5 — Report + Chat (Option A Split) |
-| 5 (full chat) | `PN-0` | Screen 6 — Full Page Chat (Option C) |
-| Viz components | `K5-0` | Report Metrics Visualizations |
+## Archived Temporary Planning Docs
 
----
+Temporary implementation notes from the V2 completion pass are archived under `archive/` and are no longer the active documentation surface.
 
-## Archived V1 Documentation
+## V1 History
 
-All V1 documents are preserved in `archive/v1/` for reference:
-- `archive/v1/BRD.md` — Original Singapore-only BRD
-- `archive/v1/Progress.md` — V1 progress tracker (Phases A–O)
-- `archive/v1/UserInput.md` — Original user requirements
-- `archive/v1/architecture.md`, `decision_log.md` — V1 architecture notes
-- `archive/v1/handoffs/latest_handoff.md` — Last V1 handoff
-- `archive/v1/progress/` — All V1 phase files (phaseA–P)
+Older Singapore-only/V1 documents remain under `archive/v1/`.

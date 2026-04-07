@@ -1,163 +1,75 @@
 # Screen 3 — Simulation
 
-> **Paper MCP Reference**: Artboard `9U-0` ("Screen 3 — Simulation (V2)")
-> **UserInput Refs**: E1–E8, A3, A5
-
 ## Overview
 
-Two-panel layout. Left: simulation header, config card (rounds + controversy boost), and live post feed. Right: dynamic use-case-specific metrics, activity counters, hottest thread, and elapsed time.
+Screen 3 renders the live social feed and the simulation status rail. It is backed by native OASIS output, checkpoint metrics, and streamed/polled session state.
 
-## Current Frontend Delta (2026-04-06)
+## Current Runtime Contract
 
-This is the current UI reality in `frontend/src/pages/Simulation.tsx` before backend re-linking:
+### Start + Status
 
-1. Generate Report CTA uses standardized green success styling, consistent with other proceed actions.
-2. Time Elapsed panel has reduced vertical density (smaller row floor and tighter internal spacing).
-3. Controversy boost is currently a binary toggle in UI (`off` / `on`) and maps to `0.0` or `0.5` in request payload.
+- `POST /api/v2/console/session/{id}/simulate`
+- `GET /api/v2/console/session/{id}/simulation/state`
+- `GET /api/v2/console/session/{id}/simulation/metrics`
+- `GET /api/v2/console/session/{id}/simulation/stream`
 
-Do not mark checklist items complete yet; backend-linked behavior still needs verification.
+### Primary UI Areas
 
-## Layout
+- rounds card
+- controversy control
+- live feed
+- hottest thread
+- elapsed time
+- activity counters
+- dynamic metric cards
 
-```
-┌───────────────── 1440px ──────────────────┐
-│  ┌──── flex: 1.4 ────┐  ┌── 340px ─────┐ │
-│  │  Header + Button  │  │ Metrics      │ │
-│  │  Config Card      │  │ Activity     │ │
-│  │  Live Feed        │  │ Hot Thread   │ │
-│  │  (scrollable)     │  │ Time         │ │
-│  └───────────────────┘  └──────────────┘ │
-└───────────────────────────────────────────┘
-```
+## Current Behavior
 
-## Left Panel
+### Initial Posts
 
-### 1. Header Row
-- Title: "Live Social Simulation"
-- Subtitle: "Real-time Reddit discourse from native OASIS engine"
-- **"Generate Report →"** button (green outline) — navigates to Screen 4 after simulation completes
+New simulations should seed discussion from the session’s analysis questions only.
 
-### 2. Config Card (`SimulationConfig.tsx`)
+Important:
 
-Two sections side by side, separated by a vertical divider:
+- generic “Policy Kick-Off” threads are obsolete for new runs
+- each seed post should still include policy/document context so agents know what they are discussing
 
-**Simulation Rounds** (left):
-- Horizontal progress bar (orange fill) — replaces V1's vertical progress display
-- Large number display showing current value (e.g., "5")
-- Helper: "~4m 12s | 250 agents × 5 rounds"
-- Slider range: 1-10
-- **Progress display during simulation**: Shows "Round 3 (62%)" where percentage = (current_batch / total_batches_in_round) × 100. This replaces the confusing batch event streaming display from V1.
+### Dynamic Metrics
 
-**Controversy Boost** (right):
-- Red-accented slider: 0.0 to 1.0, step 0.1
-- Current value: "0.3" in red
-- **Tooltip icon (?)**: On hover, shows: *"Controversy Amplification: Controls how much the recommendation system boosts posts with high engagement regardless of whether they're liked or disliked. At 0, only universally liked posts rise. At 1.0, posts with equal likes and dislikes are treated as highly engaging. This models how real social media platforms use ragebait to amplify controversy and boost user retention. Higher values create more polarized feeds."*
-- Helper text: "Models social media ragebait amplification"
+Metric cards are generated only from quantitative analysis questions:
 
-### 3. Feed Card (`LiveFeed.tsx`)
+- thresholded `scale` questions render percentages
+- `yes-no` questions render percentages
+- unthresholded `scale` questions render `/10`
+- `open-ended` questions do not produce numeric cards
 
-**Feed Header**:
-- "Topic Community" with round badge: "3/5" (current/total)
-- Sort tabs: "New" (active, dark bg) | "Popular"
+### Controversy Boost
 
-**Post Component** (`SimulationPost.tsx`):
-Each post shows:
-- **Avatar circle**: Colored by stance (green=supporter, purple=neutral, red=dissenter, etc.)
-  - Shows initials (e.g., "TL")
-- **Agent info**: Name, occupation, age, round posted (e.g., "Teacher, 42 · R3")
-- **Occupation tag**: Small pill (e.g., "Teacher")
-- **Post title**: Bold, white text
-- **Post body**: Muted text, 2-3 lines
-- **Engagement row**:
-  - ▲ {likes} (upvote count)
-  - ▼ {dislikes} (downvote count) — **NEW in V2 (E4)**
-  - 💬 {comments} (comment count with likes/dislikes per comment)
+The current UI is a binary switch:
 
-**Comment display** (expandable under each post):
-- Top-level comments only (no nested replies — Decision 3.7)
-- Each comment shows: avatar + name + text + ▲/▼ counts
+- off = `0.0`
+- on = `0.5`
 
-### 4. Viewport Fix (E3)
-- Screen 3 must fit within `100vh` without requiring browser zoom
-- Use `max-height: 100vh` on the main container
-- Feed area scrolls internally: `overflow-y: auto`
-- Right panel scrolls independently
+This is the current implemented behavior and should be documented instead of the earlier full 0.0–1.0 slider plan.
 
-## Right Panel
+### Error Handling
 
-### 1. Dynamic Metrics Card (`DynamicMetrics.tsx`)
+- the frontend should show short explanatory simulation errors
+- raw traceback text, subprocess dumps, and log paths should stay out of the main UI
+- backend logs remain the place for full diagnostics
 
-Header: `{USE_CASE_NAME} METRICS` in orange uppercase
+### Navigation Persistence
 
-Shows 2 metric cards side by side, content driven by use case:
+The simulation feed is mirrored into app context. Navigating back to earlier screens within the same session should not wipe the feed and counters.
 
-| Use Case | Metric 1 | Metric 2 |
-|:---------|:---------|:---------|
-| Policy Review | Approval Rate (%) | Net Sentiment (1-10) |
-| Ad Testing | Estimated Conversion (%) | Engagement Score |
-| PMF Discovery | Product Interest (%) | Target Fit Score |
-| Customer Review | Satisfaction (1-10) | Recommendation (%) |
+## Feed Expectations
 
-Each metric card has:
-- Label + **ⓘ tooltip** icon (explains the heuristic)
-- Large number value (JetBrains Mono, colored by valence)
-- Updates in real-time after each checkpoint round
+Each thread should render:
 
-**Tooltip content example** (Approval Rate):
-> "Percentage of agents who rated the policy ≥ 7 out of 10 during the checkpoint interview. Agents answer: 'Do you approve of this policy? Rate 1-10.' Scores ≥ 7 count as approval."
+- author name
+- basic persona subtitle
+- post title/body
+- likes, dislikes, comments
+- visible comments when expanded
 
-### 2. Activity Counters
-2x2 grid: Posts, Comments, Reactions, Authors
-- Each shows count in JetBrains Mono, white, large
-
-### 3. Hottest Thread
-- Orange border highlight
-- Shows title of most-engaged post
-- Engagement badge: "29 engagement" (total likes + dislikes + comments)
-
-### 4. Time Card
-- "TIME ELAPSED" header in cyan
-- Large timer: "2m 47s" (JetBrains Mono)
-- Green dot + "Simulation in progress..."
-- Changes to "Simulation complete" with checkmark when done
-
-## Backend Requirements
-
-### Modified: `simulation_service.py`
-- Accept `controversy_boost` parameter (float 0.0-1.0) from simulation request
-- Pass through to OASIS runner's `calculate_hot_score`
-
-### Modified: `oasis_reddit_runner.py`
-- Thread `controversy_boost` into `rec_sys_reddit` → `calculate_hot_score`
-
-### Modified: OASIS `recsys.py`
-See [docs/v2/backend/controversy-boost.md](../backend/controversy-boost.md) for exact code changes.
-
-### New: Checkpoint interview prompts
-- Loaded from `config/prompts/{use_case}.yaml → checkpoint_questions`
-- Each question has: `question`, `type` (scale/yes-no), `metric_name`
-- Agent name verification piggybacks on checkpoint: "Please confirm your name at the start of your response."
-
-### API Changes
-- `POST /api/v2/console/session/{id}/simulate` — now accepts `{rounds, controversy_boost}`
-- `GET /api/v2/console/session/{id}/simulation/metrics` — returns real-time aggregated metrics
-- SSE stream for batch progress: `{round, batch, total_batches, percentage}`
-
-### Tests
-
-**Frontend**:
-- [x] Config card displays rounds slider and controversy slider
-- [x] Controversy tooltip renders on hover/click
-- [x] Feed shows posts with dislikes column
-- [x] Progress shows "Round X (Y%)" during simulation
-- [x] Dynamic metrics update after each checkpoint
-- [x] Metric tooltips explain heuristics correctly
-- [x] Page fits 100vh without zoom
-- [x] Feed scrolls independently from right panel
-
-**Backend**:
-- [x] `controversy_boost=0.0` produces identical scores to original algorithm
-- [x] `controversy_boost=1.0` correctly boosts controversial posts
-- [x] Checkpoint interview extracts numeric scores
-- [x] Name verification parses confirmed names
-- [x] Metrics aggregation computes correctly
+Repeated cloned replies are a simulation-quality issue, not a rendering feature.

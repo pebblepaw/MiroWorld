@@ -1,9 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { forwardRef } from "react";
+import { forwardRef, useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PolicyUpload from "@/pages/PolicyUpload";
-import { AppProvider } from "@/contexts/AppContext";
+import { AppProvider, useApp } from "@/contexts/AppContext";
 
 const { forceGraphSpy } = vi.hoisted(() => ({
   forceGraphSpy: vi.fn(),
@@ -79,10 +79,6 @@ describe("PolicyUpload", () => {
     fireEvent.click(screen.getByRole("button", { name: /add as document/i }));
     await screen.findByText("pasted-text.txt");
 
-    fireEvent.change(screen.getByPlaceholderText("What should the system extract from this document?"), {
-      target: { value: "Extract institutions, policies, and who they target." },
-    });
-
     fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
@@ -103,18 +99,221 @@ describe("PolicyUpload", () => {
     expect(within(topEntitiesCard as HTMLElement).getByText("Transport Authority")).toBeInTheDocument();
   });
 
-  it("seeds the guiding prompt from the default use-case config", async () => {
+  it("loads preset analysis questions as soon as a V2 session exists", async () => {
+    function SeedAnalysisSession() {
+      const { setSessionId, setUseCase, analysisQuestions } = useApp();
+
+      useEffect(() => {
+        setSessionId("session-screen1");
+        setUseCase("public-policy-testing");
+      }, [setSessionId, setUseCase]);
+
+      return <span data-testid="question-count">{analysisQuestions.length}</span>;
+    }
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith("/api/v2/session/session-screen1/analysis-questions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1",
+            use_case: "public-policy-testing",
+            questions: [
+              {
+                question: "Do you approve of this policy? Rate 1-10.",
+                type: "scale",
+                metric_name: "approval_rate",
+                metric_label: "Approval Rate",
+                metric_unit: "%",
+                threshold: 7,
+                threshold_direction: "gte",
+                report_title: "Policy Approval",
+                tooltip: "Percentage of agents who rated approval >= 7/10.",
+              },
+            ],
+          }),
+        } as Response;
+      }
+
+      if (url.endsWith("/api/v2/console/session")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1",
+            mode: "live",
+            status: "created",
+            model_provider: "ollama",
+            model_name: "qwen3:4b-instruct-2507-q4_K_M",
+            embed_model_name: "nomic-embed-text",
+            base_url: "http://127.0.0.1:11434/v1/",
+            api_key_configured: true,
+            api_key_masked: "ol...ama",
+          }),
+        } as Response;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ detail: `Unhandled fetch: ${url}` }),
+      } as Response;
+    }) as typeof fetch;
+
     render(
       <AppProvider>
+        <SeedAnalysisSession />
         <PolicyUpload />
       </AppProvider>,
     );
 
-    expect(
-      await screen.findByDisplayValue(
-        /Identify all entities, locations, organizations, and the specific impact mechanisms described in this policy document/i,
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Analysis Questions")).toBeInTheDocument();
+    expect(await screen.findByText("Do you approve of this policy? Rate 1-10.")).toBeInTheDocument();
+    expect(screen.getByText("PRESET")).toBeInTheDocument();
+    expect(screen.getByTestId("question-count")).toHaveTextContent("1");
+  });
+
+  it("persists edited analysis questions through the V2 config path and generates metadata while extracting", async () => {
+    function SeedAnalysisSession() {
+      const { setSessionId, setUseCase } = useApp();
+
+      useEffect(() => {
+        setSessionId("session-screen1");
+        setUseCase("product-market-research");
+      }, [setSessionId, setUseCase]);
+
+      return null;
+    }
+
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith("/api/v2/session/session-screen1/analysis-questions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1",
+            use_case: "product-market-research",
+            questions: [
+              {
+                question: "How interested are you in this product? Rate 1-10.",
+                type: "scale",
+                metric_name: "product_interest",
+                metric_label: "Product Interest",
+                metric_unit: "%",
+                threshold: 7,
+                threshold_direction: "gte",
+                report_title: "Product Interest",
+                tooltip: "Percentage of agents who rated interest >= 7/10.",
+              },
+            ],
+          }),
+        } as Response;
+      }
+
+      if (url.endsWith("/api/v2/console/session")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1",
+            mode: "live",
+            status: "created",
+            model_provider: "ollama",
+            model_name: "qwen3:4b-instruct-2507-q4_K_M",
+            embed_model_name: "nomic-embed-text",
+            base_url: "http://127.0.0.1:11434/v1/",
+            api_key_configured: true,
+            api_key_masked: "ol...ama",
+          }),
+        } as Response;
+      }
+
+      if (url.endsWith("/api/v2/questions/generate-metadata")) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.question).toBe("What would you improve about this product?");
+        return {
+          ok: true,
+          json: async () => ({
+            type: "open-ended",
+            metric_name: "product_feedback",
+            report_title: "Product Feedback",
+          }),
+        } as Response;
+      }
+
+      if (url.endsWith("/api/v2/console/session/session-screen1/config")) {
+        const body = JSON.parse(String(init?.body));
+        expect(Array.isArray(body.analysis_questions)).toBe(true);
+        expect(body.analysis_questions.some((item: { question?: string }) => item.question === "What would you improve about this product?")).toBe(true);
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1",
+            country: "singapore",
+            use_case: "product-market-research",
+            provider: "ollama",
+            model: "qwen3:4b-instruct-2507-q4_K_M",
+            api_key_configured: true,
+            guiding_prompt: null,
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/knowledge/process")) {
+        return {
+          ok: true,
+          json: async () => baseKnowledgeArtifact(),
+        } as Response;
+      }
+
+      if (url.endsWith("/demo-output.json")) {
+        return {
+          ok: true,
+          json: async () => ({ knowledge: { ...baseKnowledgeArtifact(), session_id: "demo-session" } }),
+        } as Response;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ detail: `Unhandled fetch: ${url}` }),
+      } as Response;
+    });
+    global.fetch = fetchSpy as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedAnalysisSession />
+        <PolicyUpload />
+      </AppProvider>,
+    );
+
+    await screen.findByText("How interested are you in this product? Rate 1-10.");
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(["customer feedback"], "brief.txt", { type: "text/plain" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add question/i }));
+
+    const questionEditors = await screen.findAllByPlaceholderText("Type your analysis question...");
+    const newQuestion = questionEditors[questionEditors.length - 1];
+    fireEvent.change(newQuestion, { target: { value: "What would you improve about this product?" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).endsWith("/api/v2/questions/generate-metadata")),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).endsWith("/api/v2/console/session/session-screen1/config")),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(screen.getAllByText("Ready").length).toBeGreaterThan(1));
   });
 
   it("accepts drag-and-drop uploads into the file list", async () => {
@@ -252,10 +451,6 @@ describe("PolicyUpload", () => {
       },
     });
     await screen.findByText("budget.pdf");
-
-    fireEvent.change(screen.getByPlaceholderText("What should the system extract from this document?"), {
-      target: { value: "Extract the policy effects." },
-    });
     fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());

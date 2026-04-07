@@ -1,112 +1,141 @@
 # McKAInsey V2 — Architecture
 
-> Living document. Updated as implementation progresses.
+> Living document for the current implemented V2 stack.
 
-## System Architecture
+## 1. Runtime Topology
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        User's Machine                            │
-│                                                                   │
-│  ┌─────────────┐    ┌──────────────┐    ┌──────────────────────┐ │
-│  │ Browser      │───▶│  Frontend     │    │   External LLM APIs  │ │
-│  │ localhost:   │    │  (Vite/React) │    │   ┌────────────────┐ │ │
-│  │    5173      │◀───│  Port 5173    │    │   │ Gemini API     │ │ │
-│  └─────────────┘    └──────┬───────┘    │   │ OpenAI API     │ │ │
-│                            │             │   │ Ollama (local) │ │ │
-│                            │ HTTP        │   └───────┬────────┘ │ │
-│                            ▼             │           │           │ │
-│  ┌──────────────────────────────────┐   │           │           │ │
-│  │         Backend (FastAPI)         │───┼───────────┘           │ │
-│  │         Port 8000                 │   │                       │ │
-│  │                                    │   │                       │ │
-│  │  ┌────────────┐ ┌──────────────┐  │   │                       │ │
-│  │  │ Config     │ │ Simulation   │  │   │                       │ │
-│  │  │ Service    │ │ Service      │──┼───┤                       │ │
-│  │  └────────────┘ └──────┬───────┘  │   │                       │ │
-│  │  ┌────────────┐        │          │   │                       │ │
-│  │  │ Metrics    │        │ gRPC/    │   │                       │ │
-│  │  │ Service    │        │ HTTP     │   │                       │ │
-│  │  └────────────┘        ▼          │   │                       │ │
-│  │  ┌────────────┐ ┌──────────────┐  │   │                       │ │
-│  │  │ Report     │ │ OASIS        │  │   │                       │ │
-│  │  │ Service    │ │ Sidecar      │──┼───┘                       │ │
-│  │  └────────────┘ │ (Py 3.11)   │  │                           │ │
-│  │  ┌────────────┐ │ Port 8001   │  │                           │ │
-│  │  │ Graphiti   │ └──────────────┘  │                           │ │
-│  │  │ Service    │                    │                           │ │
-│  │  └─────┬──────┘ ┌──────────────┐  │                           │ │
-│  │        │        │ Token        │  │                           │ │
-│  │        │        │ Tracker      │  │                           │ │
-│  │        │        └──────────────┘  │                           │ │
-│  └────────┼──────────────────────────┘                           │ │
-│           │                                                       │ │
-│           ▼                                                       │ │
-│  ┌──────────────┐   ┌──────────────────┐                         │ │
-│  │  FalkorDB    │   │  Local Data      │                         │ │
-│  │  (Graph DB)  │   │  ├─ Parquet      │                         │ │
-│  │  Port 6379   │   │  ├─ SQLite       │                         │ │
-│  │  Vol: data/  │   │  ├─ YAML config  │                         │ │
-│  └──────────────┘   │  └─ DOCX export  │                         │ │
-│                      └──────────────────┘                         │ │
-└─────────────────────────────────────────────────────────────────┘
+```text
+Browser
+  └─ React/Vite frontend
+      └─ FastAPI backend
+          ├─ ConfigService
+          ├─ ConsoleService
+          ├─ LightRAGService
+          ├─ SimulationService
+          ├─ MetricsService
+          ├─ ReportService
+          ├─ MemoryService
+          └─ SQLite + local filesystem
+                ├─ session configs
+                ├─ uploaded docs
+                ├─ simulation artifacts
+                ├─ checkpoint records
+                └─ report exports
 ```
 
-## Data Flow (5-Stage Pipeline)
+Optional backing systems:
 
-```
-Screen 0          Screen 1           Screen 2          Screen 3          Screen 4/5
-Onboarding    →   Knowledge Graph →  Population    →   Simulation    →   Report + Chat
-                                      Sampling                           Analytics
+- OASIS Python 3.11 runtime for live simulation
+- FalkorDB + Graphiti for temporal memory
+- Zep compatibility fallback when explicitly configured
 
-Config:           Documents:         Filters:          OASIS Engine:     ReportAgent:
-- Country         - PDF/DOCX/URL     - Dynamic from    - Controversy     - Plan-first
-- Provider        - LightRAG         Parquet schema    boost             - Evidence-linked
-- Model           extraction         - Country-        - Checkpoints     - Group chat
-- Use case        - Multi-file       specific          - Metrics         - DOCX export
-                  merge              - Token cost      streaming
-                                     estimate
-```
+## 2. Primary Data Flow
 
-## Key Service Responsibilities
+### Stage 0: Onboarding
 
-| Service | File | Responsibility |
-|:--------|:-----|:---------------|
-| **ConfigService** | `config_service.py` | Load YAML configs for countries, prompts, use cases |
-| **SimulationService** | `simulation_service.py` | Orchestrate OASIS runs, checkpoint interviews, controversy boost |
-| **MetricsService** | `metrics_service.py` | Compute polarization, influence, cascades, opinion flow |
-| **ReportService** | `report_service.py` | Plan-first report generation, evidence linking |
-| **GraphitiService** | `graphiti_service.py` | Temporal agent memory via FalkorDB |
-| **TokenTracker** | `token_tracker.py` | Count tokens, estimate cost, track caching savings |
-| **CachingLLMClient** | `caching_llm_client.py` | Gemini context caching wrapper |
-| **DemoService** | `demo_service.py` | Serve pre-cached data for demo mode |
+- frontend creates a V2 session
+- backend normalizes provider/use-case ids
+- backend seeds `session_configs.analysis_questions` from YAML
 
-## Technology Stack
+### Stage 1: Knowledge Extraction
 
-| Layer | Technology | Version | Purpose |
-|:------|:-----------|:--------|:--------|
-| Frontend | React + TypeScript | 18.x | UI |
-| Build | Vite | 5.x | Dev server + bundler |
-| Backend | FastAPI | 0.100+ | REST API + SSE |
-| Simulation | OASIS | Latest | Multi-agent social sim |
-| Graph DB | FalkorDB | Latest | Agent memory (Graphiti) |
-| Memory Engine | Graphiti | Latest | Temporal knowledge graph |
-| Doc Processing | LightRAG | Latest | Knowledge extraction |
-| LLM Providers | Gemini, OpenAI, Ollama | Various | Agent reasoning |
-| Export | python-docx | 1.x | DOCX report generation |
-| Container | Docker + Compose | 24.x | Local orchestration |
+- documents enter through upload, scrape, or paste
+- Screen 1 loads session-scoped analysis questions
+- custom question metadata is inferred via `QuestionMetadataService`
+- extraction persists a merged knowledge artifact
 
-## State Management
+### Stage 2: Population Sampling
 
-- **Frontend**: React Context (`SessionContext`) holds `session_id`, `config`, navigation state
-- **Backend**: Per-session state containers keyed by `session_id`
-- **Database**: SQLite per simulation (`data/sim_{session_id}.db`)
-- **Graph**: FalkorDB with `group_id = session_{session_id}` scoping
-- **Config**: Read-only YAML files loaded once per session
+- dynamic filters are inferred from the selected country dataset
+- token estimates are computed from model/provider settings
+- sampled personas are stored as the cohort for the session
 
-## Security Notes
+### Stage 3: Simulation
 
-- API keys stored in `.env` (gitignored), injected via Docker env
-- No authentication in local mode (single-user)
-- Session IDs are UUIDs, not sequential
-- All file uploads validated by extension and MIME type
+- OASIS runs against the selected cohort and document context
+- initial discussion seed posts come from the session’s analysis questions
+- checkpoint answers populate `metric_answers`
+- simulation state and interactions are streamed/polled back to the frontend
+
+### Stage 4: Report + Chat
+
+- `ReportService` resolves session-scoped analysis questions first
+- quantitative questions generate metric deltas
+- all questions generate report sections
+- insight blocks and preset sections are derived from the active YAML
+- chat uses real simulation context plus memory/document context
+
+### Stage 5: Analytics
+
+- analytics endpoints normalize the same simulation artifacts into:
+  - polarization
+  - opinion flow
+  - influence leaders
+  - cascades / viral posts
+
+## 3. State Ownership
+
+### Frontend
+
+`AppContext` is the main runtime store for:
+
+- session id and onboarding config
+- uploaded files
+- analysis questions
+- knowledge artifact
+- population artifact
+- sampled agents
+- simulation round count and feed posts
+- chat history
+
+This is why navigating backward within the same session should no longer wipe the Screen 3 feed.
+
+### Backend
+
+The backend stores:
+
+- session lifecycle in `console_sessions`
+- V2 runtime config in `session_configs`
+- checkpoint records
+- interactions and report state
+- token usage counters
+
+## 4. Canonical Runtime Contracts
+
+### Session Config
+
+`session_configs` is the canonical V2 runtime configuration table. `analysis_questions` inside this table is the first lookup point for:
+
+- Screen 1 display
+- checkpoint metric generation
+- report section generation
+- report metric cards
+
+### Report Payload
+
+The current Screen 4 payload contains:
+
+- `executive_summary`
+- `metric_deltas`
+- `quick_stats`
+- `sections`
+- `insight_blocks`
+- `preset_sections`
+
+### Analytics Payloads
+
+The frontend expects normalized payloads for:
+
+- polarization time series
+- opinion flow buckets and transitions
+- influence leaders with names and viewpoint summaries
+- cascades / viral posts with author names and nested comments
+
+## 5. Compatibility Layers Still Present
+
+- use-case aliases from V1 ids to canonical V2 ids
+- `guiding_prompt` as a backend compatibility field
+- `report/full` and `report/generate` aliases that now return the V2 report structure
+- Zep fallback inside `MemoryService`
+
+These exist to keep older flows from breaking, not to define new product behavior.

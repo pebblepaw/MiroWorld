@@ -215,15 +215,15 @@ class ConsoleAgentChatResponse(BaseModel):
 
 class V2ReportResponse(BaseModel):
     session_id: str
+    status: str = "completed"
     generated_at: str | None = None
     executive_summary: str | None = None
+    metric_deltas: list[dict[str, Any]] = Field(default_factory=list)
     quick_stats: dict[str, Any] = Field(default_factory=dict)
     sections: list[dict[str, Any]] = Field(default_factory=list)
-    supporting_views: list[str] = Field(default_factory=list)
-    dissenting_views: list[str] = Field(default_factory=list)
-    demographic_breakdown: list[dict[str, Any]] = Field(default_factory=list)
-    key_recommendations: list[str] = Field(default_factory=list)
-    methodology: dict[str, Any] = Field(default_factory=dict)
+    insight_blocks: list[dict[str, Any]] = Field(default_factory=list)
+    preset_sections: list[dict[str, Any]] = Field(default_factory=list)
+    error: str | None = None
 
 
 class V2GroupChatRequest(BaseModel):
@@ -328,6 +328,7 @@ class V2SessionConfigPatchRequest(BaseModel):
     model: str | None = None
     api_key: str | None = None
     guiding_prompt: str | None = None
+    analysis_questions: list[dict[str, Any]] | None = None
 
 
 class V2SessionConfigResponse(BaseModel):
@@ -338,6 +339,7 @@ class V2SessionConfigResponse(BaseModel):
     model: str | None = None
     api_key_configured: bool = False
     guiding_prompt: str | None = None
+    analysis_questions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ConsoleScrapeRequest(BaseModel):

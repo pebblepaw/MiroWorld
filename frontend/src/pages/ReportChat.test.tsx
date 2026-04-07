@@ -35,7 +35,7 @@ function SeedReportContext({ includeAgents = true }: { includeAgents?: boolean }
     completeStep(3);
     setCurrentStep(4);
     setCountry("singapore");
-    setUseCase("policy-review");
+    setUseCase("public-policy-testing");
     setSimulationRounds(5);
     if (includeAgents) {
       setAgents([
@@ -122,13 +122,86 @@ function buildReportPayload() {
     status: "complete",
     generated_at: "2026-04-06T10:00:00Z",
     executive_summary: "Live report summary from backend.",
-    insight_cards: [],
-    support_themes: [],
-    dissent_themes: [],
-    demographic_breakdown: [],
-    influential_content: [],
-    recommendations: [],
-    risks: [],
+    quick_stats: {
+      agent_count: 3,
+      round_count: 5,
+      model: "gemini-2.0-flash",
+      provider: "google",
+    },
+    metric_deltas: [
+      {
+        metric_name: "approval_rate",
+        metric_label: "Approval Rate",
+        metric_unit: "%",
+        initial_value: 42,
+        final_value: 57,
+        delta: 15,
+        direction: "up",
+        report_title: "Policy Approval",
+      },
+      {
+        metric_name: "rollout_support",
+        metric_label: "Rollout Support",
+        metric_unit: "text",
+        type: "yes-no",
+        initial_value: 25,
+        final_value: 75,
+        delta: 50,
+        direction: "up",
+        report_title: "Rollout Support",
+      },
+    ],
+    sections: [
+      {
+        question: "Do you approve of this policy? Rate 1-10.",
+        report_title: "## Policy Approval",
+        type: "scale",
+        answer: "**Support** increased after the final round of discussion.\n\n- Affordability concerns eased\n- Rollout clarity improved",
+        metric: {
+          metric_name: "approval_rate",
+          metric_label: "Approval Rate",
+          metric_unit: "%",
+          initial_value: 42,
+          final_value: 57,
+          delta: 15,
+          direction: "up",
+          report_title: "Policy Approval",
+        },
+        evidence: [
+          { agent_id: "agent-neg-1", post_id: "post-1", quote: "Families are stretched thin by current policy costs." },
+          { agent_id: "agent-pos-1", post_id: "post-2", quote: "The policy can work if safeguards are clear." },
+        ],
+      },
+      {
+        question: "What specific aspects of this policy do you support or oppose, and why?",
+        report_title: "Key Viewpoints",
+        type: "open-ended",
+        answer: "Most discussion centered on affordability and rollout fairness.\n\n1. Less pressure on households\n2. Clearer transition support",
+        evidence: [
+          { agent_id: "agent-neg-2", post_id: "post-3", quote: "I need stronger protections before I can support it." },
+        ],
+      },
+    ],
+    insight_blocks: [
+      {
+        type: "polarization_index",
+        title: "Polarization Over Time",
+        description: "How divided is public opinion across rounds?",
+        data: {
+          status: "complete",
+          points: [
+            { round: "R1", index: 0.2, severity: "low" },
+            { round: "R5", index: 0.7, severity: "high" },
+          ],
+        },
+      },
+    ],
+    preset_sections: [
+      {
+        title: "Recommendations",
+        answer: "Lead with affordability safeguards and clearer rollout details.",
+      },
+    ],
     error: null,
   };
 }
@@ -245,7 +318,11 @@ describe("ReportChat", () => {
     const supportCall = vi.mocked(global.fetch).mock.calls.filter(([url]) => String(url).includes("/chat/group")).at(-1);
     expect(JSON.parse(String(supportCall?.[1]?.body)).segment).toBe("supporters");
 
-    fireEvent.click(await screen.findByRole("button", { name: /alex tan/i }));
+    const reportAgentButton = (await screen.findAllByRole("button", { name: /alex tan/i })).find(
+      (button) => button.textContent?.trim() === "Alex Tan",
+    );
+    expect(reportAgentButton).toBeTruthy();
+    fireEvent.click(reportAgentButton!);
     expect(await screen.findByText("Agent Profile")).toBeInTheDocument();
     expect(screen.getByText("Teacher")).toBeInTheDocument();
     expect(screen.getByText(/core viewpoint/i)).toBeInTheDocument();
@@ -281,7 +358,7 @@ describe("ReportChat", () => {
     fireEvent.click(screen.getByRole("button", { name: "1:1 Chat" }));
     const search = await screen.findByPlaceholderText(/search agents/i);
     fireEvent.change(search, { target: { value: "Alex" } });
-    fireEvent.click(await screen.findByRole("button", { name: /alex tan/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /alex tan teacher/i }));
 
     const input = await screen.findByPlaceholderText(/ask alex/i);
     fireEvent.change(input, { target: { value: "How did your view change?" } });
@@ -297,6 +374,87 @@ describe("ReportChat", () => {
     expect(await screen.findByText("Live one-on-one reply")).toBeInTheDocument();
     expect(screen.getByText("How did your view change?").closest("div")).toHaveClass("rounded-br-sm");
     expect(screen.getByText("Live one-on-one reply").closest("div")).toHaveClass("rounded-bl-sm");
+  });
+
+  it("renders V2 report sections, evidence quotes, and clickable agent drill-down", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+        return { ok: true, json: async () => buildReportPayload() } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedReportContext />
+        <ReportChat />
+      </AppProvider>,
+    );
+
+    expect((await screen.findAllByText("Policy Approval")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Approval Rate")).toBeInTheDocument();
+    expect(screen.getByText("Polarization Over Time")).toBeInTheDocument();
+    expect(screen.getByText("Recommendations")).toBeInTheDocument();
+    expect(screen.queryByText("Supporting Views")).not.toBeInTheDocument();
+    expect(screen.queryByText("Dissenting Views")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Families are stretched thin by current policy costs."))).length,
+    ).toBeGreaterThan(0);
+
+    expect(screen.queryByText("agent-neg-1")).not.toBeInTheDocument();
+    const agentButton = (await screen.findAllByRole("button", { name: /^alex tan$/i })).find(
+      (button) => button.textContent?.trim() === "Alex Tan",
+    );
+    expect(agentButton).toBeTruthy();
+    fireEvent.click(agentButton!);
+
+    expect(await screen.findByText("Agent Chat")).toBeInTheDocument();
+    expect(screen.getAllByText("Alex Tan").length).toBeGreaterThan(0);
+  });
+
+  it("formats metrics as initial to final values, keeps yes-no metrics numeric, and strips markdown markers from report copy", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+        return { ok: true, json: async () => buildReportPayload() } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedReportContext />
+        <ReportChat />
+      </AppProvider>,
+    );
+
+    expect((await screen.findAllByText("Policy Approval")).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("42%") && element?.textContent?.includes("57%"))).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("25%") && element?.textContent?.includes("75%"))).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/0text/i)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Support increased after the final round of discussion."))).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Affordability concerns eased"))).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Rollout clarity improved"))).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Most discussion centered on affordability and rollout fairness."))).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Less pressure on households"))).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Clearer transition support"))).length,
+    ).toBeGreaterThan(0);
   });
 
   it("exports report through the backend DOCX endpoint", async () => {
@@ -417,13 +575,13 @@ describe("ReportChat", () => {
     );
 
     expect(await screen.findByText("Live report summary from backend.")).toBeInTheDocument();
-    expect(screen.getByText(/Singapore · Policy Review · — agents · 5 rounds/i)).toBeInTheDocument();
-    expect(screen.getByText("Initial Approval").parentElement).toHaveTextContent("—");
-    expect(screen.getByText("Final Approval").parentElement).toHaveTextContent("—");
-    expect(screen.getByText("Agents Simulated").parentElement).toHaveTextContent("—");
-    expect(screen.queryByText("65%")).not.toBeInTheDocument();
-    expect(screen.queryByText("34%")).not.toBeInTheDocument();
-    expect(screen.queryByText("250")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Singapore · Public Policy Testing · 3 agents · 5 rounds"))).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("Approval Rate")).toBeInTheDocument();
+    expect(screen.getAllByText("42% -> 57%").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Supporting Views")).not.toBeInTheDocument();
+    expect(screen.queryByText("Dissenting Views")).not.toBeInTheDocument();
   });
 
   it("does not enqueue demo replies when live chat returns no responses", async () => {
@@ -498,7 +656,7 @@ describe("ReportChat", () => {
     fireEvent.click(screen.getByRole("button", { name: "1:1 Chat" }));
     const search = await screen.findByPlaceholderText(/search agents/i);
     fireEvent.change(search, { target: { value: "Alex" } });
-    fireEvent.click(await screen.findByRole("button", { name: /alex tan/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /alex tan teacher/i }));
 
     const input = await screen.findByPlaceholderText(/ask alex/i);
     fireEvent.change(input, { target: { value: "How did your view change?" } });

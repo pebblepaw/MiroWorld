@@ -248,6 +248,7 @@ const STANCE_ORDER: Stance[] = ["supporter", "neutral", "dissenter"];
 export default function Analytics() {
   const { agents, useCase, country, simulationRounds, sessionId } = useApp();
   const liveMode = isLiveBootMode();
+  const agentNamesById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
 
   const [dimension, setDimension] = useState<DemographicDimension>(() => defaultDimensionForUseCase(useCase));
   const [polarizationData, setPolarizationData] = useState<PolarizationPoint[]>(() => (liveMode ? [] : POLARIZATION_DATA));
@@ -300,10 +301,10 @@ export default function Analytics() {
         ? normalizeOpinionFlowPayload(flow.value)
         : null;
       const normalizedLeaders = influence.status === "fulfilled"
-        ? normalizeLeadersPayload(influence.value)
+        ? normalizeLeadersPayload(influence.value, agentNamesById)
         : null;
       const normalizedCascades = cascades.status === "fulfilled"
-        ? normalizeCascadesPayload(cascades.value)
+        ? normalizeCascadesPayload(cascades.value, agentNamesById)
         : null;
 
       if (isLive) {
@@ -355,7 +356,7 @@ export default function Analytics() {
     return () => {
       active = false;
     };
-  }, [sessionId]);
+  }, [agentNamesById, sessionId]);
 
   const sourceAgents = useMemo<Agent[]>(() => {
     if (agents.length > 0) return agents;
@@ -413,7 +414,7 @@ export default function Analytics() {
   }, [dimension, sourceAgents]);
 
   const dimensionOptions = useMemo(() => {
-    if (useCase === "policy-review") {
+    if (useCase === "public-policy-testing" || useCase === "policy-review") {
       return [
         { key: "industry", label: "Industry" },
         { key: "planningArea", label: "Planning Area" },
@@ -424,7 +425,7 @@ export default function Analytics() {
       ] as Array<{ key: DemographicDimension; label: string }>;
     }
 
-    if (useCase === "ad-testing") {
+    if (useCase === "campaign-content-testing" || useCase === "ad-testing") {
       return [
         { key: "ageBucket", label: "Age" },
         { key: "incomeBracket", label: "Income" },
@@ -814,10 +815,7 @@ function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loadin
                     {Math.round(leader.influence * 100)}%
                   </span>
                 </div>
-                <p className="text-xs leading-relaxed text-white/80">{leader.topView}</p>
-                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                  <span className="font-mono uppercase tracking-wide text-white/65">Top Post:</span> {leader.topPost}
-                </p>
+                <p className="text-xs leading-relaxed text-white/80">{leader.topView || leader.topPost || "No viewpoint summary available."}</p>
               </article>
             ))}
           </div>
@@ -989,7 +987,7 @@ function normalizeOpinionFlowPayload(payload: Record<string, unknown>): OpinionF
   };
 }
 
-function normalizeLeadersPayload(payload: Record<string, unknown>): Leader[] | null {
+function normalizeLeadersPayload(payload: Record<string, unknown>, agentNamesById: Map<string, string>): Leader[] | null {
   const candidates = payload.top_influencers ?? payload.leaders ?? payload.items;
   if (!Array.isArray(candidates)) {
     return null;
@@ -998,7 +996,10 @@ function normalizeLeadersPayload(payload: Record<string, unknown>): Leader[] | n
     .map((row) => {
       if (!row || typeof row !== "object") return null;
       const entry = row as Record<string, unknown>;
-      const name = String(entry.name ?? entry.agent_name ?? entry.agent_id ?? "").trim();
+      const name = resolveAnalyticsDisplayName(
+        String(entry.name ?? entry.agent_name ?? entry.agent_id ?? ""),
+        agentNamesById,
+      );
       if (!name) return null;
       const stanceRaw = String(entry.stance ?? entry.segment ?? "mixed").toLowerCase();
       const stance: Leader["stance"] =
@@ -1009,15 +1010,71 @@ function normalizeLeadersPayload(payload: Record<string, unknown>): Leader[] | n
         name,
         stance,
         influence: Number(entry.influence ?? entry.influence_score ?? entry.score ?? 0),
-        topView: String(entry.top_view ?? entry.topView ?? entry.core_viewpoint ?? ""),
-        topPost: String(entry.top_post ?? entry.topPost ?? entry.example_post ?? ""),
+        topView: normalizeViewpointText(
+          entry.summary ?? entry.viewpoint_summary ?? entry.top_view ?? entry.topView ?? entry.core_viewpoint ?? "",
+        ),
+        topPost: normalizeTopPostText(entry.top_post ?? entry.topPost ?? entry.example_post ?? ""),
       } satisfies Leader;
     })
     .filter((row): row is Leader => Boolean(row));
   return normalized;
 }
 
-function normalizeCascadesPayload(payload: Record<string, unknown>): ViralPost[] | null {
+function resolveAnalyticsDisplayName(value: string, agentNamesById: Map<string, string>): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  return agentNamesById.get(trimmed) ?? trimmed;
+}
+
+function normalizeViewpointText(value: unknown): string {
+  const text = normalizeTopPostText(value);
+  if (!text) return "";
+  if (/^analysis question\s*\d+/i.test(text)) {
+    return text.replace(/^analysis question\s*\d+\s*[:\-]?\s*/i, "").trim();
+  }
+  return text;
+}
+
+function formatPlainText(value: unknown): string {
+  const text = String(value ?? "");
+  return text
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}[-*+]\s+/gm, "")
+    .replace(/^\s{0,3}\d+\.\s+/gm, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizeTopPostText(value: unknown): string {
+  if (typeof value === "string") {
+    return formatPlainText(value);
+  }
+  if (!value || typeof value !== "object") {
+    return formatPlainText(String(value ?? ""));
+  }
+
+  const entry = value as Record<string, unknown>;
+  const candidates = [entry.content, entry.body, entry.title, entry.text, entry.summary, entry.quote];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return formatPlainText(candidate);
+    }
+    if (candidate != null && typeof candidate !== "object") {
+      return formatPlainText(String(candidate));
+    }
+  }
+
+  return "";
+}
+
+function normalizeCascadesPayload(payload: Record<string, unknown>, agentNamesById: Map<string, string>): ViralPost[] | null {
   const candidates = payload.viral_posts ?? payload.cascades ?? payload.top_threads ?? payload.posts;
   if (!Array.isArray(candidates)) {
     return null;
@@ -1033,9 +1090,12 @@ function normalizeCascadesPayload(payload: Record<string, unknown>): ViralPost[]
               if (!comment || typeof comment !== "object") return null;
               const commentRow = comment as Record<string, unknown>;
               return {
-                author: String(commentRow.author ?? commentRow.agent_name ?? "Agent"),
+                author: resolveAnalyticsDisplayName(
+                  String(commentRow.author ?? commentRow.agent_name ?? "Agent"),
+                  agentNamesById,
+                ),
                 stance: normalizeStance(commentRow.stance),
-                content: String(commentRow.content ?? commentRow.text ?? ""),
+                content: formatPlainText(String(commentRow.content ?? commentRow.text ?? "")),
                 likes: Math.max(0, Number(commentRow.likes ?? commentRow.upvotes ?? 0)),
                 dislikes: Math.max(0, Number(commentRow.dislikes ?? commentRow.downvotes ?? 0)),
               } satisfies ViralComment;
@@ -1044,10 +1104,13 @@ function normalizeCascadesPayload(payload: Record<string, unknown>): ViralPost[]
         : [];
 
       return {
-        author: String(entry.author ?? entry.author_name ?? "Agent"),
+        author: resolveAnalyticsDisplayName(
+          String(entry.author ?? entry.author_name ?? "Agent"),
+          agentNamesById,
+        ),
         stance: normalizeStance(entry.stance),
-        title: String(entry.title ?? entry.headline ?? "Untitled thread"),
-        content: String(entry.content ?? entry.body ?? ""),
+        title: formatPlainText(String(entry.title ?? entry.headline ?? "Untitled thread")),
+        content: formatPlainText(String(entry.content ?? entry.body ?? "")),
         likes: Math.max(0, Number(entry.likes ?? entry.upvotes ?? 0)),
         dislikes: Math.max(0, Number(entry.dislikes ?? entry.downvotes ?? 0)),
         comments,
@@ -1117,9 +1180,9 @@ function inferIndustry(occupation: string): string {
 }
 
 function defaultDimensionForUseCase(useCase: string): DemographicDimension {
-  if (useCase === "policy-review") return "industry";
-  if (useCase === "ad-testing") return "ageBucket";
-  if (useCase === "pmf-discovery") return "occupation";
+  if (useCase === "public-policy-testing" || useCase === "policy-review") return "industry";
+  if (useCase === "campaign-content-testing" || useCase === "ad-testing") return "ageBucket";
+  if (useCase === "product-market-research" || useCase === "pmf-discovery") return "occupation";
   return "industry";
 }
 
@@ -1132,9 +1195,12 @@ function formatCountry(country: string): string {
 
 function formatUseCase(useCase: string): string {
   const normalized = String(useCase || "").trim().toLowerCase();
-  if (normalized === "policy-review") return "Policy Review";
-  if (normalized === "ad-testing") return "Ad Testing";
-  if (normalized === "pmf-discovery") return "PMF Discovery";
-  if (normalized === "reviews") return "Reviews";
-  return "Policy Review";
+  if (normalized === "public-policy-testing") return "Public Policy Testing";
+  if (normalized === "product-market-research") return "Product & Market Research";
+  if (normalized === "campaign-content-testing") return "Campaign & Content Testing";
+  // V1 backward compat
+  if (normalized === "policy-review") return "Public Policy Testing";
+  if (normalized === "ad-testing") return "Campaign & Content Testing";
+  if (normalized === "pmf-discovery" || normalized === "reviews") return "Product & Market Research";
+  return "Public Policy Testing";
 }

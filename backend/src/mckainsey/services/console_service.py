@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -23,10 +24,12 @@ from mckainsey.services.lightrag_service import LightRAGService, OCCUPATION_NAME
 from mckainsey.services.memory_service import MemoryService
 from mckainsey.services.metrics_service import MetricsService
 from mckainsey.services.model_provider_service import (
+    curate_provider_models,
     ensure_ollama_models_available,
     mask_api_key,
     normalize_provider,
     provider_catalog,
+    provider_model_unavailability_hint,
     resolve_model_selection,
     selection_to_settings_update,
 )
@@ -42,6 +45,7 @@ MAX_AFFECTED_GROUPS_CANDIDATES = 1000
 MAX_BASELINE_CANDIDATES = 1200
 MIN_AFFECTED_GROUPS_CANDIDATES = 400
 MIN_BASELINE_CANDIDATES = 600
+logger = logging.getLogger(__name__)
 
 
 class ConsoleService:
@@ -75,12 +79,19 @@ class ConsoleService:
                     provider TEXT,
                     model TEXT,
                     guiding_prompt TEXT,
+                    analysis_questions TEXT,
                     config_json TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
+            columns = {
+                str(row[1]).strip().lower()
+                for row in conn.execute("PRAGMA table_info(session_configs)").fetchall()
+            }
+            if "analysis_questions" not in columns:
+                conn.execute("ALTER TABLE session_configs ADD COLUMN analysis_questions TEXT")
 
     def _ensure_session_token_usage_table(self) -> None:
         with self._connect() as conn:
@@ -182,6 +193,28 @@ class ConsoleService:
             detail = f"{detail}. {hint}"
         return detail
 
+    def _summarize_simulation_failure(self, exc: Exception) -> str:
+        raw_message = str(exc).strip() or exc.__class__.__name__
+        lowered = raw_message.lower()
+
+        if ("no module named 'camel'" in lowered) or ("no module named 'oasis'" in lowered):
+            return "Simulation runtime is unavailable because the OASIS Python environment is missing required packages."
+        if "oasis python runtime is unavailable" in lowered or "oasis python runtime not found" in lowered:
+            return "Simulation runtime is unavailable. Reinstall the OASIS Python environment or point OASIS_PYTHON_BIN to backend/.venv311."
+        if "a provider api key is required" in lowered:
+            return "Simulation couldn't start because the provider API key is missing."
+        if "insufficient_quota" in lowered or "quota" in lowered:
+            return "The model provider rejected the simulation because the API quota or billing limit was reached."
+        if "no longer available" in lowered or "not_found" in lowered:
+            return "The selected model is no longer available from the provider. Choose a current model and try again."
+        if "timed out" in lowered or "timeout_seconds=" in lowered:
+            return "The simulation timed out before it could finish. Try fewer agents or rounds, or use a faster model."
+        if "run_log=" in lowered or "traceback" in lowered or "real oasis simulation failed" in lowered:
+            return "The simulation failed in the OASIS runtime. Check the backend run log for details."
+        if len(raw_message) > 180:
+            return "The simulation could not be completed. Check the backend logs and try again."
+        return raw_message
+
     def model_provider_catalog(self) -> dict[str, Any]:
         return {"providers": provider_catalog(self.settings)}
 
@@ -205,7 +238,11 @@ class ConsoleService:
                 discovered = [str(item.get("id", "")).strip() for item in listed.get("models", [])]
                 discovered = [item for item in discovered if item]
                 if discovered:
-                    models = discovered
+                    models = curate_provider_models(
+                        provider_id,
+                        discovered,
+                        default_model=default_model,
+                    )
             except Exception:  # noqa: BLE001
                 # Keep compatibility endpoint resilient when provider discovery
                 # requires credentials or local runtimes are unavailable.
@@ -235,6 +272,13 @@ class ConsoleService:
                 payload.update(json.loads(str(raw_json)))
             except Exception:  # noqa: BLE001
                 pass
+        raw_questions = payload.get("analysis_questions")
+        if isinstance(raw_questions, str):
+            try:
+                decoded = json.loads(raw_questions)
+                payload["analysis_questions"] = decoded if isinstance(decoded, list) else []
+            except Exception:  # noqa: BLE001
+                payload["analysis_questions"] = []
         return payload
 
     def _upsert_session_config(self, session_id: str, config_patch: dict[str, Any]) -> dict[str, Any]:
@@ -252,6 +296,12 @@ class ConsoleService:
             if merged.get("guiding_prompt") is not None
             else None
         )
+        analysis_questions_raw = merged.get("analysis_questions", [])
+        analysis_questions = (
+            [item for item in analysis_questions_raw if isinstance(item, dict)]
+            if isinstance(analysis_questions_raw, list)
+            else []
+        )
 
         stored_json = {
             "country": country,
@@ -259,6 +309,7 @@ class ConsoleService:
             "provider": provider_for_payload,
             "model": model,
             "guiding_prompt": guiding_prompt,
+            "analysis_questions": analysis_questions,
         }
 
         with self._connect() as conn:
@@ -271,15 +322,17 @@ class ConsoleService:
                     provider,
                     model,
                     guiding_prompt,
+                    analysis_questions,
                     config_json
                 )
-                VALUES(?, ?, ?, ?, ?, ?, ?)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     country=excluded.country,
                     use_case=excluded.use_case,
                     provider=excluded.provider,
                     model=excluded.model,
                     guiding_prompt=excluded.guiding_prompt,
+                    analysis_questions=excluded.analysis_questions,
                     config_json=excluded.config_json,
                     updated_at=CURRENT_TIMESTAMP
                 """,
@@ -290,6 +343,7 @@ class ConsoleService:
                     provider_for_payload,
                     model,
                     guiding_prompt,
+                    json.dumps(analysis_questions, ensure_ascii=False),
                     json.dumps(stored_json, ensure_ascii=False),
                 ),
             )
@@ -323,6 +377,7 @@ class ConsoleService:
         model: str | None = None,
         api_key: str | None = None,
         guiding_prompt: str | None = None,
+        analysis_questions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         session = self._session_record(session_id)
         if not session:
@@ -337,11 +392,18 @@ class ConsoleService:
 
         if use_case is not None:
             use_case_payload = config_service.get_use_case(use_case)
-            patch["use_case"] = str(use_case_payload.get("code", use_case)).strip().lower()
+            resolved_use_case = str(use_case_payload.get("code", use_case)).strip().lower()
+            patch["use_case"] = resolved_use_case
             if guiding_prompt is None and not self._read_session_config(session_id).get("guiding_prompt"):
                 default_prompt = str(use_case_payload.get("guiding_prompt") or "").strip()
                 if default_prompt:
                     patch["guiding_prompt"] = default_prompt
+            if analysis_questions is None:
+                patch["analysis_questions"] = [
+                    item
+                    for item in config_service.get_analysis_questions(resolved_use_case)
+                    if isinstance(item, dict)
+                ]
 
         if provider is not None:
             patch["provider"] = "gemini" if normalize_provider(provider) == "google" else normalize_provider(provider)
@@ -349,6 +411,8 @@ class ConsoleService:
             patch["model"] = str(model).strip()
         if guiding_prompt is not None:
             patch["guiding_prompt"] = str(guiding_prompt).strip() or None
+        if analysis_questions is not None:
+            patch["analysis_questions"] = [item for item in analysis_questions if isinstance(item, dict)]
 
         merged_cfg = self._upsert_session_config(session_id, patch)
 
@@ -373,6 +437,11 @@ class ConsoleService:
             "model": model_payload["model_name"],
             "api_key_configured": bool(model_payload["api_key_configured"]),
             "guiding_prompt": merged_cfg.get("guiding_prompt"),
+            "analysis_questions": [
+                item
+                for item in (merged_cfg.get("analysis_questions") or [])
+                if isinstance(item, dict)
+            ],
         }
 
     def create_v2_session(
@@ -400,6 +469,11 @@ class ConsoleService:
         )
         use_case_payload = config.get_use_case(use_case)
         stored_prompt = str(use_case_payload.get("guiding_prompt") or "").strip() or None
+        analysis_questions = [
+            item
+            for item in config.get_analysis_questions(str(use_case_payload.get("code", use_case)))
+            if isinstance(item, dict)
+        ]
         self._upsert_session_config(
             payload["session_id"],
             {
@@ -408,6 +482,7 @@ class ConsoleService:
                 "provider": "gemini" if resolved_provider == "google" else resolved_provider,
                 "model": model,
                 "guiding_prompt": stored_prompt,
+                "analysis_questions": analysis_questions,
             },
         )
         return {"session_id": payload["session_id"]}
@@ -744,6 +819,17 @@ class ConsoleService:
             )
 
         runtime_settings = self._runtime_settings_for_session(session_id)
+        unavailable_model_hint = provider_model_unavailability_hint(
+            runtime_settings.llm_provider,
+            runtime_settings.llm_model,
+        )
+        if unavailable_model_hint:
+            detail = self._format_runtime_failure_detail(
+                session_id,
+                RuntimeError(unavailable_model_hint),
+                action="Screen 1 knowledge extraction",
+            )
+            raise HTTPException(status_code=502, detail=detail)
         lightrag = LightRAGService(runtime_settings)
         try:
             artifacts: list[dict[str, Any]] = []
@@ -1124,12 +1210,17 @@ class ConsoleService:
         thread.start()
         return initial_state
 
+    def generate_v2_report(self, session_id: str) -> dict[str, Any]:
+        payload = self.get_v2_report(session_id)
+        if not payload.get("status"):
+            payload["status"] = "completed"
+        return payload
+
     def get_report_full(self, session_id: str) -> dict[str, Any]:
-        # Check if demo mode
-        if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            return self.demo.get_report(session_id) or self._empty_report_state(session_id, status="completed")
-        
-        return self.store.get_report_state(session_id) or self._empty_report_state(session_id, status="idle")
+        payload = self.get_v2_report(session_id)
+        if not payload.get("status"):
+            payload["status"] = "completed"
+        return payload
 
     def get_report_opinions(self, session_id: str) -> dict[str, Any]:
         # Check if demo mode
@@ -1195,7 +1286,32 @@ class ConsoleService:
         report_service = ReportService(runtime_settings)
         session_cfg = self._read_session_config(session_id)
         use_case = str(session_cfg.get("use_case") or "").strip() or None
-        return report_service.build_v2_report(session_id, use_case=use_case)
+        payload = report_service.build_v2_report(session_id, use_case=use_case)
+        payload.setdefault("status", "completed")
+        return payload
+
+    def get_session_analysis_questions(self, session_id: str) -> dict[str, Any]:
+        session = self._session_record(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+        session_cfg = self._read_session_config(session_id)
+        use_case = str(session_cfg.get("use_case") or "").strip().lower()
+        questions = [
+            item
+            for item in (session_cfg.get("analysis_questions") or [])
+            if isinstance(item, dict)
+        ]
+        if not questions and use_case:
+            config_service = ConfigService(self.settings)
+            try:
+                questions = config_service.get_analysis_questions(use_case)
+            except Exception:  # noqa: BLE001
+                questions = []
+        return {
+            "session_id": session_id,
+            "use_case": use_case or "public-policy-testing",
+            "questions": questions,
+        }
 
     def export_v2_report_docx(self, session_id: str) -> tuple[str, bytes]:
         runtime_settings = self._runtime_settings_for_session(session_id)
@@ -1331,10 +1447,42 @@ class ConsoleService:
         }
         return alias_map.get(segment_key, segment_key)
 
+    def _knowledge_context_excerpt(self, session_id: str) -> str:
+        knowledge = self.store.get_knowledge_artifact(session_id) or {}
+        lines: list[str] = []
+        summary = str(knowledge.get("summary") or "").strip()
+        if summary:
+            lines.append(f"Document summary: {summary}")
+
+        document = knowledge.get("document")
+        if isinstance(document, dict):
+            source_path = str(document.get("source_path") or "").strip()
+            if source_path:
+                lines.append(f"Source document: {source_path}")
+            text_length = document.get("text_length")
+            if text_length is not None:
+                lines.append(f"Document length: {text_length}")
+            sources = document.get("sources")
+            if isinstance(sources, list):
+                for source in sources[:3]:
+                    if not isinstance(source, dict):
+                        continue
+                    source_path = str(source.get("source_path") or "").strip()
+                    if source_path:
+                        lines.append(f"Document source: {source_path}")
+
+        return "\n".join(lines)
+
     def agent_chat_v2(self, session_id: str, agent_id: str, message: str) -> dict[str, Any]:
+        context_excerpt = self._knowledge_context_excerpt(session_id)
+        augmented_message = (
+            f"{message}\n\nOriginal document context:\n{context_excerpt}"
+            if context_excerpt
+            else message
+        )
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
             model_payload = self._session_model_payload(session_id)
-            demo_payload = self.demo.generate_demo_agent_chat(session_id, agent_id, message)
+            demo_payload = self.demo.generate_demo_agent_chat(session_id, agent_id, augmented_message)
             payload = {
                 **demo_payload,
                 "session_id": session_id,
@@ -1356,7 +1504,7 @@ class ConsoleService:
         payload = memory_service.agent_chat_realtime(
             session_id,
             agent_id,
-            message,
+            augmented_message,
             live_mode=self._is_live_session(session_id),
         )
         self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
@@ -1521,7 +1669,17 @@ class ConsoleService:
             simulation_service = SimulationService(runtime_settings)
             config_service = ConfigService(runtime_settings)
             use_case = self._session_use_case(session_id)
-            checkpoint_questions = self._checkpoint_questions_for_use_case(config_service, use_case)
+            session_questions_payload = self.get_session_analysis_questions(session_id)
+            checkpoint_questions = [
+                item for item in session_questions_payload.get("questions", []) if isinstance(item, dict)
+            ]
+            if not checkpoint_questions:
+                checkpoint_questions = self._checkpoint_questions_for_use_case(config_service, use_case)
+            seed_discussion_threads = [
+                str(item.get("question", "")).strip()
+                for item in checkpoint_questions
+                if isinstance(item, dict) and str(item.get("question", "")).strip()
+            ]
             personality_modifiers = self._personality_modifiers_for_use_case(config_service, use_case)
             metrics_service = MetricsService(config_service)
             knowledge = self.store.get_knowledge_artifact(session_id) or {}
@@ -1628,6 +1786,7 @@ class ConsoleService:
                 on_progress=_ingest_progress,
                 elapsed_offset_seconds=baseline_elapsed,
                 tail_checkpoint_estimate_seconds=checkpoint_estimate,
+                seed_discussion_threads=seed_discussion_threads,
             )
             token_usage_payload = simulation_result.get("token_usage")
             if isinstance(token_usage_payload, dict):
@@ -1706,25 +1865,30 @@ class ConsoleService:
             self._apply_checkpoint_scores_to_agents(session_id, sampled_rows, baseline, final)
             self.store.upsert_console_session(session_id=session_id, mode=mode, status="simulation_completed")
         except Exception as exc:  # noqa: BLE001
+            logger.exception("Simulation background failed for session %s", session_id)
+            summary = self._summarize_simulation_failure(exc)
             self.streams.append_events(
                 session_id,
                 [
                     {
                         "event_type": "run_failed",
                         "session_id": session_id,
-                        "error": str(exc),
+                        "error": summary,
                     }
                 ],
             )
-            failure_state = {
-                "session_id": session_id,
-                "status": "failed",
-                "event_count": 0,
-                "last_round": 0,
-                "latest_metrics": {"error": str(exc)},
-                "recent_events": [],
-                "events_path": str(events_path),
-            }
+            failure_state = dict(self.streams.get_state(session_id) or {})
+            latest_metrics = dict(failure_state.get("latest_metrics") or {})
+            latest_metrics["error"] = summary
+            failure_state.update(
+                {
+                    "session_id": session_id,
+                    "status": "failed",
+                    "latest_metrics": latest_metrics,
+                    "recent_events": [],
+                    "events_path": str(events_path),
+                }
+            )
             self.store.save_simulation_state_snapshot(session_id, failure_state)
             self.store.upsert_console_session(session_id=session_id, mode=mode, status="simulation_failed")
 
@@ -1907,7 +2071,7 @@ class ConsoleService:
     def _session_use_case(self, session_id: str) -> str:
         session_cfg = self._read_session_config(session_id)
         use_case = str(session_cfg.get("use_case") or "").strip().lower()
-        return use_case or "policy-review"
+        return use_case or "public-policy-testing"
 
     def _checkpoint_questions_for_use_case(self, config_service: ConfigService, use_case: str) -> list[dict[str, Any]]:
         try:

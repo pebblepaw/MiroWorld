@@ -213,6 +213,29 @@ def test_metrics_service_enriches_influence_with_display_fields():
     assert influence["top_influencers"][0]["stance"] in {"supporter", "neutral", "dissenter"}
 
 
+def test_metrics_service_uses_post_content_for_viewpoint_summaries():
+    from mckainsey.services.metrics_service import MetricsService
+
+    service = MetricsService(FakeConfigService())
+    interactions = [
+        {
+            "actor_agent_id": "a1",
+            "target_agent_id": "a2",
+            "action_type": "create_post",
+            "title": "Rollout update",
+            "content": "We should keep the rollout simple and focus on affordability.",
+            "delta": 1.2,
+            "likes": 5,
+            "dislikes": 0,
+        }
+    ]
+
+    influence = service.compute_influence(interactions)
+
+    assert "rollout simple" in influence["top_influencers"][0]["top_view"].lower()
+    assert "Rollout update" not in influence["top_influencers"][0]["top_view"]
+
+
 def test_metrics_service_builds_viral_post_threads_with_nested_comments():
     from mckainsey.services.metrics_service import MetricsService
 

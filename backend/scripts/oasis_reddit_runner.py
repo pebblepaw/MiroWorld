@@ -30,6 +30,7 @@ class RunnerInput:
     elapsed_offset_seconds: int = 0
     tail_checkpoint_estimate_seconds: int = 0
     oasis_semaphore: int = 128
+    seed_discussion_threads: list[str] | None = None
 
 
 NAME_FIELD_PATTERN = re.compile(r"(?:^|\b)(?:name|full name|persona)\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})")
@@ -166,7 +167,33 @@ def _build_seed_post_content(policy_summary: str, index: int) -> str:
     summary_excerpt = " ".join(str(policy_summary or "").split()).strip()[:220]
     if not summary_excerpt:
         summary_excerpt = "Discuss this policy and how it may affect Singapore residents."
-    return f"Policy thread kickoff {index + 1}: {summary_excerpt}"
+    return f"Policy context for discussion: {summary_excerpt}"
+
+
+def _build_analysis_seed_post_content(policy_summary: str, question_text: str, index: int) -> str:
+    question = " ".join(str(question_text or "").split()).strip()
+    if not question:
+        return _build_seed_post_content("", index)
+    summary_excerpt = " ".join(str(policy_summary or "").split()).strip()[:220]
+    if summary_excerpt:
+        return f"Analysis question {index + 1}: {question[:280]}\nPolicy context: {summary_excerpt}"
+    return f"Analysis question {index + 1}: {question[:280]}"
+
+
+def _resolve_seed_posts(policy_summary: str, seed_discussion_threads: list[str] | None) -> list[str]:
+    seed_posts: list[str] = []
+    for index, question_text in enumerate(seed_discussion_threads or []):
+        question = str(question_text or "").strip()
+        if not question:
+            continue
+        seed_posts.append(_build_analysis_seed_post_content(policy_summary, question, index))
+    return [post for post in seed_posts if str(post).strip()] or [_build_seed_post_content(policy_summary, 0)]
+
+
+def _determine_batch_size(active_agent_count: int, round_no: int) -> int:
+    if round_no <= 1:
+        return 1
+    return max(1, min(25, int(active_agent_count * 0.10) or 1))
 
 
 def _extract_persona_display_name(persona: dict[str, Any], idx: int) -> str:
@@ -480,12 +507,16 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
 
     # Seed the policy into the discussion thread before autonomous rounds.
     seed_actions: dict[Any, Any] = {}
-    seed_agents = [agent for _, agent in env.agent_graph.get_agents()][: min(1, len(profiles))]
-    for i, agent in enumerate(seed_agents):
+    all_seed_agents = [agent for _, agent in env.agent_graph.get_agents()]
+    seed_posts = _resolve_seed_posts(payload.policy_summary, payload.seed_discussion_threads)
+    for i, post_content in enumerate(seed_posts):
+        if not all_seed_agents:
+            break
+        agent = all_seed_agents[i % len(all_seed_agents)]
         seed_actions[agent] = ManualAction(
             action_type=ActionType.CREATE_POST,
             action_args={
-                "content": _build_seed_post_content(payload.policy_summary, i)
+                "content": post_content
             },
         )
     await env.step(seed_actions)
@@ -541,7 +572,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
             emit_event("round_completed", round_no=round_no, active_agents=0, batch_count=0)
             continue
 
-        batch_size = max(1, min(25, int(len(active_agents) * 0.10) or 1))
+        batch_size = _determine_batch_size(len(active_agents), round_no)
         batch_count = int(math.ceil(len(active_agents) / batch_size))
         for batch_index in range(batch_count):
             start = batch_index * batch_size

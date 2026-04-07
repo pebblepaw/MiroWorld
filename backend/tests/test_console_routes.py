@@ -575,52 +575,45 @@ def test_console_service_run_background_records_runtime_tokens(monkeypatch, tmp_
 
 
 def test_console_report_generation_routes(monkeypatch):
-    def fake_generate_report(self, session_id):
+    def fake_generate_v2_report(self, session_id):
         assert session_id == "session-a"
         return {
             "session_id": session_id,
-            "status": "running",
-            "generated_at": None,
-            "executive_summary": None,
-            "insight_cards": [],
-            "support_themes": [],
-            "dissent_themes": [],
-            "demographic_breakdown": [],
-            "influential_content": [],
-            "recommendations": [],
-            "risks": [],
+            "generated_at": "2026-04-06T09:00:00Z",
+            "executive_summary": "Support strengthened after discussion.",
+            "metric_deltas": [],
+            "quick_stats": {"agent_count": 120, "round_count": 4, "model": "gemini-2.5-flash-lite", "provider": "google"},
+            "sections": [{"question": "Do you approve?", "report_title": "Approval", "type": "scale", "answer": "Mixed response.", "evidence": []}],
+            "insight_blocks": [],
+            "preset_sections": [{"title": "Recommendations", "answer": "Clarify rollout timeline."}],
         }
 
-    def fake_get_report_full(self, session_id):
+    def fake_get_v2_report(self, session_id):
         assert session_id == "session-a"
         return {
             "session_id": session_id,
-            "status": "completed",
             "generated_at": "2026-03-21T09:00:00Z",
             "executive_summary": "Support strengthened after discussion.",
-            "insight_cards": [{"title": "Woodlands leads support", "summary": "Targeted framing helped.", "severity": "high"}],
-            "support_themes": [],
-            "dissent_themes": [],
-            "demographic_breakdown": [{"segment": "Woodlands youth", "approval_rate": 0.73, "dissent_rate": 0.12, "sample_size": 18}],
-            "influential_content": [],
-            "recommendations": [{"title": "Lead with affordability", "rationale": "Most persuasive theme.", "priority": "high"}],
-            "risks": [{"title": "Quiet cohorts underheard", "summary": "Participation was uneven.", "severity": "medium"}],
+            "metric_deltas": [{"metric_name": "approval_rate", "metric_label": "Approval Rate", "metric_unit": "%", "initial_value": 61.0, "final_value": 73.0, "delta": 12.0, "direction": "up", "report_title": "Approval"}],
+            "quick_stats": {"agent_count": 180, "round_count": 5, "model": "gemini-2.5-flash-lite", "provider": "google"},
+            "sections": [{"question": "Do you approve?", "report_title": "Approval", "type": "scale", "answer": "Support increased in later rounds.", "evidence": []}],
+            "insight_blocks": [{"type": "polarization_index", "title": "Polarization Over Time", "description": "Trend", "data": {"status": "ok"}}],
+            "preset_sections": [{"title": "Recommendations", "answer": "Lead with affordability"}],
         }
 
-    monkeypatch.setattr(ConsoleService, "generate_report", fake_generate_report)
-    monkeypatch.setattr(ConsoleService, "get_report_full", fake_get_report_full)
+    monkeypatch.setattr(ConsoleService, "generate_v2_report", fake_generate_v2_report)
+    monkeypatch.setattr(ConsoleService, "get_v2_report", fake_get_v2_report)
 
     generate = client.post("/api/v2/console/session/session-a/report/generate")
     assert generate.status_code == 200, generate.text
-    assert generate.json()["status"] == "running"
+    assert generate.json()["quick_stats"]["agent_count"] == 120
 
     report = client.get("/api/v2/console/session/session-a/report/full")
     assert report.status_code == 200, report.text
     body = report.json()
-    assert body["status"] == "completed"
     assert body["executive_summary"] == "Support strengthened after discussion."
-    assert body["demographic_breakdown"][0]["segment"] == "Woodlands youth"
-    assert body["recommendations"][0]["priority"] == "high"
+    assert body["metric_deltas"][0]["metric_name"] == "approval_rate"
+    assert body["insight_blocks"][0]["type"] == "polarization_index"
 
 
 def test_console_service_caps_stage2_candidate_pool_for_live_preview(monkeypatch, tmp_path):
@@ -701,6 +694,59 @@ def test_console_service_process_knowledge_wraps_runtime_errors_with_provider_co
     assert "provider 'openai'" in detail
     assert "model 'gpt-5-mini'" in detail
     assert "insufficient_quota" in detail
+
+
+def test_console_service_process_knowledge_rejects_retired_google_models_before_extraction(monkeypatch, tmp_path):
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        llm_provider="google",
+        llm_model="gemini-2.0-flash-lite",
+        llm_api_key="test-key",
+        gemini_api_key="test-key",
+    )
+    service = ConsoleService(settings)
+    service.create_session(
+        requested_session_id="session-retired-google",
+        mode="live",
+        model_provider="google",
+        model_name="gemini-2.0-flash-lite",
+        api_key="test-key",
+    )
+
+    async def fail_if_called(self, *args, **kwargs):  # noqa: ANN001, ANN002, ARG001
+        raise AssertionError("LightRAG extraction should not start for retired Google models")
+
+    monkeypatch.setattr("mckainsey.services.console_service.LightRAGService.process_document", fail_if_called)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            service.process_knowledge(
+                "session-retired-google",
+                document_text="Policy text for family support and childcare affordability.",
+            )
+        )
+
+    assert exc_info.value.status_code == 502
+    detail = str(exc_info.value.detail)
+    assert "provider 'google'" in detail
+    assert "model 'gemini-2.0-flash-lite'" in detail
+    assert "no longer available" in detail
+
+
+def test_console_service_summarizes_simulation_runtime_failures_without_run_log_noise(tmp_path):
+    settings = Settings(simulation_db_path=str(tmp_path / "sim.db"))
+    service = ConsoleService(settings)
+
+    raw_error = RuntimeError(
+        "Real OASIS simulation failed. "
+        "run_log=/tmp/oasis.log tail=Traceback ... ModuleNotFoundError: No module named 'camel'"
+    )
+
+    detail = service._summarize_simulation_failure(raw_error)
+
+    assert "run_log=" not in detail
+    assert "Traceback" not in detail
+    assert "missing required packages" in detail
 
 
 def test_console_service_get_dynamic_filters_live_mode_errors_when_dataset_missing(monkeypatch, tmp_path):
@@ -1027,6 +1073,15 @@ def test_v2_compat_providers_route_maps_gemini_and_falls_back_to_default_models(
         }
 
     def fake_list_provider_models(self, provider, *, api_key=None, base_url=None):  # noqa: ANN001, ANN202, ARG001
+        if provider == "google":
+            return {
+                "provider": "google",
+                "models": [
+                    {"id": "gemini-2.0-flash-lite", "label": "gemini-2.0-flash-lite"},
+                    {"id": "gemini-2.5-flash", "label": "gemini-2.5-flash"},
+                    {"id": "gemini-2.5-flash-lite", "label": "gemini-2.5-flash-lite"},
+                ],
+            }
         if provider == "ollama":
             return {"provider": "ollama", "models": [{"id": "qwen3:4b", "label": "qwen3:4b"}]}
         raise RuntimeError("provider unavailable")
@@ -1038,7 +1093,7 @@ def test_v2_compat_providers_route_maps_gemini_and_falls_back_to_default_models(
     assert response.status_code == 200, response.text
     body = response.json()
     assert [row["name"] for row in body] == ["gemini", "openai", "ollama"]
-    assert body[0]["models"] == ["gemini-2.5-flash-lite"]
+    assert body[0]["models"] == ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
     assert body[1]["models"] == ["gpt-5-mini"]
     assert body[2]["models"] == ["qwen3:4b"]
     assert body[0]["requires_api_key"] is True
@@ -1066,15 +1121,15 @@ name_regex: "^[A-Z].*$"
 """.strip(),
     )
     _write_text(
-        prompts_dir / "customer-review.yaml",
+        prompts_dir / "product-market-research.yaml",
         """
-name: "Customer Review"
-code: "customer-review"
-description: "Reviews"
+name: "Product & Market Research"
+code: "product-market-research"
+description: "Product research"
 guiding_prompt: "Prompt"
 agent_personality_modifiers: []
-checkpoint_questions: []
-report_sections: []
+analysis_questions: []
+preset_sections: []
 """.strip(),
     )
 
@@ -1153,6 +1208,7 @@ def test_v2_session_config_patch_route_persists_session_config(monkeypatch):
         model: str | None = None,
         api_key: str | None = None,
         guiding_prompt: str | None = None,
+        analysis_questions: list[dict[str, object]] | None = None,
     ):
         captured["session_id"] = session_id
         captured["country"] = country
@@ -1161,14 +1217,16 @@ def test_v2_session_config_patch_route_persists_session_config(monkeypatch):
         captured["model"] = model
         captured["api_key"] = api_key
         captured["guiding_prompt"] = guiding_prompt
+        captured["analysis_questions"] = analysis_questions
         return {
             "session_id": session_id,
             "country": country or "singapore",
-            "use_case": use_case or "policy-review",
+            "use_case": use_case or "public-policy-testing",
             "provider": provider or "google",
             "model": model or "gemini-2.5-flash-lite",
             "api_key_configured": bool(api_key),
             "guiding_prompt": guiding_prompt,
+            "analysis_questions": analysis_questions or [],
         }
 
     monkeypatch.setattr(ConsoleService, "update_v2_session_config", fake_update_v2_session_config)
@@ -1177,11 +1235,24 @@ def test_v2_session_config_patch_route_persists_session_config(monkeypatch):
         "/api/v2/session/session-config-1/config",
         json={
             "country": "singapore",
-            "use_case": "policy-review",
+            "use_case": "public-policy-testing",
             "provider": "gemini",
             "model": "gemini-2.0-flash",
             "api_key": "test-key",
             "guiding_prompt": "Focus on transport affordability for seniors.",
+            "analysis_questions": [
+                {
+                    "question": "Do you approve of this policy? Rate 1-10.",
+                    "type": "scale",
+                    "metric_name": "approval_rate",
+                    "metric_label": "Approval Rate",
+                    "metric_unit": "%",
+                    "threshold": 7,
+                    "threshold_direction": "gte",
+                    "report_title": "Policy Approval",
+                    "tooltip": "Share of respondents at or above 7/10.",
+                }
+            ],
         },
     )
 
@@ -1189,14 +1260,253 @@ def test_v2_session_config_patch_route_persists_session_config(monkeypatch):
     body = response.json()
     assert body["session_id"] == "session-config-1"
     assert body["country"] == "singapore"
-    assert body["use_case"] == "policy-review"
+    assert body["use_case"] == "public-policy-testing"
     assert body["provider"] == "gemini"
     assert body["model"] == "gemini-2.0-flash"
     assert body["api_key_configured"] is True
     assert "transport affordability" in body["guiding_prompt"]
+    assert body["analysis_questions"][0]["metric_name"] == "approval_rate"
     assert captured["country"] == "singapore"
-    assert captured["use_case"] == "policy-review"
+    assert captured["use_case"] == "public-policy-testing"
     assert captured["provider"] == "gemini"
+    assert captured["analysis_questions"][0]["report_title"] == "Policy Approval"
+
+
+def test_v2_console_prefix_session_config_patch_route_persists_session_config(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_update_v2_session_config(
+        self,
+        session_id: str,
+        *,
+        country: str | None = None,
+        use_case: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        guiding_prompt: str | None = None,
+        analysis_questions: list[dict[str, object]] | None = None,
+    ):
+        captured["session_id"] = session_id
+        captured["country"] = country
+        captured["use_case"] = use_case
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["api_key"] = api_key
+        captured["guiding_prompt"] = guiding_prompt
+        captured["analysis_questions"] = analysis_questions
+        return {
+            "session_id": session_id,
+            "country": country or "singapore",
+            "use_case": use_case or "public-policy-testing",
+            "provider": provider or "google",
+            "model": model or "gemini-2.5-flash-lite",
+            "api_key_configured": bool(api_key),
+            "guiding_prompt": guiding_prompt,
+            "analysis_questions": analysis_questions or [],
+        }
+
+    monkeypatch.setattr(ConsoleService, "update_v2_session_config", fake_update_v2_session_config)
+
+    response = client.patch(
+        "/api/v2/console/session/session-config-2/config",
+        json={
+            "country": "singapore",
+            "use_case": "public-policy-testing",
+            "provider": "gemini",
+            "model": "gemini-2.0-flash",
+            "api_key": "test-key",
+            "analysis_questions": [
+                {
+                    "question": "How useful would the $500 credits be for your household?",
+                    "type": "scale",
+                    "metric_name": "household_usefulness",
+                    "report_title": "Household Usefulness",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["session_id"] == "session-config-2"
+    assert body["provider"] == "gemini"
+    assert body["analysis_questions"][0]["metric_name"] == "household_usefulness"
+    assert captured["session_id"] == "session-config-2"
+    assert captured["analysis_questions"][0]["report_title"] == "Household Usefulness"
+
+
+def test_v2_generate_question_metadata_route_uses_sync_service_method(monkeypatch):
+    calls: dict[str, object] = {}
+
+    def fake_generate_metric_metadata_sync(self, question_text: str):
+        calls["question"] = question_text
+        return {
+            "question": question_text,
+            "type": "scale",
+            "metric_name": "approval_rate",
+            "metric_label": "Approval Rate",
+            "metric_unit": "%",
+            "threshold": 7,
+            "threshold_direction": "gte",
+            "report_title": "Policy Approval",
+            "tooltip": "Percentage rating at least 7/10.",
+        }
+
+    monkeypatch.setattr(
+        "mckainsey.services.question_metadata_service.QuestionMetadataService.generate_metric_metadata_sync",
+        fake_generate_metric_metadata_sync,
+    )
+
+    response = client.post(
+        "/api/v2/questions/generate-metadata",
+        json={"question": "Do you approve of this policy? Rate 1-10."},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert calls["question"] == "Do you approve of this policy? Rate 1-10."
+    assert body["metric_name"] == "approval_rate"
+    assert body["report_title"] == "Policy Approval"
+
+
+def test_v2_analysis_questions_route_returns_session_scoped_questions(monkeypatch):
+    def fake_get_session_analysis_questions(self, session_id: str):
+        assert session_id == "session-a"
+        return {
+            "session_id": session_id,
+            "use_case": "campaign-content-testing",
+            "questions": [
+                {
+                    "question": "Would you try this campaign? (yes/no)",
+                    "type": "yes-no",
+                    "metric_name": "conversion_intent",
+                    "metric_label": "Conversion Intent",
+                    "metric_unit": "%",
+                    "report_title": "Conversion Analysis",
+                    "tooltip": "Share of yes responses.",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(ConsoleService, "get_session_analysis_questions", fake_get_session_analysis_questions)
+
+    response = client.get("/api/v2/session/session-a/analysis-questions")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["use_case"] == "campaign-content-testing"
+    assert body["questions"][0]["metric_name"] == "conversion_intent"
+
+
+def test_console_service_v2_session_config_persists_analysis_questions(tmp_path, monkeypatch):
+    countries_dir = tmp_path / "countries"
+    prompts_dir = tmp_path / "prompts"
+    _write_text(
+        countries_dir / "singapore.yaml",
+        """
+name: "Singapore"
+code: "sg"
+flag_emoji: "🇸🇬"
+dataset_path: "/tmp/sg.parquet"
+available: true
+filter_fields: []
+""".strip(),
+    )
+    _write_text(
+        prompts_dir / "public-policy-testing.yaml",
+        """
+name: "Public Policy Testing"
+code: "public-policy-testing"
+analysis_questions:
+  - question: "Do you approve of this policy? Rate 1-10."
+    type: "scale"
+    metric_name: "approval_rate"
+    metric_label: "Approval Rate"
+    metric_unit: "%"
+    threshold: 7
+    threshold_direction: "gte"
+    report_title: "Policy Approval"
+    tooltip: "Share of respondents rating >= 7."
+""".strip(),
+    )
+
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "sim.db"),
+        config_countries_dir=str(countries_dir),
+        config_prompts_dir=str(prompts_dir),
+    )
+    service = ConsoleService(settings)
+
+    def fake_create_session(
+        self,
+        requested_session_id: str | None = None,
+        mode: str = "demo",
+        *,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        embed_model_name: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ):
+        del embed_model_name, base_url
+        session_id = requested_session_id or "session-v2-1"
+        self.store.upsert_console_session(
+            session_id=session_id,
+            mode=mode,
+            status="created",
+            model_provider=model_provider or "google",
+            model_name=model_name or "gemini-2.5-flash-lite",
+            embed_model_name="gemini-embedding-001",
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+        return {
+            "session_id": session_id,
+            "mode": mode,
+            "status": "created",
+            "model_provider": model_provider or "google",
+            "model_name": model_name or "gemini-2.5-flash-lite",
+            "embed_model_name": "gemini-embedding-001",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "api_key_configured": bool(api_key),
+            "api_key_masked": None,
+        }
+
+    monkeypatch.setattr(ConsoleService, "create_session", fake_create_session)
+
+    created = service.create_v2_session(
+        country="singapore",
+        use_case="public-policy-testing",
+        provider="google",
+        model="gemini-2.5-flash-lite",
+        session_id="session-v2-1",
+    )
+    assert created["session_id"] == "session-v2-1"
+
+    session_questions = service.get_session_analysis_questions("session-v2-1")
+    assert session_questions["use_case"] == "public-policy-testing"
+    assert session_questions["questions"][0]["metric_name"] == "approval_rate"
+
+    updated = service.update_v2_session_config(
+        "session-v2-1",
+        analysis_questions=[
+            {
+                "question": "What specific aspects do you support or oppose?",
+                "type": "open-ended",
+                "metric_name": "policy_viewpoints",
+                "report_title": "Key Viewpoints",
+                "tooltip": "Qualitative summary.",
+            }
+        ],
+    )
+    assert updated["analysis_questions"][0]["metric_name"] == "policy_viewpoints"
+    assert service.get_session_analysis_questions("session-v2-1")["questions"][0]["report_title"] == "Key Viewpoints"
+
+
+def test_console_service_defaults_to_canonical_v2_use_case(tmp_path):
+    settings = Settings(simulation_db_path=str(tmp_path / "sim.db"))
+    service = ConsoleService(settings)
+
+    assert service._session_use_case("missing-session") == "public-policy-testing"
 
 
 def test_console_service_group_chat_selects_top_n_from_requested_segment(monkeypatch, tmp_path):
@@ -1407,6 +1717,66 @@ def test_console_service_agent_chat_v2_passes_live_mode_to_memory_service(monkey
 
     assert payload["response"] == "live response"
     assert captured["live_mode"] is True
+
+
+def test_console_service_agent_chat_v2_includes_document_context_in_message(monkeypatch, tmp_path):
+    settings = Settings(simulation_db_path=str(tmp_path / "sim.db"))
+    service = ConsoleService(settings)
+
+    service.store.upsert_console_session(
+        session_id="session-live",
+        mode="live",
+        status="created",
+    )
+    monkeypatch.setattr(service, "_runtime_settings_for_session", lambda _session_id: settings)
+    monkeypatch.setattr(
+        service.store,
+        "get_console_session",
+        lambda session_id: {"session_id": session_id, "mode": "live", "status": "created"},
+    )
+    monkeypatch.setattr(
+        service.store,
+        "get_knowledge_artifact",
+        lambda session_id: {
+            "summary": "Sports voucher policy for families.",
+            "document": {"source_path": "/tmp/policy.pdf", "text_length": 4321},
+        },
+    )
+    monkeypatch.setattr(service.store, "append_interaction_transcript", lambda *args, **kwargs: None)
+
+    captured: dict[str, object] = {}
+
+    def fake_agent_chat_realtime(self, simulation_id: str, agent_id: str, message: str, live_mode: bool = False):
+        captured.update(
+            {
+                "simulation_id": simulation_id,
+                "agent_id": agent_id,
+                "message": message,
+                "live_mode": live_mode,
+            }
+        )
+        return {
+            "session_id": simulation_id,
+            "simulation_id": simulation_id,
+            "agent_id": agent_id,
+            "response": "live response",
+            "memory_used": True,
+            "model_provider": "google",
+            "model_name": "gemini-2.0-flash",
+            "gemini_model": "gemini-2.0-flash",
+            "zep_context_used": False,
+            "graphiti_context_used": False,
+            "memory_backend": "zep",
+        }
+
+    monkeypatch.setattr("mckainsey.services.console_service.MemoryService.agent_chat_realtime", fake_agent_chat_realtime)
+
+    payload = service.agent_chat_v2("session-live", "agent-001", "What changed your mind?")
+
+    assert payload["response"] == "live response"
+    assert captured["live_mode"] is True
+    assert "Sports voucher policy for families." in str(captured["message"])
+    assert "/tmp/policy.pdf" in str(captured["message"])
 
 
 def test_console_service_group_chat_uses_demo_fallback_when_demo_session(monkeypatch, tmp_path):

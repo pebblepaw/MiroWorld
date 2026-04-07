@@ -8,6 +8,7 @@ export interface ConsoleSessionModelConfigRequest {
   embed_model_name?: string;
   api_key?: string;
   base_url?: string;
+  analysis_questions?: Array<Record<string, unknown>>;
 }
 
 export interface ConsoleSessionModelConfigResponse {
@@ -69,6 +70,17 @@ export interface V2SessionCreateRequest {
 
 export interface V2SessionCreateResponse {
   session_id: string;
+}
+
+export interface V2SessionConfigResponse {
+  session_id: string;
+  country?: string | null;
+  use_case?: string | null;
+  provider?: ModelProviderId | V2ProviderId | null;
+  model?: string | null;
+  api_key_configured?: boolean;
+  guiding_prompt?: string | null;
+  analysis_questions?: Array<Record<string, unknown>>;
 }
 
 export interface ConsoleSessionResponse {
@@ -326,6 +338,11 @@ export interface StructuredReportState {
   status: string;
   generated_at?: string | null;
   executive_summary?: string | null;
+  quick_stats?: Record<string, unknown>;
+  metric_deltas?: Array<Record<string, unknown>>;
+  sections?: Array<Record<string, unknown>>;
+  insight_blocks?: Array<Record<string, unknown>>;
+  preset_sections?: Array<Record<string, unknown>>;
   insight_cards: Array<Record<string, unknown>>;
   support_themes: Array<Record<string, unknown>>;
   dissent_themes: Array<Record<string, unknown>>;
@@ -399,23 +416,29 @@ export function displayProviderId(provider: string | null | undefined): string {
 
 export function normalizeUseCaseId(useCase: string | null | undefined): string {
   const normalized = String(useCase ?? "").trim().toLowerCase();
-  if (normalized === "reviews") {
-    return "customer-review";
+  // V2 canonical names — pass through
+  if (normalized === "public-policy-testing" || normalized === "product-market-research" || normalized === "campaign-content-testing") {
+    return normalized;
   }
-  if (normalized === "pmf-discovery") {
-    return "product-market-fit";
-  }
+  // V1 backward compat
+  if (normalized === "policy-review") return "public-policy-testing";
+  if (normalized === "reviews" || normalized === "customer-review") return "product-market-research";
+  if (normalized === "pmf-discovery" || normalized === "product-market-fit") return "product-market-research";
+  if (normalized === "ad-testing") return "campaign-content-testing";
   return normalized;
 }
 
 export function displayUseCaseId(useCase: string | null | undefined): string {
   const normalized = String(useCase ?? "").trim().toLowerCase();
-  if (normalized === "customer-review") {
-    return "reviews";
+  // V2 canonical names — pass through as-is for display
+  if (normalized === "public-policy-testing" || normalized === "product-market-research" || normalized === "campaign-content-testing") {
+    return normalized;
   }
-  if (normalized === "product-market-fit") {
-    return "pmf-discovery";
-  }
+  // V1 backward compat
+  if (normalized === "policy-review") return "public-policy-testing";
+  if (normalized === "customer-review" || normalized === "reviews") return "product-market-research";
+  if (normalized === "product-market-fit" || normalized === "pmf-discovery") return "product-market-research";
+  if (normalized === "ad-testing") return "campaign-content-testing";
   return normalized;
 }
 
@@ -454,6 +477,30 @@ export async function createV2Session(payload: V2SessionCreateRequest): Promise<
       mode: payload.mode ?? getDefaultMode(),
       provider: normalizeProviderId(payload.provider),
       use_case: normalizeUseCaseId(payload.use_case),
+    }),
+  });
+  return parseJson(response);
+}
+
+export async function updateV2SessionConfig(
+  sessionId: string,
+  payload: {
+    country?: string;
+    use_case?: string;
+    provider?: string;
+    model?: string;
+    api_key?: string;
+    guiding_prompt?: string | null;
+    analysis_questions?: Array<Record<string, unknown>>;
+  },
+): Promise<V2SessionConfigResponse> {
+  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...payload,
+      provider: payload.provider ? normalizeProviderId(payload.provider) : undefined,
+      use_case: payload.use_case ? normalizeUseCaseId(payload.use_case) : undefined,
     }),
   });
   return parseJson(response);
@@ -632,6 +679,25 @@ export async function exportReportDocx(sessionId: string): Promise<Blob> {
   const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/report/export`);
   await ensureResponseOk(response);
   return response.blob();
+}
+
+export async function generateQuestionMetadata(
+  question: string,
+  useCase?: string,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(`${API_BASE}/api/v2/questions/generate-metadata`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, use_case: useCase }),
+  });
+  return parseJson(response);
+}
+
+export async function getAnalysisQuestions(
+  sessionId: string,
+): Promise<{ session_id: string; use_case: string; questions: Array<Record<string, unknown>> }> {
+  const response = await fetch(`${API_BASE}/api/v2/session/${sessionId}/analysis-questions`);
+  return parseJson(response);
 }
 
 export async function sendGroupChatMessage(

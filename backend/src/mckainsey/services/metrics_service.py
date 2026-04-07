@@ -99,7 +99,7 @@ def _row_id(row: dict[str, Any]) -> str:
 
 
 def _post_text(row: dict[str, Any]) -> str:
-    return _first_text(row, ("title", "content", "body", "summary"))
+    return _first_text(row, ("content", "body", "summary", "title"))
 
 
 def _is_discourse_interaction(row: dict[str, Any]) -> bool:
@@ -498,6 +498,16 @@ class MetricsService:
         self.config = config_service
 
     def _checkpoint_questions(self, use_case: str) -> list[dict[str, Any]]:
+        # Try new V2 analysis_questions first
+        getter = getattr(self.config, "get_analysis_questions", None)
+        if callable(getter):
+            try:
+                questions = getter(use_case)
+                if isinstance(questions, list) and questions:
+                    return [item for item in questions if isinstance(item, dict)]
+            except Exception:  # noqa: BLE001
+                pass
+        # Fallback to V1 checkpoint_questions
         getter = getattr(self.config, "get_checkpoint_questions", None)
         if callable(getter):
             try:
@@ -515,7 +525,7 @@ class MetricsService:
             return []
         if not isinstance(payload, dict):
             return []
-        questions = payload.get("checkpoint_questions", [])
+        questions = payload.get("analysis_questions", payload.get("checkpoint_questions", []))
         if not isinstance(questions, list):
             return []
         return [item for item in questions if isinstance(item, dict)]
@@ -527,10 +537,19 @@ class MetricsService:
         total_agents = max(len(agents), 1)
 
         for question in questions:
-            name = question["metric_name"]
-            label = question["display_label"]
+            q_type = question.get("type", "scale")
+            name = question.get("metric_name", "")
+            if not name:
+                continue
+            # V2 uses metric_label, V1 uses display_label
+            label = question.get("metric_label", question.get("display_label", name))
             field = f"checkpoint_{name}"
-            if question["type"] == "scale":
+
+            # Skip open-ended questions — no numeric metric to compute
+            if q_type == "open-ended":
+                continue
+
+            if q_type == "scale":
                 scores = [_as_float(agent.get(field, 5)) for agent in agents]
                 if "threshold" in question:
                     threshold = _as_float(question["threshold"], 7)
@@ -542,11 +561,13 @@ class MetricsService:
                     results[name] = {"value": round(pct, 1), "unit": "%", "label": label}
                 else:
                     results[name] = {"value": round(_mean(scores) if scores else 0.0, 1), "unit": "/10", "label": label}
-            elif question["type"] == "yes-no":
+            elif q_type == "yes-no":
                 yes_count = sum(1 for agent in agents if str(agent.get(field, "")).strip().lower() in {"yes", "y"})
                 pct = yes_count / total_agents * 100
                 results[name] = {"value": round(pct, 1), "unit": "%", "label": label}
         return results
+
+    # ── Existing analytics methods ──
 
     def compute_polarization_timeseries(self, agents_by_round: dict[int, list[dict[str, Any]]], group_key: str) -> list[dict[str, Any]]:
         return [{"round": round_no, **compute_group_polarization(agents, group_key)} for round_no, agents in agents_by_round.items()]
@@ -571,3 +592,268 @@ class MetricsService:
         top_n: int = 5,
     ) -> list[dict[str, Any]]:
         return select_group_chat_agents(agents, interactions, segment, top_n=top_n)
+
+    # ── New V2 insight-block methods ──
+
+    def compute_segment_heatmap(
+        self,
+        agents: list[dict[str, Any]],
+        analysis_questions: list[dict[str, Any]],
+        group_key: str = "planning_area",
+    ) -> dict[str, Any]:
+        """Compute metric scores broken out by demographic segment.
+
+        Returns a heatmap-ready structure: {segments: [{segment, metrics: {name: value}}]}.
+        Only quantitative analysis_questions are included.
+        """
+        quantitative = [q for q in analysis_questions if q.get("type") in ("scale", "yes-no")]
+        if not quantitative:
+            return {"status": "not_applicable", "reason": "No quantitative analysis questions to segment."}
+
+        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for agent in agents:
+            key = str(agent.get("persona", {}).get(group_key, "Unknown"))
+            groups[key].append(agent)
+
+        segments: list[dict[str, Any]] = []
+        for segment_name, segment_agents in sorted(groups.items(), key=lambda x: -len(x[1])):
+            metrics: dict[str, float] = {}
+            total = max(len(segment_agents), 1)
+            for q in quantitative:
+                field = f"checkpoint_{q['metric_name']}"
+                if q["type"] == "scale":
+                    scores = [_as_float(a.get(field, 5)) for a in segment_agents]
+                    if "threshold" in q:
+                        threshold = _as_float(q["threshold"], 7)
+                        metrics[q["metric_name"]] = round(sum(1 for s in scores if s >= threshold) / total * 100, 1)
+                    else:
+                        metrics[q["metric_name"]] = round(_mean(scores) if scores else 0.0, 1)
+                elif q["type"] == "yes-no":
+                    yes_count = sum(1 for a in segment_agents if str(a.get(field, "")).strip().lower() in {"yes", "y"})
+                    metrics[q["metric_name"]] = round(yes_count / total * 100, 1)
+            segments.append({"segment": segment_name, "count": len(segment_agents), "metrics": metrics})
+
+        return {"segments": segments[:15]}
+
+    def extract_pain_points(
+        self,
+        interactions: list[dict[str, Any]],
+        top_n: int = 5,
+    ) -> dict[str, Any]:
+        """Extract top pain points from negative-sentiment interactions.
+
+        Uses a simple heuristic: interactions with negative delta or dissenting stance.
+        Returns ranked list of complaint themes with frequency counts.
+        """
+        negative_content: list[str] = []
+        for row in interactions:
+            if not _is_discourse_interaction(row):
+                continue
+            delta = _as_float(row.get("delta", 0.0))
+            content = _clean_text(row.get("content") or row.get("body") or "")
+            if delta < 0 and content:
+                negative_content.append(content)
+
+        if not negative_content:
+            return {"status": "not_applicable", "reason": "No negative interactions found to extract pain points."}
+
+        # Simple keyword frequency extraction as a heuristic
+        # In production, this would use LLM-assisted theme extraction
+        word_freq: dict[str, int] = defaultdict(int)
+        stop_words = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "i", "my", "me",
+                       "this", "that", "it", "to", "of", "in", "for", "and", "or", "not", "with",
+                       "but", "on", "at", "by", "from", "as", "do", "does", "did", "have", "has",
+                       "will", "would", "could", "should", "can", "may", "no", "so", "if", "we"}
+        for text in negative_content:
+            words = text.lower().split()
+            for word in words:
+                cleaned = "".join(c for c in word if c.isalnum())
+                if len(cleaned) > 3 and cleaned not in stop_words:
+                    word_freq[cleaned] += 1
+
+        top_terms = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        pain_points = [{"term": term, "frequency": freq, "sample_count": len(negative_content)} for term, freq in top_terms]
+        return {"pain_points": pain_points, "total_negative_posts": len(negative_content)}
+
+    def extract_top_objections(
+        self,
+        agents: list[dict[str, Any]],
+        interactions: list[dict[str, Any]],
+        metric_name: str,
+        top_n: int = 5,
+    ) -> dict[str, Any]:
+        """Extract top objections from agents who scored low on a metric."""
+        field = f"checkpoint_{metric_name}"
+        low_agents = {
+            str(a.get("id") or a.get("agent_id"))
+            for a in agents
+            if _as_float(a.get(field, 5)) < 4
+        }
+
+        if not low_agents:
+            return {"status": "not_applicable", "reason": "No agents scored low enough to extract objections."}
+
+        objection_texts: list[dict[str, Any]] = []
+        for row in interactions:
+            if not _is_discourse_interaction(row):
+                continue
+            actor = _actor_id(row)
+            if actor in low_agents:
+                content = _clean_text(row.get("content") or row.get("body") or "")
+                if content:
+                    objection_texts.append({
+                        "agent_id": actor,
+                        "content": _summarize_text(content, 200),
+                        "round_no": _as_int(row.get("round_no", 0)),
+                    })
+
+        objection_texts.sort(key=lambda x: _engagement_score(x) if isinstance(x, dict) else 0, reverse=True)
+        return {"objections": objection_texts[:top_n], "low_scoring_agents": len(low_agents)}
+
+    def get_top_advocates(
+        self,
+        agents: list[dict[str, Any]],
+        interactions: list[dict[str, Any]],
+        metric_name: str | None = None,
+        top_n: int = 3,
+    ) -> dict[str, Any]:
+        """Get agents with highest scores on a given metric, plus their key posts."""
+        if metric_name:
+            field = f"checkpoint_{metric_name}"
+            scored = [(a, _as_float(a.get(field, 5))) for a in agents]
+        else:
+            scored = [(a, _as_float(a.get("opinion_post", 5))) for a in agents]
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        top_agents = scored[:top_n]
+
+        advocates: list[dict[str, Any]] = []
+        for agent, score in top_agents:
+            agent_id = str(agent.get("id") or agent.get("agent_id") or "")
+            # Find their best post
+            agent_posts = [
+                row for row in interactions
+                if _actor_id(row) == agent_id and _is_discourse_interaction(row)
+            ]
+            agent_posts.sort(key=lambda r: _engagement_score(r), reverse=True)
+            best_post = agent_posts[0] if agent_posts else {}
+            advocates.append({
+                "agent_id": agent_id,
+                "name": _agent_name(agent, agent_id),
+                "score": round(score, 1),
+                "key_post": _summarize_text(_post_text(best_post), 200) if best_post else None,
+                "persona_summary": _build_persona_summary(agent),
+            })
+
+        return {"advocates": advocates}
+
+    def get_viral_posts(
+        self,
+        interactions: list[dict[str, Any]],
+        top_n: int = 3,
+    ) -> dict[str, Any]:
+        """Get posts sorted by total engagement (likes + dislikes + comments)."""
+        posts = [
+            row for row in interactions
+            if str(row.get("action_type", "")).lower() in {"create_post", "post_created", "post"}
+        ]
+        if not posts:
+            return {"status": "not_applicable", "reason": "No posts found in simulation data."}
+
+        enriched: list[dict[str, Any]] = []
+        for post in posts:
+            engagement = _engagement_score(post)
+            likes, dislikes = _numeric_engagement(post)
+            enriched.append({
+                "post_id": _row_id(post),
+                "author": _actor_id(post),
+                "content": _summarize_text(_post_text(post), 200),
+                "likes": likes,
+                "dislikes": dislikes,
+                "engagement_score": round(engagement, 2),
+                "round_no": _as_int(post.get("round_no", 0)),
+            })
+
+        enriched.sort(key=lambda x: x["engagement_score"], reverse=True)
+        return {"viral_posts": enriched[:top_n]}
+
+    def compute_reaction_distribution(
+        self,
+        agents: list[dict[str, Any]],
+        metric_name: str,
+    ) -> dict[str, Any]:
+        """Compute histogram distribution of a metric across agents."""
+        field = f"checkpoint_{metric_name}"
+        scores = [_as_float(a.get(field, 5)) for a in agents]
+        if not scores:
+            return {"status": "not_applicable", "reason": "No scores found for this metric."}
+
+        # Build histogram buckets (1-10 scale)
+        buckets = {i: 0 for i in range(1, 11)}
+        for score in scores:
+            bucket = max(1, min(10, int(round(score))))
+            buckets[bucket] += 1
+
+        return {
+            "metric_name": metric_name,
+            "distribution": [{"score": k, "count": v} for k, v in sorted(buckets.items())],
+            "mean": round(_mean(scores), 2),
+            "total_agents": len(scores),
+        }
+
+    def compute_insight_block(
+        self,
+        block_type: str,
+        agents: list[dict[str, Any]],
+        interactions: list[dict[str, Any]],
+        analysis_questions: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Dispatch an insight block computation by type.
+
+        Returns the computed data, or a not_applicable status if data is insufficient.
+        """
+        try:
+            if block_type == "polarization_index":
+                return self.compute_group_polarization(agents, kwargs.get("group_key", "planning_area"))
+            elif block_type == "opinion_flow":
+                return self.compute_opinion_flow(agents)
+            elif block_type == "top_influencers":
+                return self.compute_influence(interactions, agents)
+            elif block_type == "viral_cascade":
+                posts = [r for r in interactions if str(r.get("action_type", "")).lower() in {"create_post", "post_created", "post"}]
+                comments = [r for r in interactions if "comment" in str(r.get("action_type", "")).lower()]
+                return compute_top_cascade(posts, comments, agents)
+            elif block_type == "segment_heatmap":
+                return self.compute_segment_heatmap(agents, analysis_questions, kwargs.get("group_key", "planning_area"))
+            elif block_type == "pain_points":
+                return self.extract_pain_points(interactions, top_n=kwargs.get("count", 5))
+            elif block_type == "top_advocates":
+                metric_ref = kwargs.get("metric_ref")
+                return self.get_top_advocates(agents, interactions, metric_name=metric_ref, top_n=kwargs.get("count", 3))
+            elif block_type == "competitive_mentions":
+                # Placeholder — would require LLM extraction in production
+                return {"status": "not_applicable", "reason": "Competitive mention extraction requires LLM analysis."}
+            elif block_type == "reaction_spectrum":
+                metric_ref = kwargs.get("metric_ref", "engagement_score")
+                return self.compute_reaction_distribution(agents, metric_ref)
+            elif block_type == "top_objections":
+                metric_ref = kwargs.get("metric_ref", "conversion_intent")
+                return self.extract_top_objections(agents, interactions, metric_ref, top_n=kwargs.get("count", 5))
+            elif block_type == "viral_posts":
+                return self.get_viral_posts(interactions, top_n=kwargs.get("count", 3))
+            else:
+                return {"status": "not_applicable", "reason": f"Unknown insight block type: {block_type}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "not_applicable", "reason": str(exc)}
+
+
+def _build_persona_summary(agent: dict[str, Any]) -> str:
+    """Build a short persona summary from agent data."""
+    persona = agent.get("persona", {})
+    parts: list[str] = []
+    for key in ("age", "occupation", "planning_area", "income_bracket"):
+        val = _clean_text(persona.get(key))
+        if val:
+            parts.append(val)
+    return ", ".join(parts) if parts else "Unknown"

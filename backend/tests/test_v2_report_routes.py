@@ -9,23 +9,49 @@ client = TestClient(app)
 
 def test_v2_report_route_returns_structured_payload(monkeypatch):
     def fake_get_v2_report(self, session_id: str):
-        raise AssertionError("legacy V2 report builder should not be used for /report")
-
-    def fake_get_report_full(self, session_id: str):
         assert session_id == "session-a"
         return {
             "session_id": session_id,
-            "status": "completed",
             "generated_at": "2026-04-06T09:00:00Z",
             "executive_summary": "Approval softened among lower-income cohorts after rounds 3-5.",
-            "insight_cards": [{"title": "Affordability became the dominant fault line", "summary": "Later rounds concentrated on cost pressure.", "severity": "high"}],
-            "support_themes": [{"theme": "targeting", "summary": "Targeted aid stayed credible among families.", "evidence": ["Targeted aid remains useful for families with children."]}],
-            "dissent_themes": [{"theme": "rent", "summary": "Housing costs kept surfacing as the main objection.", "evidence": ["Rent pressure offsets most benefits in mature estates."]}],
-            "demographic_breakdown": [{"segment": "Woodlands, lower-income", "approval_rate": 0.43, "dissent_rate": 0.38, "sample_size": 31}],
-            "influential_content": [{"content_type": "post", "author_agent_id": "agent-0002", "summary": "A cost-of-living post shaped the late-round shift.", "engagement_score": 18}],
-            "recommendations": [{"title": "Front-load affordability safeguards", "rationale": "Cost pressure is the clearest driver of dissent.", "priority": "high"}],
-            "risks": [{"title": "Lower-income backlash", "summary": "Affected cohorts may harden if implementation details lag.", "severity": "high"}],
+            "metric_deltas": [
+                {
+                    "metric_name": "approval_rate",
+                    "metric_label": "Approval Rate",
+                    "metric_unit": "%",
+                    "initial_value": 43.0,
+                    "final_value": 55.0,
+                    "delta": 12.0,
+                    "direction": "up",
+                    "report_title": "Policy Approval",
+                }
+            ],
+            "quick_stats": {"agent_count": 220, "round_count": 5, "model": "gemini-2.5-flash-lite", "provider": "google"},
+            "sections": [
+                {
+                    "question": "Do you approve of this policy? Rate 1-10.",
+                    "report_title": "Policy Approval",
+                    "type": "scale",
+                    "answer": "Approval rose once implementation details were clarified.",
+                    "evidence": [{"agent_id": "agent-002", "post_id": "post-22", "quote": "Details made it more acceptable."}],
+                    "metric": {
+                        "metric_name": "approval_rate",
+                        "metric_label": "Approval Rate",
+                        "metric_unit": "%",
+                        "initial_value": 43.0,
+                        "final_value": 55.0,
+                        "delta": 12.0,
+                        "direction": "up",
+                        "report_title": "Policy Approval",
+                    },
+                }
+            ],
+            "insight_blocks": [{"type": "polarization_index", "title": "Polarization Over Time", "description": "How divided opinions became.", "data": {"status": "ok"}}],
+            "preset_sections": [{"title": "Recommendations", "answer": "Prioritize affordability safeguards."}],
         }
+
+    def fake_get_report_full(self, session_id: str):
+        raise AssertionError("legacy ReportFullResponse path should not be used for /report")
 
     monkeypatch.setattr(ConsoleService, "get_v2_report", fake_get_v2_report)
     monkeypatch.setattr(ConsoleService, "get_report_full", fake_get_report_full)
@@ -34,10 +60,10 @@ def test_v2_report_route_returns_structured_payload(monkeypatch):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["session_id"] == "session-a"
-    assert body["status"] == "completed"
     assert body["executive_summary"] == "Approval softened among lower-income cohorts after rounds 3-5."
-    assert body["insight_cards"][0]["title"] == "Affordability became the dominant fault line"
-    assert body["recommendations"][0]["priority"] == "high"
+    assert body["metric_deltas"][0]["metric_name"] == "approval_rate"
+    assert body["sections"][0]["report_title"] == "Policy Approval"
+    assert body["insight_blocks"][0]["type"] == "polarization_index"
 
 
 def test_v2_report_export_route_streams_docx(monkeypatch):

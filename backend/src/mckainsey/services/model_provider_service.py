@@ -13,6 +13,10 @@ from mckainsey.config import Settings
 
 
 SUPPORTED_PROVIDERS = ("google", "openrouter", "openai", "ollama")
+UNSUPPORTED_GOOGLE_MODELS = frozenset({
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash-lite-001",
+})
 
 
 @dataclass
@@ -51,6 +55,51 @@ def mask_api_key(value: str | None) -> str | None:
     if len(value) <= 8:
         return "*" * len(value)
     return f"{value[:4]}...{value[-4:]}"
+
+
+def provider_model_unavailability_hint(provider: str | None, model_name: str | None) -> str | None:
+    resolved_provider = normalize_provider(provider)
+    normalized_model = str(model_name or "").strip().lower()
+
+    if resolved_provider == "google" and normalized_model in UNSUPPORTED_GOOGLE_MODELS:
+        return (
+            f"Google API error: model '{model_name}' is no longer available to new users. "
+            "Choose a current Gemini model such as 'gemini-2.5-flash-lite'."
+        )
+
+    return None
+
+
+def curate_provider_models(
+    provider: str | None,
+    models: list[str],
+    *,
+    default_model: str | None = None,
+) -> list[str]:
+    resolved_provider = normalize_provider(provider)
+    curated: list[str] = []
+    seen: set[str] = set()
+
+    for model_id in models:
+        candidate = str(model_id or "").strip()
+        if not candidate:
+            continue
+        normalized_candidate = candidate.lower()
+        if resolved_provider == "google" and normalized_candidate in UNSUPPORTED_GOOGLE_MODELS:
+            continue
+        if normalized_candidate in seen:
+            continue
+        seen.add(normalized_candidate)
+        curated.append(candidate)
+
+    preferred = str(default_model or "").strip()
+    if preferred:
+        preferred_lower = preferred.lower()
+        if preferred_lower in {item.lower() for item in curated}:
+            curated = [item for item in curated if item.lower() != preferred_lower]
+            curated.insert(0, preferred)
+
+    return curated
 
 
 def resolve_model_selection(
@@ -191,6 +240,14 @@ def _list_openai_compatible_models(selection: ResolvedModelSelection) -> list[di
         models.append({"id": model_id, "label": model_id})
 
     models.sort(key=lambda row: row["id"])
+    ordered_ids = curate_provider_models(
+        selection.provider,
+        [str(item["id"]) for item in models],
+        default_model=selection.model_name,
+    )
+    if ordered_ids:
+        rank = {model_id: index for index, model_id in enumerate(ordered_ids)}
+        models.sort(key=lambda row: rank.get(str(row["id"]), len(rank)))
     return models
 
 
@@ -221,7 +278,14 @@ def _list_google_models(selection: ResolvedModelSelection) -> list[dict[str, Any
             continue
         models.append({"id": model_id, "label": model_id})
 
-    models.sort(key=lambda row: row["id"])
+    ordered_ids = curate_provider_models(
+        selection.provider,
+        [str(item["id"]) for item in models],
+        default_model=selection.model_name,
+    )
+    rank = {model_id: index for index, model_id in enumerate(ordered_ids)}
+    models = [item for item in models if str(item["id"]) in rank]
+    models.sort(key=lambda row: rank.get(str(row["id"]), len(rank)))
     return models
 
 
@@ -246,6 +310,14 @@ def _list_ollama_models(selection: ResolvedModelSelection) -> list[dict[str, Any
         models.append({"id": model_id, "label": model_id})
 
     models.sort(key=lambda row: row["id"])
+    ordered_ids = curate_provider_models(
+        selection.provider,
+        [str(item["id"]) for item in models],
+        default_model=selection.model_name,
+    )
+    if ordered_ids:
+        rank = {model_id: index for index, model_id in enumerate(ordered_ids)}
+        models.sort(key=lambda row: rank.get(str(row["id"]), len(rank)))
     return models
 
 

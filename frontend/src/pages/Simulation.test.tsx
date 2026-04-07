@@ -108,6 +108,85 @@ function SimulationPostsProbe() {
   );
 }
 
+function SeedPersistedSimulationPosts() {
+  const {
+    setSessionId,
+    setKnowledgeArtifact,
+    setKnowledgeGraphReady,
+    setPopulationArtifact,
+    setAgentsGenerated,
+    setSimPosts,
+  } = useApp();
+
+  useEffect(() => {
+    setSessionId("session-screen3-persisted");
+    setKnowledgeGraphReady(true);
+    setKnowledgeArtifact({
+      session_id: "session-screen3-persisted",
+      document: {
+        document_id: "doc-persisted",
+        file_name: "persisted.pdf",
+        file_type: "application/pdf",
+        text_length: 1200,
+        paragraph_count: 4,
+      },
+      summary: "Persisted knowledge for navigation rehydration.",
+      entity_nodes: [],
+      relationship_edges: [],
+      entity_type_counts: {},
+      processing_logs: [],
+    });
+    setPopulationArtifact({
+      session_id: "session-screen3-persisted",
+      candidate_count: 50,
+      sample_count: 1,
+      sample_mode: "affected_groups",
+      sample_seed: 7,
+      parsed_sampling_instructions: {
+        hard_filters: {},
+        soft_boosts: {},
+        soft_penalties: {},
+        exclusions: {},
+        distribution_targets: {},
+        notes_for_ui: [],
+      },
+      coverage: { planning_areas: ["Woodlands"], age_buckets: { "20-29": 1 } },
+      sampled_personas: [],
+      agent_graph: { nodes: [], links: [] },
+      representativeness: { status: "balanced" },
+      selection_diagnostics: {},
+    });
+    setAgentsGenerated(true);
+    setSimPosts([
+      {
+        id: "persisted-post-1",
+        agentId: "agent-persisted-1",
+        agentName: "Persisted Author",
+        agentOccupation: "Teacher",
+        agentArea: "Woodlands",
+        title: "Persisted thread title",
+        content: "Persisted thread body",
+        upvotes: 9,
+        downvotes: 1,
+        commentCount: 2,
+        round: 2,
+        timestamp: "Round 2",
+        comments: [
+          {
+            id: "persisted-comment-1",
+            agentName: "Persisted Commenter",
+            agentOccupation: "Nurse",
+            content: "Persisted comment body",
+            upvotes: 3,
+          },
+        ],
+      },
+    ]);
+  }, [setAgentsGenerated, setKnowledgeArtifact, setKnowledgeGraphReady, setPopulationArtifact, setSessionId, setSimPosts]);
+
+  return null;
+}
+
 describe("Simulation", () => {
   const originalFetch = global.fetch;
   const originalEventSource = global.EventSource;
@@ -212,6 +291,20 @@ describe("Simulation", () => {
     expect(screen.getByTestId("sim-post-count")).toHaveTextContent("1");
     expect(screen.getByTestId("sim-post-title")).toHaveTextContent("Sports access matters");
     expect(screen.getAllByText("1").length).toBeGreaterThan(1);
+  });
+
+  it("rehydrates persisted simulation posts when the screen remounts", async () => {
+    render(
+      <AppProvider>
+        <SeedPersistedSimulationPosts />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Persisted thread title")).toBeInTheDocument();
+    expect(screen.getByText("Persisted thread body")).toBeInTheDocument();
+    expect(screen.getByText("Persisted Author")).toBeInTheDocument();
+    expect(screen.getByText("Persisted Commenter")).toBeInTheDocument();
   });
 
   it("sends a 0.5 controversy boost when the binary toggle is enabled", async () => {
@@ -330,5 +423,35 @@ describe("Simulation", () => {
     expect(await screen.findByText("live simulation unavailable")).toBeInTheDocument();
     expect(screen.getByText("Simulation Error")).toBeInTheDocument();
     expect(screen.queryByText(/Demo simulation loaded/i)).not.toBeInTheDocument();
+  });
+
+  it("maps long runtime tracebacks to a short simulation error message", async () => {
+    render(
+      <AppProvider>
+        <SeedStage3Context />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /start simulation/i }));
+
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.emit("run_failed", {
+        event_type: "run_failed",
+        error:
+          "Real OASIS simulation failed. run_log=/tmp/oasis.log tail=Traceback ... "
+          + "ModuleNotFoundError: No module named 'camel' process_exit_code=1",
+      });
+    });
+
+    expect(
+      await screen.findByText(
+        "Simulation runtime is unavailable because the OASIS Python environment is missing required packages.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/run_log=\/tmp\/oasis\.log/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ModuleNotFoundError/i)).not.toBeInTheDocument();
   });
 });

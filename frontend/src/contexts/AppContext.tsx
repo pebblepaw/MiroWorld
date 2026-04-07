@@ -2,6 +2,21 @@ import React, { createContext, useCallback, useContext, useMemo, useState, React
 import { Agent, SimPost } from '@/data/mockData';
 import { KnowledgeArtifact, ModelProviderId, PopulationArtifact } from '@/lib/console-api';
 
+export type AnalysisQuestion = {
+  question: string;
+  type: 'scale' | 'yes-no' | 'open-ended';
+  metric_name: string;
+  metric_label?: string;
+  metric_unit?: string;
+  threshold?: number;
+  threshold_direction?: string;
+  report_title: string;
+  tooltip?: string;
+  /** 'preset' = from config YAML, 'custom' = user-created */
+  source?: 'preset' | 'custom';
+  /** metadata generation status for custom questions */
+  metadataStatus?: 'pending' | 'loading' | 'ready' | 'error';
+};
 type ChatHistoryEntry = {
   role: 'user' | 'agent';
   content: string;
@@ -20,7 +35,7 @@ interface AppState {
   modelApiKey: string;
   modelBaseUrl: string;
   uploadedFiles: File[];
-  guidingPrompts: string[];
+  analysisQuestions: AnalysisQuestion[];
   knowledgeGraphReady: boolean;
   knowledgeArtifact: KnowledgeArtifact | null;
   knowledgeLoading: boolean;
@@ -54,10 +69,10 @@ interface AppContextType extends AppState {
   setUploadedFiles: (files: File[]) => void;
   addUploadedFile: (file: File) => void;
   removeUploadedFile: (index: number) => void;
-  setGuidingPrompts: (prompts: string[]) => void;
-  addGuidingPrompt: () => void;
-  updateGuidingPrompt: (index: number, value: string) => void;
-  removeGuidingPrompt: (index: number) => void;
+  setAnalysisQuestions: (questions: AnalysisQuestion[]) => void;
+  addAnalysisQuestion: (question: AnalysisQuestion) => void;
+  updateAnalysisQuestion: (index: number, question: AnalysisQuestion) => void;
+  removeAnalysisQuestion: (index: number) => void;
   setKnowledgeGraphReady: (ready: boolean) => void;
   setKnowledgeArtifact: (artifact: KnowledgeArtifact | null) => void;
   setKnowledgeLoading: (loading: boolean) => void;
@@ -85,14 +100,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     completedSteps: [],
     sessionId: null,
     country: 'singapore',
-    useCase: 'policy-review',
+    useCase: 'public-policy-testing',
     modelProvider: 'ollama',
     modelName: 'qwen3:4b-instruct-2507-q4_K_M',
     embedModelName: 'nomic-embed-text',
     modelApiKey: '',
     modelBaseUrl: 'http://127.0.0.1:11434/v1/',
     uploadedFiles: [],
-    guidingPrompts: [''],
+    analysisQuestions: [],
     knowledgeGraphReady: false,
     knowledgeArtifact: null,
     knowledgeLoading: false,
@@ -128,15 +143,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setUploadedFiles = useCallback((files: File[]) => setState(s => ({ ...s, uploadedFiles: files })), []);
   const addUploadedFile = useCallback((file: File) => setState(s => ({ ...s, uploadedFiles: [...s.uploadedFiles, file] })), []);
   const removeUploadedFile = useCallback((index: number) => setState(s => ({ ...s, uploadedFiles: s.uploadedFiles.filter((_, i) => i !== index) })), []);
-  const setGuidingPrompts = useCallback((prompts: string[]) => setState(s => ({ ...s, guidingPrompts: prompts })), []);
-  const addGuidingPrompt = useCallback(() => setState(s => ({ ...s, guidingPrompts: [...s.guidingPrompts, ''] })), []);
-  const updateGuidingPrompt = useCallback((index: number, value: string) => setState(s => ({
+  const setAnalysisQuestions = useCallback((questions: AnalysisQuestion[]) => setState(s => ({ ...s, analysisQuestions: questions })), []);
+  const addAnalysisQuestion = useCallback((question: AnalysisQuestion) => setState(s => ({ ...s, analysisQuestions: [...s.analysisQuestions, question] })), []);
+  const updateAnalysisQuestion = useCallback((index: number, question: AnalysisQuestion) => setState(s => ({
     ...s,
-    guidingPrompts: s.guidingPrompts.map((p, i) => i === index ? value : p),
+    analysisQuestions: s.analysisQuestions.map((q, i) => i === index ? question : q),
   })), []);
-  const removeGuidingPrompt = useCallback((index: number) => setState(s => ({
+  const removeAnalysisQuestion = useCallback((index: number) => setState(s => ({
     ...s,
-    guidingPrompts: s.guidingPrompts.filter((_, i) => i !== index),
+    analysisQuestions: s.analysisQuestions.filter((_, i) => i !== index),
   })), []);
   const setKnowledgeGraphReady = useCallback((ready: boolean) => setState(s => ({ ...s, knowledgeGraphReady: ready })), []);
   const setKnowledgeArtifact = useCallback((knowledgeArtifact: KnowledgeArtifact | null) => setState(s => ({ ...s, knowledgeArtifact })), []);
@@ -179,10 +194,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUploadedFiles,
     addUploadedFile,
     removeUploadedFile,
-    setGuidingPrompts,
-    addGuidingPrompt,
-    updateGuidingPrompt,
-    removeGuidingPrompt,
+    setAnalysisQuestions,
+    addAnalysisQuestion,
+    updateAnalysisQuestion,
+    removeAnalysisQuestion,
     setKnowledgeGraphReady,
     setKnowledgeArtifact,
     setKnowledgeLoading,
@@ -213,10 +228,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUploadedFiles,
     addUploadedFile,
     removeUploadedFile,
-    setGuidingPrompts,
-    addGuidingPrompt,
-    updateGuidingPrompt,
-    removeGuidingPrompt,
+    setAnalysisQuestions,
+    addAnalysisQuestion,
+    updateAnalysisQuestion,
+    removeAnalysisQuestion,
     setKnowledgeGraphReady,
     setKnowledgeArtifact,
     setKnowledgeLoading,

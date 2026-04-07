@@ -31,7 +31,6 @@ from mckainsey.models.console import (
     PopulationArtifactResponse,
     PopulationPreviewRequest,
     ReportFrictionMapResponse,
-    ReportFullResponse,
     ReportOpinionsResponse,
     SimulationStartRequest,
     SimulationQuickStartRequest,
@@ -133,20 +132,27 @@ def v2_session_create(
 
 
 @compat_router.patch("/session/{session_id}/config", response_model=V2SessionConfigResponse)
+@router.patch("/session/{session_id}/config", response_model=V2SessionConfigResponse)
 def v2_session_update_config(
     session_id: str,
     req: V2SessionConfigPatchRequest,
     settings: Settings = Depends(get_settings),
 ) -> V2SessionConfigResponse:
     try:
+        normalized_use_case = req.use_case
+        if req.use_case is not None:
+            normalized_use_case = str(
+                ConfigService(settings).get_use_case(req.use_case).get("code", req.use_case)
+            ).strip().lower()
         payload = ConsoleService(settings).update_v2_session_config(
             session_id,
             country=req.country,
-            use_case=req.use_case,
+            use_case=normalized_use_case,
             provider=req.provider,
             model=req.model,
             api_key=req.api_key,
             guiding_prompt=req.guiding_prompt,
+            analysis_questions=req.analysis_questions,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -457,18 +463,18 @@ def simulation_stream(
     return StreamingResponse(stream, media_type="text/event-stream")
 
 
-@router.get("/session/{session_id}/report", response_model=ReportFullResponse)
+@router.get("/session/{session_id}/report", response_model=V2ReportResponse)
 def v2_report(
     session_id: str,
     settings: Settings = Depends(get_settings),
-) -> ReportFullResponse:
+) -> V2ReportResponse:
     try:
-        payload = ConsoleService(settings).get_report_full(session_id)
+        payload = ConsoleService(settings).get_v2_report(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return ReportFullResponse(**payload)
+    return V2ReportResponse(**payload)
 
 
 @router.get("/session/{session_id}/report/export")
@@ -526,34 +532,34 @@ def v2_agent_chat(
     return V2AgentChatResponse(**payload)
 
 
-@router.get("/session/{session_id}/report/full", response_model=ReportFullResponse)
+@router.get("/session/{session_id}/report/full", response_model=V2ReportResponse)
 def report_full(
     session_id: str,
     settings: Settings = Depends(get_settings),
-) -> ReportFullResponse:
+) -> V2ReportResponse:
     # Check if demo mode with cached data
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         demo_service = _get_demo_service(settings)
         report = demo_service.get_report(session_id)
         if report:
-            return ReportFullResponse(**report)
-    
-    return ReportFullResponse(**ConsoleService(settings).get_report_full(session_id))
+            return V2ReportResponse(**report)
+
+    return V2ReportResponse(**ConsoleService(settings).get_v2_report(session_id))
 
 
-@router.post("/session/{session_id}/report/generate", response_model=ReportFullResponse)
+@router.post("/session/{session_id}/report/generate", response_model=V2ReportResponse)
 def report_generate(
     session_id: str,
     settings: Settings = Depends(get_settings),
-) -> ReportFullResponse:
+) -> V2ReportResponse:
     # Check if demo mode with cached data
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         demo_service = _get_demo_service(settings)
         report = demo_service.get_report(session_id)
         if report:
-            return ReportFullResponse(**report)
-    
-    return ReportFullResponse(**ConsoleService(settings).generate_report(session_id))
+            return V2ReportResponse(**report)
+
+    return V2ReportResponse(**ConsoleService(settings).generate_v2_report(session_id))
 
 
 @router.get("/session/{session_id}/report/opinions", response_model=ReportOpinionsResponse)
@@ -623,3 +629,30 @@ def interaction_hub_agent_chat(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ConsoleAgentChatResponse(**payload)
+
+
+@compat_router.post("/questions/generate-metadata")
+def generate_question_metadata(
+    req: dict[str, Any] = Body(...),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Generate metric metadata for a custom analysis question using LLM."""
+    question = str(req.get("question", "")).strip()
+    if not question:
+        raise HTTPException(status_code=422, detail="'question' field is required.")
+    try:
+        from mckainsey.services.question_metadata_service import QuestionMetadataService
+        service = QuestionMetadataService(settings)
+        metadata = service.generate_metric_metadata_sync(question)
+        return metadata
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@compat_router.get("/session/{session_id}/analysis-questions")
+def get_analysis_questions(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Get the analysis questions configured for a session's use case."""
+    return ConsoleService(settings).get_session_analysis_questions(session_id)

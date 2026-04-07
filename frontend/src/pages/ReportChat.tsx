@@ -397,16 +397,18 @@ export default function ReportChat() {
     setProfileAgent(null);
   }, []);
 
-  const headerAgentCount = agents.length > 0 ? String(agents.length) : (liveMode ? '—' : '250');
-  const initialApproval = liveMode
-    ? getReportMetricDisplay(report, ['initial_approval', 'initial_approval_rate', 'approval_rate'], 'percent')
-    : '65%';
-  const finalApproval = liveMode
-    ? getReportMetricDisplay(report, ['final_approval', 'final_approval_rate'])
-    : '34%';
-  const agentsSimulated = liveMode
-    ? getReportMetricDisplay(report, ['agent_count', 'agents_simulated', 'simulation_agents', 'population_size'], 'count')
-    : '250';
+  const openEvidenceDrilldown = useCallback((agentId: string) => {
+    const agent = agentsById.get(agentId);
+    if (!agent) {
+      return;
+    }
+    openOneToOneChat(agent);
+    setProfileAgent(agent);
+  }, [agentsById, openOneToOneChat]);
+
+  const reportQuickStats = (report.quick_stats ?? {}) as Record<string, unknown>;
+  const reportAgentCount = String(reportQuickStats.agent_count ?? reportQuickStats.agents_simulated ?? reportQuickStats.population_size ?? (agents.length > 0 ? agents.length : '—'));
+  const reportRoundCount = String(reportQuickStats.round_count ?? simulationRounds);
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-background">
@@ -415,7 +417,7 @@ export default function ReportChat() {
         <div>
           <h2 className="text-lg font-semibold text-foreground tracking-tight">Analysis Report</h2>
           <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-            {formatCountry(country)} · {formatUseCase(useCase)} · {headerAgentCount} agents · {simulationRounds} rounds
+            {formatCountry(country)} · {formatUseCase(useCase)} · {reportAgentCount} agents · {reportRoundCount} rounds
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -466,19 +468,149 @@ export default function ReportChat() {
                   <p className="text-sm text-foreground/80 leading-relaxed">
                     {report.executive_summary || 'No summary available.'}
                   </p>
-                  {/* Quick stats */}
-                  <div className="mt-4 pt-4 border-t border-border flex items-center gap-6">
-                    <QuickStat label="Initial Approval" value={initialApproval} color="hsl(var(--data-green))" />
-                    <ArrowRight className="w-4 h-4 text-muted-foreground" />
-                    <QuickStat label="Final Approval" value={finalApproval} color="hsl(var(--data-red))" />
-                    <div className="ml-auto">
-                      <QuickStat label="Agents Simulated" value={agentsSimulated} />
-                    </div>
+                  {/* Quick stats from new structure */}
+                  <div className="mt-4 pt-4 border-t border-border flex items-center gap-6 flex-wrap">
+                    <QuickStat label="Agents Simulated" value={reportAgentCount} />
+                    <QuickStat label="Rounds" value={reportRoundCount} />
                   </div>
                 </section>
 
-                {/* Insight Cards */}
-                {report.insight_cards && report.insight_cards.length > 0 && (
+                {/* Metric Deltas (from analysis_questions) */}
+                {(report as any).metric_deltas && (report as any).metric_deltas.length > 0 && (
+                  <section>
+                    <span className="label-meta block mb-3">Key Metrics</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {((report as any).metric_deltas as any[]).map((delta: any, i: number) => (
+                        <div key={i} className="surface-card p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+                              {formatPlainText(delta.metric_label || delta.metric_name)}
+                            </span>
+                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                              delta.direction === 'up' ? 'bg-emerald-500/10 text-emerald-400' :
+                              delta.direction === 'down' ? 'bg-red-500/10 text-red-400' :
+                              'bg-white/5 text-muted-foreground'
+                            }`}>
+                              {delta.direction === 'up' ? '▲' : delta.direction === 'down' ? '▼' : '—'} {formatMetricDelta(delta.delta, delta.metric_unit, delta.type)}
+                            </span>
+                          </div>
+                          <div className="flex items-baseline gap-2 text-sm">
+                            <span className="font-mono font-medium text-foreground">
+                              {formatMetricValue(delta.initial_value, delta.metric_unit, delta.type)}
+                              {' -> '}
+                              {formatMetricValue(delta.final_value, delta.metric_unit, delta.type)}
+                            </span>
+                          </div>
+                          {delta.report_title && (
+                            <p className="text-[10px] text-muted-foreground mt-1">{formatPlainText(delta.report_title)}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Analysis Question Sections */}
+                {(report as any).sections && (report as any).sections.length > 0 && (
+                  <section className="space-y-4">
+                    <span className="label-meta block">Analysis Findings</span>
+                    {((report as any).sections as any[]).map((section: any, i: number) => (
+                      <div key={i} className="surface-card p-5">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider ${
+                            section.type === 'scale' ? 'bg-blue-500/10 text-blue-400' :
+                            section.type === 'yes-no' ? 'bg-emerald-500/10 text-emerald-400' :
+                            'bg-white/5 text-muted-foreground'
+                          }`}>
+                            {formatPlainText(section.type || 'open-ended')}
+                          </span>
+                          <span className="text-sm font-medium text-foreground">{formatPlainText(section.report_title || section.question)}</span>
+                        </div>
+                        {section.metric && (
+                          <div className="flex items-center gap-3 mb-3 px-3 py-2 rounded bg-white/[0.03] border border-white/5">
+                            <span className="text-lg font-mono font-medium text-foreground">
+                              {formatMetricValue(section.metric.initial_value, section.metric.metric_unit, section.type)}
+                              {' -> '}
+                              {formatMetricValue(section.metric.final_value, section.metric.metric_unit, section.type)}
+                            </span>
+                            <span className={`text-sm font-mono ${
+                              section.metric.direction === 'up' ? 'text-emerald-400' :
+                              section.metric.direction === 'down' ? 'text-red-400' :
+                              'text-muted-foreground'
+                            }`}>
+                              {formatMetricDelta(section.metric.delta, section.metric.metric_unit, section.type)}
+                            </span>
+                          </div>
+                        )}
+                        <p className="text-xs text-foreground/80 leading-relaxed">{formatPlainText(section.answer)}</p>
+                        {Array.isArray(section.evidence) && section.evidence.length > 0 && (
+                          <div className="mt-4 space-y-2 border-t border-border pt-3">
+                            <div className="label-meta">Evidence</div>
+                            {section.evidence.slice(0, 4).map((item: any, evidenceIndex: number) => (
+                              <div key={`${item.agent_id || 'evidence'}-${evidenceIndex}`} className="rounded border border-white/10 bg-white/[0.02] p-3">
+                                <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                                  {item.agent_id ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => openEvidenceDrilldown(String(item.agent_id))}
+                                      className="text-foreground underline-offset-2 hover:underline"
+                                    >
+                                      {resolveAgentDisplayName(String(item.agent_id), agentsById) ?? String(item.agent_id)}
+                                    </button>
+                                  ) : (
+                                    <span>Unknown agent</span>
+                                  )}
+                                  {item.post_id && <span>· {String(item.post_id)}</span>}
+                                </div>
+                                <p className="text-xs leading-relaxed text-foreground/80">{String(item.quote || item.content || '')}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </section>
+                )}
+
+                {/* Insight Blocks */}
+                {(report as any).insight_blocks && (report as any).insight_blocks.length > 0 && (
+                  <section className="space-y-4">
+                    <span className="label-meta block">Insight Blocks</span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {((report as any).insight_blocks as any[]).map((block: any, i: number) => (
+                        <div key={i} className="surface-card p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <BadgeCheck className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-sm font-medium text-foreground">{block.title}</span>
+                          </div>
+                          {block.description && (
+                            <p className="text-xs text-muted-foreground mb-3">{block.description}</p>
+                          )}
+                          {block.data && block.data.status !== 'not_applicable' ? (
+                            <InsightBlockData data={block.data} type={block.type} />
+                          ) : (
+                            <p className="text-xs text-muted-foreground/50 italic">Not applicable for this use case.</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Preset Sections */}
+                {(report as any).preset_sections && (report as any).preset_sections.length > 0 && (
+                  <section className="space-y-4">
+                    {((report as any).preset_sections as any[]).map((preset: any, i: number) => (
+                      <div key={i} className="surface-card p-5">
+                        <span className="label-meta block mb-3">{formatPlainText(preset.title)}</span>
+                        <p className="text-sm text-foreground/80 leading-relaxed">{formatPlainText(preset.answer)}</p>
+                      </div>
+                    ))}
+                  </section>
+                )}
+
+                {/* Legacy fallback: Insight Cards */}
+                {report.insight_cards && report.insight_cards.length > 0 && !(report as any).metric_deltas && (
                   <section>
                     <span className="label-meta block mb-3">Key Insights</span>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -492,47 +624,24 @@ export default function ReportChat() {
                   </section>
                 )}
 
-                {/* Supporting vs Dissenting */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <ThemeCard
-                    title="Supporting Views"
-                    color="hsl(var(--data-green))"
-                    themes={report.support_themes}
-                  />
-                  <ThemeCard
-                    title="Dissenting Views"
-                    color="hsl(var(--data-red))"
-                    themes={report.dissent_themes}
-                  />
-                </div>
-
-                {/* Demographic Breakdown */}
-                {report.demographic_breakdown && report.demographic_breakdown.length > 0 && (
-                  <section className="surface-card p-5">
-                    <span className="label-meta block mb-4">Demographic Breakdown</span>
-                    <div className="space-y-3">
-                      {report.demographic_breakdown.map((row: any, i: number) => (
-                        <div key={i} className="flex items-center gap-3">
-                          <span className="text-xs font-mono text-muted-foreground w-16">{row.group}</span>
-                          <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all duration-500"
-                              style={{
-                                width: `${row.approval}%`,
-                                backgroundColor: row.approval >= 50 ? 'hsl(var(--data-green))' : 'hsl(var(--data-red))',
-                              }}
-                            />
-                          </div>
-                          <span className="text-xs font-mono text-foreground w-10 text-right">{row.approval}%</span>
-                          <span className="text-[10px] font-mono text-muted-foreground w-12">n={row.count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
+                {/* Legacy fallback: Supporting vs Dissenting */}
+                {!(report as any).sections && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <ThemeCard
+                      title="Supporting Views"
+                      color="hsl(var(--data-green))"
+                      themes={report.support_themes}
+                    />
+                    <ThemeCard
+                      title="Dissenting Views"
+                      color="hsl(var(--data-red))"
+                      themes={report.dissent_themes}
+                    />
+                  </div>
                 )}
 
-                {/* Recommendations */}
-                {report.recommendations && report.recommendations.length > 0 && (
+                {/* Legacy fallback: Recommendations */}
+                {report.recommendations && report.recommendations.length > 0 && !(report as any).preset_sections && (
                   <section className="surface-card p-5">
                     <span className="label-meta block mb-4">Recommendations</span>
                     <div className="space-y-4">
@@ -808,6 +917,63 @@ function ThemeCard({ title, color, themes }: { title: string; color: string; the
   );
 }
 
+function InsightBlockData({ data, type }: { data: any; type: string }) {
+  if (!data) return null;
+
+  // If data is an array (e.g. pain_points, top_advocates, viral_posts)
+  if (Array.isArray(data)) {
+    return (
+      <ul className="space-y-1.5">
+        {data.slice(0, 8).map((item: any, i: number) => (
+          <li key={i} className="text-xs text-foreground/80 leading-relaxed flex gap-2">
+            <span className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 bg-white/20" />
+            <span>{typeof item === 'string' ? item : JSON.stringify(item)}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  // If data has items/entries array
+  const entries = data.items || data.entries || data.segments || data.rows;
+  if (Array.isArray(entries)) {
+    return (
+      <div className="space-y-2">
+        {entries.slice(0, 8).map((entry: any, i: number) => (
+          <div key={i} className="flex items-center justify-between text-xs">
+            <span className="text-foreground/80 truncate mr-2">
+              {entry.label || entry.name || entry.segment || `Item ${i + 1}`}
+            </span>
+            <span className="font-mono text-muted-foreground flex-shrink-0">
+              {entry.value ?? entry.count ?? entry.score ?? ''}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // If data is an object with key-value pairs
+  if (typeof data === 'object' && data !== null) {
+    const displayKeys = Object.keys(data).filter(k => k !== 'status');
+    if (displayKeys.length === 0) return null;
+    return (
+      <div className="space-y-1.5">
+        {displayKeys.slice(0, 8).map((key) => (
+          <div key={key} className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">{key.replace(/_/g, ' ')}</span>
+            <span className="font-mono text-foreground/80">
+              {typeof data[key] === 'object' ? JSON.stringify(data[key]).slice(0, 40) : String(data[key])}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return <p className="text-xs text-muted-foreground">{String(data)}</p>;
+}
+
 function ChatBubble({
   msg,
   isUser,
@@ -983,24 +1149,64 @@ function formatCountry(country: string): string {
 
 function formatUseCase(useCase: string): string {
   const normalized = String(useCase || '').trim().toLowerCase();
-  if (normalized === 'policy-review') return 'Policy Review';
-  if (normalized === 'ad-testing') return 'Ad Testing';
-  if (normalized === 'pmf-discovery') return 'PMF Discovery';
-  if (normalized === 'reviews') return 'Reviews';
-  return 'Policy Review';
+  if (normalized === 'public-policy-testing') return 'Public Policy Testing';
+  if (normalized === 'product-market-research') return 'Product & Market Research';
+  if (normalized === 'campaign-content-testing') return 'Campaign & Content Testing';
+  // V1 backward compat
+  if (normalized === 'policy-review') return 'Public Policy Testing';
+  if (normalized === 'ad-testing') return 'Campaign & Content Testing';
+  if (normalized === 'pmf-discovery' || normalized === 'reviews') return 'Product & Market Research';
+  return 'Public Policy Testing';
 }
 
-function getReportMetricDisplay(
-  report: StructuredReportState,
-  keys: string[],
-  kind: 'percent' | 'count' = 'percent',
-): string {
-  const payload = report as Record<string, unknown>;
-  for (const key of keys) {
-    const raw = payload[key];
-    const value = typeof raw === 'number' ? raw : Number(raw);
-    if (!Number.isFinite(value)) continue;
-    return kind === 'count' ? `${Math.round(value)}` : `${Number(value).toFixed(1)}%`;
+function resolveAgentDisplayName(agentId: string, agentsById: Map<string, Agent>): string | null {
+  const match = agentsById.get(agentId);
+  if (match?.name) {
+    return match.name;
   }
-  return '—';
+  return null;
+}
+
+function formatMetricValue(value: unknown, unit: unknown, type?: unknown): string {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return '—';
+  }
+
+  const normalizedUnit = String(unit ?? '').trim().toLowerCase();
+  const normalizedType = String(type ?? '').trim().toLowerCase();
+  if (normalizedType === 'yes-no' || normalizedUnit === '%') {
+    return `${Math.round(numeric)}%`;
+  }
+  if (normalizedUnit === '/10' || normalizedType === 'scale') {
+    return `${numeric.toFixed(1)}/10`;
+  }
+  if (normalizedUnit === 'count') {
+    return `${Math.round(numeric)}`;
+  }
+  return Number.isInteger(numeric) ? `${numeric}` : numeric.toFixed(1);
+}
+
+function formatMetricDelta(value: unknown, unit: unknown, type?: unknown): string {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return '—';
+  }
+  const display = formatMetricValue(Math.abs(numeric), unit, type);
+  return `${numeric >= 0 ? '+' : '−'} ${display}`;
+}
+
+function formatPlainText(value: unknown): string {
+  const text = String(value ?? '');
+  return text
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}[-*+]\s+/gm, '')
+    .replace(/^\s{0,3}\d+\.\s+/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }

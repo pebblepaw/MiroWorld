@@ -1,0 +1,62 @@
+name: "Campaign & Content Testing"
+code: "campaign-content-testing"
+description: "Test advertisements, PR campaigns, social media content, and creative assets with target audiences."
+icon: "📢"
+
+system_prompt: |
+  You are reacting to the provided advertisement, campaign, or content piece.
+  Respond authentically as a real consumer encountering this in the wild.
+  Consider whether the message is compelling, credible, and relevant to you.
+
+agent_personality_modifiers:
+  - "React authentically to this content as a real consumer would."
+  - "Consider whether the message actually addresses your needs or interests."
+  - "Share honest feedback, including skepticism about unsupported marketing claims."
+  - "Note if anything feels misleading, tone-deaf, or irrelevant to you."
+
+analysis_questions:
+  - question: "Would you try or buy this product/service after seeing this content? (yes/no)"
+    type: "yes-no"
+    metric_name: "conversion_intent"
+    metric_label: "Conversion Intent"
+    metric_unit: "%"
+    report_title: "Conversion Analysis"
+    tooltip: "Percentage of agents expressing intent to buy/try after seeing the content."
+
+  - question: "How engaging is this content? Rate 1-10."
+    type: "scale"
+    metric_name: "engagement_score"
+    metric_label: "Engagement Score"
+    metric_unit: "/10"
+    report_title: "Audience Engagement"
+    tooltip: "Mean engagement rating across all agents (1=not engaging, 10=very engaging)."
+
+  - question: "How credible and trustworthy does this content feel? Rate 1-10."
+    type: "scale"
+    metric_name: "credibility_score"
+    metric_label: "Credibility"
+    metric_unit: "/10"
+    report_title: "Content Credibility"
+    tooltip: "Mean credibility/trust rating across all agents."
+
+insight_blocks:
+  - type: "reaction_spectrum"
+    title: "Audience Reaction Spectrum"
+    description: "Distribution of engagement scores across the population."
+    metric_ref: "engagement_score"
+  - type: "top_objections"
+    title: "Top Objections"
+    count: 5
+    description: "Most common reasons agents rejected or were skeptical."
+  - type: "top_advocates"
+    title: "Top Advocates"
+    count: 3
+    description: "Agents with the strongest positive reaction and their reasoning."
+  - type: "viral_posts"
+    title: "Viral Moments"
+    count: 3
+    description: "Posts that generated the most discussion."
+
+preset_sections:
+  - title: "Optimization Recommendations"
+    prompt: "Suggest specific, actionable changes to improve content performance, conversion, and audience trust."

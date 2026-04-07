@@ -57,6 +57,43 @@ function getActorTone(thread: FeedThread): ActorTone {
   return thread.likes > thread.dislikes ? POSITIVE_TONE : DEFAULT_TONE;
 }
 
+function resolveSimulationError(error: unknown): string {
+  const rawMessage =
+    error instanceof Error
+      ? error.message.trim()
+      : typeof error === "string"
+        ? error.trim()
+        : "";
+
+  if (!rawMessage) {
+    return "The simulation could not be completed. Check the backend logs and try again.";
+  }
+
+  const lowered = rawMessage.toLowerCase();
+  if (lowered.includes("no module named 'camel'") || lowered.includes("no module named 'oasis'") || lowered.includes("missing required packages")) {
+    return "Simulation runtime is unavailable because the OASIS Python environment is missing required packages.";
+  }
+  if (lowered.includes("oasis python runtime is unavailable") || lowered.includes("oasis python runtime not found")) {
+    return "Simulation runtime is unavailable. Reinstall the OASIS Python environment or point OASIS_PYTHON_BIN to backend/.venv311.";
+  }
+  if (lowered.includes("insufficient_quota") || lowered.includes("quota")) {
+    return "The model provider rejected the simulation because the API quota or billing limit was reached.";
+  }
+  if (lowered.includes("no longer available") || lowered.includes("not_found")) {
+    return "The selected model is no longer available from the provider. Choose a current model and try again.";
+  }
+  if (lowered.includes("timed out") || lowered.includes("timeout_seconds=")) {
+    return "The simulation timed out before it could finish. Try fewer agents or rounds, or use a faster model.";
+  }
+  if (lowered.includes("run_log=") || lowered.includes("traceback") || lowered.includes("process_exit_code")) {
+    return "The simulation failed in the OASIS runtime. Check the backend run log for details.";
+  }
+  if (rawMessage.length > 180) {
+    return "The simulation could not be completed. Check the backend logs and try again.";
+  }
+  return rawMessage;
+}
+
 type SortOption = "new" | "popular";
 type StageStatus = "pending" | "running" | "completed";
 type ProcessStage = {
@@ -128,6 +165,7 @@ export default function Simulation() {
     knowledgeArtifact,
     populationArtifact,
     agents,
+    simPosts,
     simulationRounds,
     setSimulationRounds,
     setSimulationComplete,
@@ -137,7 +175,7 @@ export default function Simulation() {
   } = useApp();
 
   const [simulationState, setSimulationState] = useState<SimulationState | null>(null);
-  const [feedThreads, setFeedThreads] = useState<FeedThread[]>([]);
+  const [feedThreads, setFeedThreads] = useState<FeedThread[]>(() => simPosts.map((post) => simPostToFeedThread(post)));
   const [controversyBoostEnabled, setControversyBoostEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +184,7 @@ export default function Simulation() {
   const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
   const streamRef = useRef<EventSource | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
+  const hydratedFeedRef = useRef(false);
   const controversyBoost = controversyBoostEnabled ? 0.5 : 0;
 
   // Available rounds based on simulationRounds selection (1 to simulationRounds)
@@ -205,10 +244,23 @@ export default function Simulation() {
   }, [feedThreads.length]);
 
   useEffect(() => {
+    if (feedThreads.length === 0) {
+      return;
+    }
     setSimPosts(
       feedThreads.map((thread) => toSimPost(thread, agents)),
     );
   }, [agents, feedThreads, setSimPosts]);
+
+  useEffect(() => {
+    if (hydratedFeedRef.current) {
+      return;
+    }
+    if (feedThreads.length === 0 && simPosts.length > 0) {
+      setFeedThreads(simPosts.map((post) => simPostToFeedThread(post)));
+      hydratedFeedRef.current = true;
+    }
+  }, [feedThreads.length, setFeedThreads, simPosts]);
 
   useEffect(() => {
     if (!sessionId || !(running || loading)) {
@@ -224,7 +276,7 @@ export default function Simulation() {
         })
         .catch((error) => {
           if (isLiveBootMode()) {
-            setError(error instanceof Error ? error.message : "Simulation metrics unavailable.");
+            setError(resolveSimulationError(error));
           }
         });
     }, 2000);
@@ -387,7 +439,7 @@ export default function Simulation() {
     }
 
     if (eventType === "run_failed") {
-      setError(String(payload.error ?? "Simulation failed."));
+      setError(resolveSimulationError(String(payload.error ?? "Simulation failed.")));
       closeStream();
     }
   }, [closeStream, setSimulationComplete]);
@@ -429,8 +481,10 @@ export default function Simulation() {
     setLoading(true);
     setError(null);
     setFeedThreads([]);
+    setSimPosts([]);
     setExpandedReplies({});
     setSimulationComplete(false);
+    setSimulationState(null);
     try {
       const state = await startSimulation(sessionId, {
         policy_summary: knowledgeArtifact.summary,
@@ -440,7 +494,7 @@ export default function Simulation() {
       setSimulationState(state);
       openStream(sessionId);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Unable to start simulation.");
+      setError(resolveSimulationError(caughtError));
     } finally {
       setLoading(false);
     }
@@ -846,6 +900,28 @@ function formatSeconds(value: number | null | undefined): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+function simPostToFeedThread(post: import("@/data/mockData").SimPost): FeedThread {
+  return {
+    id: post.id,
+    postId: post.id,
+    actorName: post.agentName,
+    actorSubtitle: `${post.agentArea} · ${post.agentOccupation}`,
+    actorOccupation: post.agentOccupation,
+    title: post.title,
+    content: post.content,
+    roundNo: post.round,
+    activityRounds: [post.round],
+    likes: post.upvotes,
+    dislikes: post.downvotes,
+    comments: post.comments.map((comment, index) => ({
+      id: comment.id || `${post.id}-comment-${index + 1}`,
+      actorName: comment.agentName,
+      content: comment.content,
+      roundNo: post.round,
+    })),
+  };
 }
 
 type MetricKind = "percent" | "score";

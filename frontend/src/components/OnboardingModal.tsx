@@ -28,6 +28,20 @@ type ProviderCard = {
   requiresKey: boolean;
 };
 
+const RETIRED_PROVIDER_MODELS: Record<string, Set<string>> = {
+  gemini: new Set(["gemini-2.0-flash-lite", "gemini-2.0-flash-lite-001"]),
+};
+
+const PREFERRED_PROVIDER_MODELS: Record<string, string[]> = {
+  gemini: [
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest",
+    "gemini-2.5-pro",
+  ],
+};
+
 const FALLBACK_COUNTRIES: CountryCard[] = [
   { id: 'singapore', name: 'Singapore', emoji: '🇸🇬', available: true },
   { id: 'usa', name: 'USA', emoji: '🇺🇸', available: true },
@@ -38,7 +52,7 @@ const FALLBACK_COUNTRIES: CountryCard[] = [
 const FALLBACK_PROVIDERS: Record<string, ProviderCard> = {
   gemini: {
     label: 'Google Gemini',
-    models: ['gemini-2.0-flash', 'gemini-1.5-pro'],
+    models: ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-flash-lite-latest'],
     requiresKey: true,
   },
   openai: {
@@ -54,10 +68,9 @@ const FALLBACK_PROVIDERS: Record<string, ProviderCard> = {
 };
 
 const USE_CASES = [
-  { id: 'policy-review', label: 'Policy Review' },
-  { id: 'ad-testing', label: 'Ad Testing' },
-  { id: 'pmf-discovery', label: 'PMF Discovery' },
-  { id: 'reviews', label: 'Reviews' },
+  { id: 'public-policy-testing', label: 'Public Policy Testing', icon: '🏛️' },
+  { id: 'product-market-research', label: 'Product & Market Research', icon: '📦' },
+  { id: 'campaign-content-testing', label: 'Campaign & Content Testing', icon: '📢' },
 ];
 
 function toCountryId(code: string, name: string) {
@@ -77,7 +90,7 @@ function toDisplayCountry(country: string) {
 }
 
 function toDisplayUseCase(useCase: string) {
-  return displayUseCaseId(useCase) || 'policy-review';
+  return displayUseCaseId(useCase) || 'public-policy-testing';
 }
 
 function buildCountryCatalog(countries: Array<{ code: string; name: string; flag_emoji: string; available: boolean }>) {
@@ -123,11 +136,54 @@ function buildProviderCatalog(providers: Array<{ name: string; models: string[];
             : id === 'ollama'
               ? 'Ollama (Local)'
               : provider.name,
-      models: provider.models.length > 0 ? provider.models : FALLBACK_PROVIDERS[id]?.models ?? [],
+      models: curateProviderModels(id, provider.models.length > 0 ? provider.models : FALLBACK_PROVIDERS[id]?.models ?? []),
       requiresKey: Boolean(provider.requires_api_key),
     };
   }
   return Object.keys(catalog).length > 0 ? catalog : FALLBACK_PROVIDERS;
+}
+
+function curateProviderModels(providerId: string, models: string[]) {
+  const blocked = RETIRED_PROVIDER_MODELS[providerId] ?? new Set<string>();
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+
+  for (const model of models) {
+    const candidate = String(model || '').trim();
+    if (!candidate || blocked.has(candidate)) {
+      continue;
+    }
+    if (seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    deduped.push(candidate);
+  }
+
+  const preferredOrder = PREFERRED_PROVIDER_MODELS[providerId];
+  if (!preferredOrder || preferredOrder.length === 0) {
+    return deduped;
+  }
+
+  const rank = new Map(preferredOrder.map((model, index) => [model, index]));
+  return [...deduped].sort((left, right) => {
+    const leftRank = rank.get(left);
+    const rightRank = rank.get(right);
+    if (leftRank !== undefined || rightRank !== undefined) {
+      return (leftRank ?? Number.MAX_SAFE_INTEGER) - (rightRank ?? Number.MAX_SAFE_INTEGER);
+    }
+    return left.localeCompare(right);
+  });
+}
+
+function pickProviderModel(providerId: string, models: string[], currentModel?: string) {
+  const curated = curateProviderModels(providerId, models);
+  const candidate = String(currentModel || '').trim();
+  const blocked = RETIRED_PROVIDER_MODELS[providerId] ?? new Set<string>();
+  if (candidate && curated.includes(candidate) && !blocked.has(candidate)) {
+    return candidate;
+  }
+  return curated[0] ?? candidate;
 }
 
 export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
@@ -138,9 +194,12 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
   const [providers, setProviders] = useState<Record<string, ProviderCard>>(liveMode ? {} : FALLBACK_PROVIDERS);
   const [country, setCountry] = useState(() => toDisplayCountry(app.country || 'singapore'));
   const [provider, setProvider] = useState(() => displayProviderId(app.modelProvider) || 'gemini');
-  const [model, setModel] = useState(() => app.modelName || FALLBACK_PROVIDERS.gemini.models[0]);
+  const [model, setModel] = useState(() => {
+    const initialProvider = displayProviderId(app.modelProvider) || 'gemini';
+    return pickProviderModel(initialProvider, FALLBACK_PROVIDERS[initialProvider]?.models ?? FALLBACK_PROVIDERS.gemini.models, app.modelName);
+  });
   const [apiKey, setApiKey] = useState(() => app.modelApiKey || '');
-  const [useCase, setUseCase] = useState(() => toDisplayUseCase(app.useCase || 'policy-review'));
+  const [useCase, setUseCase] = useState(() => toDisplayUseCase(app.useCase || 'public-policy-testing'));
   const [launchError, setLaunchError] = useState('');
 
   useEffect(() => {
@@ -150,10 +209,17 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
 
     setCountry(toDisplayCountry(app.country || 'singapore'));
     setProvider(displayProviderId(app.modelProvider) || 'gemini');
-    setModel(app.modelName || FALLBACK_PROVIDERS[displayProviderId(app.modelProvider) || 'gemini']?.models[0] || FALLBACK_PROVIDERS.gemini.models[0]);
+    const nextProvider = displayProviderId(app.modelProvider) || 'gemini';
+    setModel(
+      pickProviderModel(
+        nextProvider,
+        providers[nextProvider]?.models ?? FALLBACK_PROVIDERS[nextProvider]?.models ?? FALLBACK_PROVIDERS.gemini.models,
+        app.modelName,
+      ),
+    );
     setApiKey(app.modelApiKey || '');
-    setUseCase(toDisplayUseCase(app.useCase || 'policy-review'));
-  }, [app.country, app.modelApiKey, app.modelName, app.modelProvider, app.useCase, isOpen]);
+    setUseCase(toDisplayUseCase(app.useCase || 'public-policy-testing'));
+  }, [app.country, app.modelApiKey, app.modelName, app.modelProvider, app.useCase, isOpen, providers]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -203,8 +269,9 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
       return;
     }
 
-    if (!providerCard.models.includes(model)) {
-      setModel(providerCard.models[0]);
+    const nextModel = pickProviderModel(provider, providerCard.models, model);
+    if (nextModel && nextModel !== model) {
+      setModel(nextModel);
     }
   }, [model, provider, providers]);
 
@@ -263,8 +330,8 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-white/5 border border-white/10 mb-4">
             <Globe className="w-6 h-6 text-foreground" />
           </div>
-          <h2 className="text-2xl font-semibold text-foreground tracking-tight">Configure Simulation</h2>
-          <p className="text-sm text-muted-foreground mt-1">Select your environment parameters to spin up a new OASIS instance.</p>
+          <h2 className="text-2xl font-semibold text-foreground tracking-tight">Configure your simulation environment</h2>
+          <p className="text-sm text-muted-foreground mt-1">Select country, provider, model, and use case to spin up a new V2 session.</p>
         </div>
 
         <div className="p-6 overflow-y-auto scrollbar-thin space-y-8">
@@ -377,10 +444,11 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                     key={uc.id}
                     onClick={() => setUseCase(uc.id)}
                     className={`
-                      px-4 py-2 rounded-full text-xs font-semibold uppercase tracking-wider transition-all border
+                      px-4 py-2 rounded-full text-xs font-semibold tracking-wider transition-all border flex items-center gap-1.5
                       ${isSelected ? 'border-[hsl(var(--data-blue))] bg-[hsl(var(--data-blue))]/10 text-[hsl(var(--data-blue))]' : 'border-white/10 hover:bg-white/5 text-muted-foreground'}
                     `}
                   >
+                    <span>{uc.icon}</span>
                     {uc.label}
                   </button>
                 );
