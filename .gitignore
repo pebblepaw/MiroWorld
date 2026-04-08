@@ -12,8 +12,10 @@ backend/tests/*
 .ruff_cache/
 backend/data/lightrag/
 backend/backend/data/lightrag/
-backend/data/
 data/
+!backend/data/
+backend/data/*
+!backend/data/demo-output.json
 backend/benchmark_output.txt
 *.egg-info/
 node_modules/
@@ -34,4 +36,4 @@ Sample_Inputs/*
 mcp_tools.json
 list_mcp_tools.py
 replace_glasscard.py
-
+WIP_Ignore_this.md

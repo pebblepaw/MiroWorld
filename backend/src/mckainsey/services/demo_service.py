@@ -169,6 +169,186 @@ class DemoService:
         return self.store.get_simulation_state_snapshot(session_id)
         
         return None
+
+    def _cached_analytics_payload(self, key: str) -> dict[str, Any] | None:
+        cache = self._load_demo_cache()
+        if not cache:
+            return None
+        analytics = cache.get("analytics")
+        if not isinstance(analytics, dict):
+            return None
+        payload = analytics.get(key)
+        if not isinstance(payload, dict):
+            return None
+        return dict(payload)
+
+    def get_simulation_stream_events(self, session_id: str) -> list[dict[str, Any]]:
+        """Build replay events for demo-mode simulation stream."""
+        events: list[dict[str, Any]] = []
+
+        cascades = self.get_analytics_cascades(session_id)
+        viral_posts = cascades.get("viral_posts")
+        if isinstance(viral_posts, list):
+            for idx, post in enumerate(viral_posts[:24]):
+                if not isinstance(post, dict):
+                    continue
+                post_id = post.get("post_id") or f"demo-post-{idx + 1}"
+                actor_agent_id = str(post.get("author") or post.get("author_agent_id") or f"agent-{idx + 1:04d}")
+                actor_name = str(post.get("author_name") or post.get("actor_name") or actor_agent_id)
+                title = str(post.get("title") or f"Discussion thread {idx + 1}").strip()
+                content = str(post.get("content") or post.get("body") or title).strip()
+                round_no = int(post.get("round_no") or post.get("round") or 1)
+
+                if not title and not content:
+                    continue
+
+                events.append(
+                    {
+                        "event_type": "post_created",
+                        "session_id": session_id,
+                        "round_no": max(1, round_no),
+                        "post_id": post_id,
+                        "actor_agent_id": actor_agent_id,
+                        "actor_name": actor_name,
+                        "title": title or content,
+                        "content": content or title,
+                    }
+                )
+
+                comments = post.get("comments")
+                if isinstance(comments, list):
+                    for comment_idx, comment in enumerate(comments[:8]):
+                        if not isinstance(comment, dict):
+                            continue
+                        comment_text = str(comment.get("content") or comment.get("body") or "").strip()
+                        if not comment_text:
+                            continue
+                        comment_id = comment.get("comment_id") or f"{post_id}-c{comment_idx + 1}"
+                        comment_actor_id = str(comment.get("author") or comment.get("actor_agent_id") or actor_agent_id)
+                        comment_actor_name = str(comment.get("author_name") or comment.get("actor_name") or comment_actor_id)
+                        events.append(
+                            {
+                                "event_type": "comment_created",
+                                "session_id": session_id,
+                                "round_no": max(1, round_no),
+                                "post_id": post_id,
+                                "comment_id": comment_id,
+                                "actor_agent_id": comment_actor_id,
+                                "actor_name": comment_actor_name,
+                                "content": comment_text,
+                            }
+                        )
+
+        if not events:
+            sim_state = self.get_simulation_state(session_id) or {}
+            recent_events = sim_state.get("recent_events") if isinstance(sim_state, dict) else []
+            if isinstance(recent_events, list):
+                events = [dict(event) for event in recent_events if isinstance(event, dict)]
+
+        sim_state = self.get_simulation_state(session_id) or {}
+        last_round = int(sim_state.get("last_round") or sim_state.get("current_round") or 0)
+        events.append(
+            {
+                "event_type": "run_completed",
+                "session_id": session_id,
+                "round_no": max(0, last_round),
+                "status": "completed",
+            }
+        )
+
+        return events
+
+    def get_analytics_polarization(self, session_id: str) -> dict[str, Any]:
+        payload = self._cached_analytics_payload("polarization") or {"series": []}
+        payload["session_id"] = session_id
+        payload.setdefault("series", [])
+        return payload
+
+    def get_analytics_opinion_flow(self, session_id: str) -> dict[str, Any]:
+        payload = self._cached_analytics_payload("opinion_flow") or {}
+        payload["session_id"] = session_id
+        payload.setdefault("initial", {"supporter": 0, "neutral": 0, "dissenter": 0})
+        payload.setdefault("final", {"supporter": 0, "neutral": 0, "dissenter": 0})
+        payload.setdefault("flows", [])
+        return payload
+
+    def get_analytics_influence(self, session_id: str) -> dict[str, Any]:
+        payload = self._cached_analytics_payload("influence")
+        if payload:
+            payload["session_id"] = session_id
+            return payload
+
+        influential = self.get_interaction_hub(session_id).get("influential_agents", [])
+        top_influencers: list[dict[str, Any]] = []
+        if isinstance(influential, list):
+            for row in influential[:10]:
+                if not isinstance(row, dict):
+                    continue
+                agent_id = str(row.get("agent_id") or "").strip()
+                if not agent_id:
+                    continue
+                top_influencers.append(
+                    {
+                        "agent_id": agent_id,
+                        "agent_name": row.get("agent_name") or agent_id,
+                        "influence_score": float(row.get("influence_score", 0.0) or 0.0),
+                        "stance": row.get("segment") or "mixed",
+                    }
+                )
+
+        return {
+            "session_id": session_id,
+            "top_influencers": top_influencers,
+            "nodes": [],
+            "edges": [],
+            "total_nodes": 0,
+            "total_edges": 0,
+        }
+
+    def get_analytics_cascades(self, session_id: str) -> dict[str, Any]:
+        payload = self._cached_analytics_payload("cascades")
+        if payload:
+            payload["session_id"] = session_id
+            return payload
+
+        sim_state = self.get_simulation_state(session_id) or {}
+        top_threads = sim_state.get("top_threads") if isinstance(sim_state, dict) else []
+        viral_posts: list[dict[str, Any]] = []
+        if isinstance(top_threads, list):
+            for idx, thread in enumerate(top_threads):
+                if not isinstance(thread, dict):
+                    continue
+                post_id = thread.get("post_id") or f"demo-thread-{idx + 1}"
+                title = str(thread.get("title") or f"Thread {idx + 1}")
+                author_name = str(thread.get("author_name") or thread.get("author_agent_id") or "Agent")
+                viral_posts.append(
+                    {
+                        "post_id": post_id,
+                        "author": author_name,
+                        "author_name": author_name,
+                        "title": title,
+                        "content": title,
+                        "likes": int(thread.get("likes", 0) or 0),
+                        "dislikes": int(thread.get("dislikes", 0) or 0),
+                        "comments": [],
+                    }
+                )
+
+        return {
+            "session_id": session_id,
+            "cascades": viral_posts,
+            "posts": viral_posts,
+            "top_threads": viral_posts,
+            "viral_posts": viral_posts,
+            "post_id": None,
+            "tree_size": len(viral_posts),
+            "total_engagement": sum(
+                int(item.get("likes", 0) or 0) + int(item.get("dislikes", 0) or 0)
+                for item in viral_posts
+            ),
+            "mean_opinion_delta": 0.0,
+            "engaged_agents": [],
+        }
     
     def get_report(self, session_id: str) -> dict[str, Any] | None:
         """Get report for demo session."""

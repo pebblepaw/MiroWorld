@@ -442,22 +442,21 @@ def simulation_stream(
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         # Return cached events from demo cache
         demo_service = _get_demo_service(settings)
-        cache = demo_service._load_demo_cache()
-        if cache and "simulationState" in cache:
-            # Create a stream from cached events
-            sim_state = cache["simulationState"]
-            recent_events = sim_state.get("recent_events", [])
-            
-            def demo_sse_iter():
-                # Send all cached events
-                for event in recent_events:
-                    event_type = event.get("event_type", "event")
-                    data = json.dumps(event)
-                    yield f"event: {event_type}\ndata: {data}\n\n"
-                # Send completion
-                yield f"event: completed\ndata: {json.dumps({'session_id': session_id, 'status': 'completed'})}\n\n"
-            
-            return StreamingResponse(demo_sse_iter(), media_type="text/event-stream")
+        replay_events = demo_service.get_simulation_stream_events(session_id)
+
+        def demo_sse_iter():
+            for event in replay_events:
+                if not isinstance(event, dict):
+                    continue
+                payload = dict(event)
+                payload["session_id"] = session_id
+                event_type = str(payload.get("event_type") or "event")
+                data = json.dumps(payload)
+                yield f"event: {event_type}\ndata: {data}\n\n"
+            # Keep compatibility with existing demo stream terminator.
+            yield f"event: completed\ndata: {json.dumps({'session_id': session_id, 'status': 'completed'})}\n\n"
+
+        return StreamingResponse(demo_sse_iter(), media_type="text/event-stream")
     
     stream = SimulationStreamService(settings).sse_iter(session_id)
     return StreamingResponse(stream, media_type="text/event-stream")
