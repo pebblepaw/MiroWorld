@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useApp } from "@/contexts/AppContext";
 import { toast } from "@/hooks/use-toast";
-import { buildSimulationStreamUrl, getSimulationMetrics, isLiveBootMode, SimulationState, startSimulation } from "@/lib/console-api";
+import { buildSimulationStreamUrl, getSimulationMetrics, getSimulationState, isLiveBootMode, SimulationState, startSimulation } from "@/lib/console-api";
 
 type FeedComment = {
   id: string;
@@ -167,6 +167,7 @@ export default function Simulation() {
     agents,
     simPosts,
     simulationRounds,
+    simulationComplete,
     setSimulationRounds,
     setSimulationComplete,
     setSimPosts,
@@ -185,6 +186,7 @@ export default function Simulation() {
   const streamRef = useRef<EventSource | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const hydratedFeedRef = useRef(false);
+  const hydratedStateSessionRef = useRef<string | null>(null);
   const controversyBoost = controversyBoostEnabled ? 0.5 : 0;
 
   // Available rounds based on simulationRounds selection (1 to simulationRounds)
@@ -261,6 +263,46 @@ export default function Simulation() {
       hydratedFeedRef.current = true;
     }
   }, [feedThreads.length, setFeedThreads, simPosts]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      hydratedStateSessionRef.current = null;
+      return;
+    }
+    if (simulationState) {
+      return;
+    }
+    if (!simulationComplete && simPosts.length === 0) {
+      return;
+    }
+    if (hydratedStateSessionRef.current === sessionId) {
+      return;
+    }
+
+    hydratedStateSessionRef.current = sessionId;
+    let cancelled = false;
+
+    void getSimulationState(sessionId)
+      .then((state) => {
+        if (cancelled) {
+          return;
+        }
+        setSimulationState(state);
+      })
+      .catch((caughtError) => {
+        if (cancelled) {
+          return;
+        }
+        hydratedStateSessionRef.current = null;
+        if (isLiveBootMode()) {
+          setError(resolveSimulationError(caughtError));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, simPosts.length, simulationComplete, simulationState]);
 
   useEffect(() => {
     if (!sessionId || !(running || loading)) {
@@ -484,6 +526,7 @@ export default function Simulation() {
     setSimPosts([]);
     setExpandedReplies({});
     setSimulationComplete(false);
+    hydratedStateSessionRef.current = null;
     setSimulationState(null);
     try {
       const state = await startSimulation(sessionId, {

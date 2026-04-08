@@ -6,6 +6,8 @@ backend/.venv311/
 __pycache__/
 *.pyc
 .playwright-mcp/
+backend/tests/*
+/backend/tests/
 .pytest_cache/
 .ruff_cache/
 backend/data/lightrag/
@@ -27,3 +29,9 @@ stitch_frontend_reference.zip
 backend/.cache/*
 archive/*
 output/playwright/
+Sample_Inputs/*
+/Sample_Inputs/
+mcp_tools.json
+list_mcp_tools.py
+replace_glasscard.py
+

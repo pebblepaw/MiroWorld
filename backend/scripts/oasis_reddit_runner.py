@@ -61,6 +61,22 @@ TITLE_STOPWORDS = {
     "with",
 }
 
+AI_REFUSAL_PATTERNS = [
+    re.compile(r"\b(as an? ai|as a language model)\b", re.IGNORECASE),
+    re.compile(r"\b(i\s+cannot|i\s+can\'?t)\b[^.]{0,120}\b(opinion|approve|disapprove|rate|personal)\b", re.IGNORECASE),
+    re.compile(r"\b(i\s+do\s+not\s+have\s+personal\s+opinions?)\b", re.IGNORECASE),
+    re.compile(r"\b(i\s+am\s+unable\s+to)\b[^.]{0,120}\b(rate|judge|approve|disapprove)\b", re.IGNORECASE),
+]
+
+VOICE_STYLE_CUES = [
+    "Use short, direct sentences and one practical example.",
+    "Use a conversational tone with one concrete household detail.",
+    "Use balanced reasoning and mention one trade-off clearly.",
+    "Use plain language and include one neighborhood-level impact.",
+    "Use concise bullet-like phrasing in sentence form.",
+    "Use thoughtful tone and compare today versus before-policy conditions.",
+]
+
 
 def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
     age = int(persona.get("age") or random.randint(21, 70))
@@ -69,6 +85,9 @@ def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
     planning_area = str(persona.get("planning_area") or "Singapore")
     occupation = str(persona.get("occupation") or "Resident")
     industry = str(persona.get("industry") or "")
+    household_type = str(persona.get("household_type") or "").strip()
+    income_bracket = str(persona.get("income_bracket") or "").strip()
+    education = str(persona.get("highest_education") or "").strip()
     agent_id = str(persona.get("agent_id") or f"agent-{idx + 1:04d}")
     relevance = float(persona.get("mckainsey_relevance_score") or 0.0)
     matched_nodes = [
@@ -84,6 +103,12 @@ def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
     )
     if industry:
         persona_text += f" Industry context: {industry}."
+    if household_type:
+        persona_text += f" Household context: {household_type}."
+    if income_bracket:
+        persona_text += f" Income context: {income_bracket}."
+    if education:
+        persona_text += f" Education background: {education}."
     if dossier:
         persona_text += f" Policy dossier: {dossier}"
     if matched_nodes:
@@ -94,6 +119,9 @@ def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
         persona_text += " This issue is moderately relevant to you, so you should engage when the discussion touches your situation."
     else:
         persona_text += " You may not be directly affected, but you should still react when community discussion surfaces broader Singapore-wide implications."
+    style_cue = VOICE_STYLE_CUES[idx % len(VOICE_STYLE_CUES)]
+    persona_text += f" Writing cue: {style_cue}"
+    persona_text += " Never claim to be an AI. Never reuse another user's wording verbatim."
     return {
         "user_id": idx,
         "agent_id": agent_id,
@@ -164,20 +192,36 @@ def _extract_title(content: str) -> str:
 
 
 def _build_seed_post_content(policy_summary: str, index: int) -> str:
-    summary_excerpt = " ".join(str(policy_summary or "").split()).strip()[:220]
+    summary_excerpt = _sanitize_policy_context(policy_summary)[:220]
     if not summary_excerpt:
-        summary_excerpt = "Discuss this policy and how it may affect Singapore residents."
-    return f"Policy context for discussion: {summary_excerpt}"
+        summary_excerpt = "Discuss the policy and how it may affect different Singapore households."
+    return f"Policy brief: {summary_excerpt}\nWhat impacts stand out most for your own situation?"
 
 
 def _build_analysis_seed_post_content(policy_summary: str, question_text: str, index: int) -> str:
     question = " ".join(str(question_text or "").split()).strip()
     if not question:
         return _build_seed_post_content("", index)
-    summary_excerpt = " ".join(str(policy_summary or "").split()).strip()[:220]
+    summary_excerpt = _sanitize_policy_context(policy_summary)[:220]
     if summary_excerpt:
-        return f"Analysis question {index + 1}: {question[:280]}\nPolicy context: {summary_excerpt}"
-    return f"Analysis question {index + 1}: {question[:280]}"
+        return f"Community prompt: {question[:280]}\nPolicy brief: {summary_excerpt}"
+    return f"Community prompt: {question[:280]}"
+
+
+def _sanitize_policy_context(text: str) -> str:
+    cleaned = " ".join(str(text or "").split()).strip()
+    if not cleaned:
+        return ""
+
+    filtered = cleaned
+    for pattern in AI_REFUSAL_PATTERNS:
+        filtered = pattern.sub("", filtered)
+
+    filtered = re.sub(r"\b(analysis question\s*\d*\s*:)\b", "", filtered, flags=re.IGNORECASE)
+    filtered = re.sub(r"\s{2,}", " ", filtered).strip(" .;:-")
+    if not filtered:
+        return ""
+    return filtered
 
 
 def _resolve_seed_posts(policy_summary: str, seed_discussion_threads: list[str] | None) -> list[str]:

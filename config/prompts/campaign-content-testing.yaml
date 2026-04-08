@@ -8,11 +8,21 @@ system_prompt: |
   Respond authentically as a real consumer encountering this in the wild.
   Consider whether the message is compelling, credible, and relevant to you.
 
+guiding_prompt: |
+  Extract a neutral factual brief from the campaign/content material.
+  Capture claims, tone, audience targeting cues, trust signals, and likely objections.
+  Do not include AI self-reference, inability disclaimers, or first-person opinions.
+
 agent_personality_modifiers:
   - "React authentically to this content as a real consumer would."
   - "Consider whether the message actually addresses your needs or interests."
   - "Share honest feedback, including skepticism about unsupported marketing claims."
   - "Note if anything feels misleading, tone-deaf, or irrelevant to you."
+
+report_writer_instructions:
+  - "Write in third-person analytical voice describing what participants expressed."
+  - "Do not use first-person pronouns or personal opinions in report text."
+  - "Summarize evidence from interactions, not hypothetical opinions."
 
 analysis_questions:
   - question: "Would you try or buy this product/service after seeing this content? (yes/no)"

@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 import io
 import json
+import re
 import sqlite3
 from typing import Any
 
@@ -27,6 +28,43 @@ def _format_metric_value(value: float, unit: str) -> str:
     if unit == "/10":
         return f"{value:.1f}/10"
     return f"{value:.1f}"
+
+
+def _extract_numeric_value(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    ratio_match = re.search(r"(-?\d+(?:\.\d+)?)\s*/\s*(-?\d+(?:\.\d+)?)", text)
+    if ratio_match:
+        numerator = float(ratio_match.group(1))
+        denominator = float(ratio_match.group(2))
+        if denominator != 0:
+            return numerator if denominator == 10 else (numerator / denominator) * 10
+
+    number_match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if number_match:
+        return float(number_match.group(0))
+
+    return None
+
+
+def _parse_yes_no(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+
+    if re.match(r"^(yes|y|true|1)\b", text):
+        return True
+    if re.match(r"^(no|n|false|0)\b", text):
+        return False
+    return None
 
 
 class ReportService:
@@ -345,7 +383,13 @@ class ReportService:
         for q in analysis_questions:
             question_text = q.get("question", "")
             q_type = q.get("type", "scale")
-            answer = self._answer_guiding_question(simulation_id, question_text, agents, interactions)
+            answer = self._answer_guiding_question(
+                simulation_id,
+                question_text,
+                agents,
+                interactions,
+                use_case=use_case,
+            )
             answer = _clean_report_text(answer)
 
             section: dict[str, Any] = {
@@ -389,7 +433,13 @@ class ReportService:
             title = preset.get("title", "")
             prompt = preset.get("prompt", "")
             if prompt:
-                answer = self._answer_guiding_question(simulation_id, prompt, agents, interactions)
+                answer = self._answer_guiding_question(
+                    simulation_id,
+                    prompt,
+                    agents,
+                    interactions,
+                    use_case=use_case,
+                )
             else:
                 answer = ""
             preset_sections.append({"title": title, "answer": answer})
@@ -400,6 +450,7 @@ class ReportService:
             metric_deltas=metric_deltas,
             round_count=round_count,
             agent_count=len(agents),
+            use_case=use_case,
         )
 
         return {
@@ -602,24 +653,59 @@ class ReportService:
         question: str,
         agents: list[dict[str, Any]],
         interactions: list[dict[str, Any]],
+        *,
+        use_case: str | None = None,
     ) -> str:
         knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
         knowledge_context = "\n".join(self._knowledge_context_lines(knowledge))
+        style_rules = self._resolve_report_writer_instructions(use_case)
+        style_block = "\n".join(f"- {rule}" for rule in style_rules)
         prompt = (
             f"Simulation ID: {simulation_id}\n"
             f"Guiding question: {question}\n"
             f"Original document context:\n{knowledge_context or '- none'}\n"
             f"Agent sample size: {len(agents)}\n"
             f"Recent interactions: {json.dumps(interactions[-20:], ensure_ascii=False)[:6000]}\n"
+            f"Writing requirements:\n{style_block}\n"
             "Respond in 2-4 sentences and reference evidence from the interactions."
         )
         try:
-            return self.llm.complete_required(
+            response = self.llm.complete_required(
                 prompt,
-                system_prompt="You are McKAInsey ReportAgent. Stay factual and evidence-grounded.",
+                system_prompt=(
+                    "You are McKAInsey ReportAgent. Stay factual and evidence-grounded. "
+                    "Write as an analyst summarizing agent perspectives, never as a participant."
+                ),
             )
+            response = _clean_report_text(response)
+            if _contains_first_person(response):
+                rewrite = self.llm.complete_required(
+                    (
+                        "Rewrite the following text in strict third-person analytical voice. "
+                        "Do not use first-person pronouns. Keep all facts and evidence references intact.\n\n"
+                        f"Text:\n{response}"
+                    ),
+                    system_prompt="You are a policy-report editor. Return only the rewritten text.",
+                )
+                response = _clean_report_text(rewrite)
+            return response
         except Exception:  # noqa: BLE001
             return "The available interactions indicate this question can be answered from observed cohort arguments and sentiment shifts."
+
+    def _resolve_report_writer_instructions(self, use_case: str | None) -> list[str]:
+        defaults = [
+            "Use third-person analyst voice (e.g., 'agents expressed', 'discussion indicated').",
+            "Do not write personal opinions or first-person statements (avoid I/we/my/our).",
+            "Summarize what agents think, citing concrete evidence from interactions when possible.",
+        ]
+        if not use_case:
+            return defaults
+        config_service = ConfigService(self.settings)
+        try:
+            configured = config_service.get_report_writer_instructions(use_case)
+        except Exception:  # noqa: BLE001
+            configured = []
+        return configured or defaults
 
     def _build_demographic_breakdown(self, agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         grouped: dict[str, dict[str, int]] = defaultdict(lambda: {"supporter": 0, "neutral": 0, "dissenter": 0})
@@ -787,14 +873,25 @@ class ReportService:
         total = max(len(agents), 1)
 
         if q_type == "scale":
-            scores = [float(a.get(field, a.get("opinion_post", 5.0)) or 5.0) for a in agents]
+            scores: list[float] = []
+            for agent in agents:
+                raw_value = agent.get(field, agent.get("opinion_post", 5.0))
+                parsed = _extract_numeric_value(raw_value)
+                score = parsed if parsed is not None else 5.0
+                scores.append(max(0.0, min(10.0, score)))
             if "threshold" in question:
-                threshold = float(question.get("threshold", 7))
+                threshold_raw = question.get("threshold", 7)
+                threshold = _extract_numeric_value(threshold_raw)
+                threshold = threshold if threshold is not None else 7.0
                 pct = sum(1 for s in scores if s >= threshold) / total * 100
                 return round(pct, 1)
             return round(sum(scores) / len(scores) if scores else 0.0, 1)
         elif q_type == "yes-no":
-            yes_count = sum(1 for a in agents if str(a.get(field, "")).strip().lower() in {"yes", "y"})
+            yes_count = 0
+            for agent in agents:
+                parsed = _parse_yes_no(agent.get(field, ""))
+                if parsed is True:
+                    yes_count += 1
             return round(yes_count / total * 100, 1)
         return 0.0
 
@@ -805,6 +902,7 @@ class ReportService:
         metric_deltas: list[dict[str, Any]],
         round_count: int,
         agent_count: int,
+        use_case: str | None = None,
     ) -> str:
         """Build executive summary using metric deltas instead of raw scores."""
         if not metric_deltas:
@@ -814,16 +912,37 @@ class ReportService:
             f"{d['metric_label']}: {d['initial_display']} -> {d['final_display']} ({'+' if d['delta'] > 0 else ''}{d['delta']}{d['metric_unit']})"
             for d in metric_deltas
         )
+        style_rules = self._resolve_report_writer_instructions(use_case)
+        style_block = "\n".join(f"- {rule}" for rule in style_rules)
         knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
         knowledge_context = "\n".join(self._knowledge_context_lines(knowledge))
         prompt = (
             f"Simulation {simulation_id}. {agent_count} agents over {round_count} rounds.\n"
             f"Original document context:\n{knowledge_context or '- none'}\n"
             f"Key metrics: {metrics_summary}\n"
+            f"Writing requirements:\n{style_block}\n"
             "Write a concise executive summary in 3-4 sentences highlighting the most important findings."
         )
         try:
-            return self.llm.complete_required(prompt, system_prompt="You are McKAInsey ReportAgent.")
+            response = self.llm.complete_required(
+                prompt,
+                system_prompt=(
+                    "You are McKAInsey ReportAgent. Write in third-person analytical voice only; "
+                    "do not present personal opinions."
+                ),
+            )
+            response = _clean_report_text(response)
+            if _contains_first_person(response):
+                rewrite = self.llm.complete_required(
+                    (
+                        "Rewrite the following executive summary in strict third-person analytical voice. "
+                        "Do not use first-person pronouns. Keep the same findings.\n\n"
+                        f"Text:\n{response}"
+                    ),
+                    system_prompt="You are a policy-report editor. Return only the rewritten text.",
+                )
+                response = _clean_report_text(rewrite)
+            return response
         except Exception:  # noqa: BLE001
             return f"Across {round_count} rounds with {agent_count} agents: {metrics_summary}."
 
@@ -1390,3 +1509,8 @@ def _normalize_dict_list(value: Any, *, required_keys: tuple[str, ...]) -> list[
             continue
         normalized.append({key: item.get(key) for key in required_keys})
     return normalized
+
+
+def _contains_first_person(text: str) -> bool:
+    lowered = f" {str(text or '').lower()} "
+    return any(token in lowered for token in (" i ", " i'm ", " i've ", " i'd ", " we ", " we're ", " we've ", " our ", " my "))

@@ -113,7 +113,7 @@ class ConfigService:
 
     def get_system_prompt(self, use_case_id: str) -> str:
         payload = self.get_use_case(use_case_id)
-        return str(payload.get("system_prompt") or payload.get("guiding_prompt") or "").strip()
+        return str(payload.get("guiding_prompt") or payload.get("system_prompt") or "").strip()
 
     def get_analysis_questions(self, use_case_id: str) -> list[dict[str, Any]]:
         payload = self.get_use_case(use_case_id)
@@ -132,6 +132,11 @@ class ConfigService:
         payload = self.get_use_case(use_case_id)
         sections = payload.get("preset_sections", [])
         return [item for item in sections if isinstance(item, dict)]
+
+    def get_report_writer_instructions(self, use_case_id: str) -> list[str]:
+        payload = self.get_use_case(use_case_id)
+        instructions = payload.get("report_writer_instructions", [])
+        return [str(item).strip() for item in instructions if str(item).strip()]
 
     def get_agent_personality_modifiers(self, use_case_id: str) -> list[str]:
         payload = self.get_use_case(use_case_id)

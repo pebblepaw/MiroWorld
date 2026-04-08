@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 import os
 from typing import Any
 
@@ -120,19 +121,24 @@ class MemoryService:
     ) -> dict[str, Any]:
         normalized_limit = max(1, int(limit))
 
-        if self._memory_backend_preference != "zep":
-            graphiti = self._search_graphiti_context(simulation_id, query, normalized_limit)
-            if graphiti is not None:
-                return graphiti
-
-        zep_context = self._search_zep_context(simulation_id, query, normalized_limit)
-        if zep_context is not None:
-            return zep_context
+        graphiti = self._search_graphiti_context(
+            simulation_id,
+            query,
+            normalized_limit,
+            live_mode=live_mode,
+        )
+        if graphiti is not None:
+            return graphiti
 
         if live_mode:
-            raise RuntimeError(
-                "Live memory search requires Graphiti or Zep context, but neither backend is available."
-            )
+            raise RuntimeError("Live memory search requires Graphiti backend, but Graphiti is unavailable.")
+
+        if self._memory_backend_preference == "zep":
+            zep_context = self._search_zep_context(simulation_id, query, normalized_limit)
+            if zep_context is not None:
+                return zep_context
+
+        # Non-live compatibility path for demos and local development only.
         return self._search_local_context(simulation_id, query, normalized_limit)
 
     def search_agent_context(
@@ -165,13 +171,7 @@ class MemoryService:
             if result["episodes"]:
                 return result
         if live_mode:
-            return {
-                "episodes": [],
-                "synced_events": 0,
-                "zep_context_used": False,
-                "graphiti_context_used": False,
-                "memory_backend": "graphiti" if self._memory_backend_preference != "zep" else "zep",
-            }
+            raise RuntimeError("Live memory search returned no Graphiti context for the requested agent.")
         return {
             "episodes": [],
             "synced_events": 0,
@@ -208,7 +208,7 @@ class MemoryService:
         *,
         live_mode: bool = False,
     ) -> dict[str, Any]:
-        memories = self.get_agent_memory(simulation_id, agent_id)
+        memories = [] if live_mode else self.get_agent_memory(simulation_id, agent_id)
         memory_context = self.search_agent_context(
             simulation_id,
             agent_id,
@@ -216,27 +216,42 @@ class MemoryService:
             limit=8,
             live_mode=live_mode,
         )
+        if live_mode and memory_context.get("memory_backend") != "graphiti":
+            raise RuntimeError("Live agent chat requires Graphiti-backed memory context.")
+        if live_mode and not memory_context["episodes"]:
+            raise RuntimeError("Live agent chat requires Graphiti memory results, but none were found.")
+
         agents = {agent["agent_id"]: agent for agent in self.store.get_agents(simulation_id)}
         agent = agents.get(agent_id)
         if not agent:
             raise RuntimeError(f"Agent not found in simulation: {agent_id}")
 
-        memory_excerpt = "\n".join(
-            f"- round {item['round_no']} {item['action_type']}: {item.get('content', '')}"
-            for item in memories[-8:]
-        )
         context_excerpt = "\n".join(
             f"- {item['content']}"
             for item in memory_context["episodes"][:6]
         )
-        prompt = (
-            f"You are persona agent {agent_id} from McKAInsey simulation {simulation_id}.\n"
-            f"Persona profile: {agent['persona']}\n\n"
-            f"Recent local memory:\n{memory_excerpt or '- none'}\n\n"
-            f"Relevant memory search results ({memory_context.get('memory_backend', 'local')}):\n{context_excerpt or '- none'}\n\n"
-            f"User question: {message}\n"
-            "Answer in-character in 3-5 sentences, grounded only in the memories above."
-        )
+        if live_mode:
+            prompt = (
+                f"You are persona agent {agent_id} from McKAInsey simulation {simulation_id}.\n"
+                f"Persona profile: {agent['persona']}\n\n"
+                f"Relevant Graphiti memory search results:\n{context_excerpt or '- none'}\n\n"
+                f"User question: {message}\n"
+                "Answer in-character in 3-5 sentences, grounded only in the Graphiti memories above."
+            )
+        else:
+            memory_excerpt = "\n".join(
+                f"- round {item['round_no']} {item['action_type']}: {item.get('content', '')}"
+                for item in memories[-8:]
+            )
+            prompt = (
+                f"You are persona agent {agent_id} from McKAInsey simulation {simulation_id}.\n"
+                f"Persona profile: {agent['persona']}\n\n"
+                f"Recent local memory:\n{memory_excerpt or '- none'}\n\n"
+                f"Relevant memory search results ({memory_context.get('memory_backend', 'local')}):\n{context_excerpt or '- none'}\n\n"
+                f"User question: {message}\n"
+                "Answer in-character in 3-5 sentences, grounded only in the memories above."
+            )
+
         response: str
         if self.llm.is_enabled():
             response = self.llm.complete_required(
@@ -252,7 +267,7 @@ class MemoryService:
             "simulation_id": simulation_id,
             "agent_id": agent_id,
             "response": response,
-            "memory_used": bool(memories or memory_context["episodes"]),
+            "memory_used": bool(memory_context["episodes"] if live_mode else (memories or memory_context["episodes"])),
             "model_provider": self.llm.provider,
             "model_name": self.llm.model_name,
             "gemini_model": self.llm.model_name,
@@ -267,29 +282,45 @@ class MemoryService:
         if not self.llm.is_enabled():
             raise RuntimeError("A valid model provider API key is required for Stage 5 chat.")
 
-    def _search_graphiti_context(self, simulation_id: str, query: str, limit: int) -> dict[str, Any] | None:
+    def _search_graphiti_context(
+        self,
+        simulation_id: str,
+        query: str,
+        limit: int,
+        *,
+        live_mode: bool = False,
+    ) -> dict[str, Any] | None:
         if not GraphitiService.is_available():
+            if live_mode:
+                raise RuntimeError("Live memory search requires graphiti_core, but it is not installed.")
             return None
 
         session = self.store.get_console_session(simulation_id) or {}
+        provider = session.get("model_provider") or self._settings.llm_provider
         session_config = {
             "session_id": simulation_id,
-            "provider": session.get("model_provider") or self._settings.llm_provider,
-            "api_key": session.get("api_key") or self._settings.resolved_key_for_provider(session.get("model_provider") or self._settings.llm_provider),
-            "model": session.get("model_name") or self._settings.default_model_for_provider(session.get("model_provider") or self._settings.llm_provider),
+            "provider": provider,
+            "api_key": session.get("api_key") or self._settings.resolved_key_for_provider(provider),
+            "model": session.get("model_name") or self._settings.default_model_for_provider(provider),
+            "embed_model": session.get("embed_model_name") or self._settings.default_embed_model_for_provider(provider),
+            "base_url": session.get("base_url") or self._settings.default_base_url_for_provider(provider),
         }
         service = GraphitiService(session_config)
 
-        async def _run() -> list[dict[str, Any]]:
+        async def _run() -> tuple[list[dict[str, Any]], int]:
             await service.initialize()
             try:
-                return await service.search_agent_context("global", query, limit=limit)
+                synced_events = await self._sync_graphiti_interactions(service, simulation_id)
+                results = await service.search_agent_context("global", query, limit=limit)
+                return results, synced_events
             finally:
                 await service.cleanup()
 
         try:
-            results = asyncio.run(_run())
-        except Exception:  # noqa: BLE001
+            results, synced_events = asyncio.run(_run())
+        except Exception as exc:  # noqa: BLE001
+            if live_mode:
+                raise RuntimeError("Live memory search failed while querying Graphiti.") from exc
             return None
 
         episodes = [
@@ -304,11 +335,67 @@ class MemoryService:
         ]
         return {
             "episodes": episodes[:limit],
-            "synced_events": 0,
+            "synced_events": synced_events,
             "zep_context_used": False,
             "graphiti_context_used": bool(episodes),
             "memory_backend": "graphiti",
         }
+
+    async def _sync_graphiti_interactions(self, service: GraphitiService, simulation_id: str) -> int:
+        interactions = self.store.get_interactions(simulation_id)
+        if not interactions:
+            return 0
+
+        sync_state = self.store.get_memory_sync_state(simulation_id) or {}
+        last_interaction_id = int(sync_state.get("last_interaction_id", 0) or 0)
+        previously_synced = int(sync_state.get("synced_events", 0) or 0)
+        unsynced = [interaction for interaction in interactions if int(interaction.get("id", 0) or 0) > last_interaction_id]
+        if not unsynced:
+            return 0
+
+        for interaction in unsynced:
+            await service.add_agent_memory(
+                agent_id=str(interaction.get("actor_agent_id") or "unknown"),
+                content=self._format_graphiti_episode(simulation_id, interaction),
+                round_no=int(interaction.get("round_no", 0) or 0),
+                timestamp=self._normalize_reference_time(interaction.get("created_at")),
+            )
+
+        self.store.save_memory_sync_state(
+            simulation_id,
+            last_interaction_id=max(int(interaction.get("id", 0) or 0) for interaction in unsynced),
+            synced_events=previously_synced + len(unsynced),
+        )
+        return len(unsynced)
+
+    def _format_graphiti_episode(self, simulation_id: str, interaction: dict[str, Any]) -> str:
+        return (
+            f"simulation={simulation_id} interaction_id={interaction.get('id', '')} "
+            f"round={interaction.get('round_no', 0)} "
+            f"actor={interaction.get('actor_agent_id', '')} "
+            f"target={interaction.get('target_agent_id') or 'none'} "
+            f"action={interaction.get('action_type', '')} "
+            f"content={interaction.get('content', '')} "
+            f"delta={interaction.get('delta', 0)}"
+        )
+
+    def _normalize_reference_time(self, created_at: Any) -> str:
+        if isinstance(created_at, datetime):
+            dt = created_at
+        else:
+            raw = str(created_at or "").strip()
+            dt = None
+            if raw:
+                try:
+                    dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except ValueError:
+                    dt = None
+            if dt is None:
+                dt = datetime.now(UTC)
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).isoformat()
 
     def _search_zep_context(self, simulation_id: str, query: str, limit: int) -> dict[str, Any] | None:
         if self.client is None:

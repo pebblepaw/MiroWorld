@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText, Loader2, Download, Send, Search, X,
   MessageSquare, Users, User, TrendingUp, TrendingDown,
@@ -80,6 +80,17 @@ const DEMO_REPORT: StructuredReportState = {
   error: null,
 };
 
+function hasRenderableReportContent(report: StructuredReportState): boolean {
+  return Boolean(
+    String(report.executive_summary ?? '').trim() ||
+      (Array.isArray(report.metric_deltas) && report.metric_deltas.length > 0) ||
+      (Array.isArray(report.sections) && report.sections.length > 0) ||
+      (Array.isArray(report.insight_blocks) && report.insight_blocks.length > 0) ||
+      (Array.isArray(report.preset_sections) && report.preset_sections.length > 0) ||
+      (Array.isArray(report.insight_cards) && report.insight_cards.length > 0),
+  );
+}
+
 export default function ReportChat() {
   const {
     sessionId,
@@ -101,6 +112,8 @@ export default function ReportChat() {
   const [reportError, setReportError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const startedRef = useRef<string | null>(null);
+  const hydratedReportSessionRef = useRef<string | null>(null);
+  const hydrateRequestSeqRef = useRef(0);
 
   // Chat state
   const [chatSegment, setChatSegment] = useState<ChatSegment>('dissenters');
@@ -156,11 +169,8 @@ export default function ReportChat() {
     setLoading(true);
     setReportError(null);
     try {
-      const [, polled] = await Promise.all([
-        generateReport(sessionId),
-        getStructuredReport(sessionId),
-      ]);
-      setReportState(polled);
+      const generated = await generateReport(sessionId);
+      setReportState(generated);
     } catch (error) {
       startedRef.current = null;
       if (!isLiveBootMode()) {
@@ -185,10 +195,49 @@ export default function ReportChat() {
     }
   }, [loadDemoReport, sessionId]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!simulationComplete || !sessionId) return;
-    if (startedRef.current === sessionId) return;
-    void beginReportGeneration();
+    if (hydratedReportSessionRef.current === sessionId) return;
+
+    let cancelled = false;
+    const requestSeq = ++hydrateRequestSeqRef.current;
+    const hydrateReport = async () => {
+      setLoading(true);
+      setReportError(null);
+      try {
+        const report = await getStructuredReport(sessionId);
+        if (cancelled || requestSeq !== hydrateRequestSeqRef.current) return;
+
+        if (hasRenderableReportContent(report)) {
+          setReportState(report);
+          startedRef.current = sessionId;
+          hydratedReportSessionRef.current = sessionId;
+          return;
+        }
+
+        if (startedRef.current !== sessionId) {
+          await beginReportGeneration();
+        }
+        hydratedReportSessionRef.current = sessionId;
+      } catch {
+        if (cancelled || requestSeq !== hydrateRequestSeqRef.current) return;
+        hydratedReportSessionRef.current = null;
+        await beginReportGeneration();
+      } finally {
+        if (!cancelled && requestSeq === hydrateRequestSeqRef.current) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void hydrateReport();
+
+    return () => {
+      cancelled = true;
+      if (requestSeq === hydrateRequestSeqRef.current) {
+        setLoading(false);
+      }
+    };
   }, [beginReportGeneration, sessionId, simulationComplete]);
 
   useEffect(() => {
@@ -378,6 +427,7 @@ export default function ReportChat() {
     ? selectedAgent?.id ?? null
     : `group-${chatSegment}`;
   const history = activeThreadId ? (chatHistory[activeThreadId] || []) : [];
+  const hasReportContent = hasRenderableReportContent(reportState);
 
   const showReport = viewMode === 'report' || viewMode === 'split';
   const showChat = viewMode === 'chat' || viewMode === 'split';
@@ -444,7 +494,7 @@ export default function ReportChat() {
         {/* ── Report Panel ── */}
         {showReport && (
           <div className={`overflow-y-auto scrollbar-thin p-6 space-y-6 ${showChat ? 'w-[60%] border-r border-border' : 'w-full max-w-4xl mx-auto'}`}>
-            {loading ? (
+            {loading && !hasReportContent ? (
               <div className="flex flex-col items-center justify-center h-64 gap-3">
                 <Loader2 className="w-6 h-6 animate-spin text-white/40" />
                 <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">Generating report...</span>

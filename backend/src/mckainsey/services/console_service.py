@@ -361,10 +361,10 @@ class ConsoleService:
             return None
 
         try:
-            use_case_cfg = ConfigService(self.settings).get_use_case(use_case)
+            config_service = ConfigService(self.settings)
+            default_prompt = str(config_service.get_system_prompt(use_case) or "").strip()
         except Exception:  # noqa: BLE001
             return None
-        default_prompt = str(use_case_cfg.get("guiding_prompt") or "").strip()
         return default_prompt or None
 
     def update_v2_session_config(
@@ -395,7 +395,7 @@ class ConsoleService:
             resolved_use_case = str(use_case_payload.get("code", use_case)).strip().lower()
             patch["use_case"] = resolved_use_case
             if guiding_prompt is None and not self._read_session_config(session_id).get("guiding_prompt"):
-                default_prompt = str(use_case_payload.get("guiding_prompt") or "").strip()
+                default_prompt = str(config_service.get_system_prompt(resolved_use_case) or "").strip()
                 if default_prompt:
                     patch["guiding_prompt"] = default_prompt
             if analysis_questions is None:
@@ -468,7 +468,7 @@ class ConsoleService:
             api_key=api_key,
         )
         use_case_payload = config.get_use_case(use_case)
-        stored_prompt = str(use_case_payload.get("guiding_prompt") or "").strip() or None
+        stored_prompt = str(config.get_system_prompt(str(use_case_payload.get("code", use_case))) or "").strip() or None
         analysis_questions = [
             item
             for item in config.get_analysis_questions(str(use_case_payload.get("code", use_case)))
@@ -1282,13 +1282,33 @@ class ConsoleService:
         }
 
     def get_v2_report(self, session_id: str) -> dict[str, Any]:
+        cached = self.store.get_report_state(session_id)
+        if isinstance(cached, dict) and self._is_cached_v2_report_payload(cached):
+            cached.setdefault("status", "completed")
+            return cached
+
         runtime_settings = self._runtime_settings_for_session(session_id)
         report_service = ReportService(runtime_settings)
         session_cfg = self._read_session_config(session_id)
         use_case = str(session_cfg.get("use_case") or "").strip() or None
         payload = report_service.build_v2_report(session_id, use_case=use_case)
         payload.setdefault("status", "completed")
+        self.store.save_report_state(session_id, payload)
         return payload
+
+    def _is_cached_v2_report_payload(self, payload: dict[str, Any] | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if not str(payload.get("session_id") or "").strip():
+            return False
+
+        candidates = [
+            payload.get("metric_deltas"),
+            payload.get("sections"),
+            payload.get("insight_blocks"),
+            payload.get("preset_sections"),
+        ]
+        return any(isinstance(value, list) for value in candidates)
 
     def get_session_analysis_questions(self, session_id: str) -> dict[str, Any]:
         session = self._session_record(session_id)
@@ -1318,7 +1338,7 @@ class ConsoleService:
         report_service = ReportService(runtime_settings)
         session_cfg = self._read_session_config(session_id)
         use_case = str(session_cfg.get("use_case") or "").strip() or None
-        report_payload = report_service.build_v2_report(session_id, use_case=use_case)
+        report_payload = self.get_v2_report(session_id)
         docx_bytes = report_service.export_v2_report_docx(session_id, report=report_payload, use_case=use_case)
         return (f"mckainsey-{session_id}-report.docx", docx_bytes)
 

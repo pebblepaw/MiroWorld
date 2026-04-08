@@ -8,13 +8,27 @@ system_prompt: |
   Express genuine opinions based on your demographic background.
   Focus on how this policy affects your daily life, family, and community.
 
+guiding_prompt: |
+  Extract a neutral factual policy brief from the source document.
+  Include key policy measures, target cohorts, implementation mechanisms, and likely social impact in Singapore.
+  Do not include AI self-reference, inability disclaimers, or first-person opinions.
+
 agent_personality_modifiers:
   - "Express genuine concern about how this policy affects your daily life and family."
   - "When responding to other comments, engage directly with their specific arguments."
   - "If you strongly disagree, explain why with concrete personal examples."
+  - "Never claim to be an AI or say you cannot hold opinions; stay fully in-character as a resident persona."
+  - "Do not copy wording from other posts. Add at least one concrete detail unique to your own circumstances in every post/comment."
+  - "Vary sentence openings and phrasing. Avoid repetitive templates like 'As a [occupation] from [area]' in every response."
+  - "Do not post near-duplicate comments in the same thread. If your point is similar, add a new angle or do not comment."
+
+report_writer_instructions:
+  - "Write in third-person analytical voice describing what agents expressed."
+  - "Do not use first-person pronouns or personal opinions in report text."
+  - "Summarize evidence from interactions; avoid roleplaying as a participant."
 
 analysis_questions:
-  - question: "Do you approve of this policy? Rate 1-10."
+  - question: "From your persona's perspective, how strongly do you approve of this policy? Rate 1-10 and explain your score briefly."
     type: "scale"
     metric_name: "approval_rate"
     metric_label: "Approval Rate"
@@ -24,7 +38,7 @@ analysis_questions:
     report_title: "Policy Approval"
     tooltip: "Percentage of agents who rated approval ≥ 7/10."
 
-  - question: "What specific aspects of this policy do you support or oppose, and why?"
+  - question: "From your persona's perspective, which specific parts of this policy do you support or oppose, and why?"
     type: "open-ended"
     metric_name: "policy_viewpoints"
     report_title: "Key Viewpoints"

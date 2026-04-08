@@ -444,11 +444,16 @@ class LightRAGService:
 
         await self._rag.ainsert([ingestion_text], ids=[document_id], file_paths=file_paths)
 
-        summary_prompt = "Summarize this policy document with key entities and relationships."
+        summary_prompt = (
+            "Summarize this policy document in neutral third-person with key entities, "
+            "policy measures, target groups, and expected impacts. "
+            "Do not include AI self-reference, inability disclaimers, or first-person statements."
+        )
         if provider == "ollama":
             summary_prompt = (
                 "Summarize the policy in 5 concise bullets covering objective, implementing entities, "
-                "target cohorts, geographic scope, and expected social impact."
+                "target cohorts, geographic scope, and expected social impact. "
+                "Do not include AI self-reference, inability disclaimers, or first-person statements."
             )
         if normalized_guiding_prompt:
             summary_prompt = f"{summary_prompt} Focus especially on: {normalized_guiding_prompt}"

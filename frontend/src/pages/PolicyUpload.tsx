@@ -88,17 +88,6 @@ function buildSafeDocumentName(rawName: string, fallback: string) {
   return trimmed.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-").toLowerCase();
 }
 
-function getDefaultSystemPrompt(useCase: string) {
-  const normalized = String(useCase || '').trim().toLowerCase();
-  if (normalized === 'campaign-content-testing') {
-    return 'Extract key product features, target demographics, and brand positioning statements. Highlight emotional triggers and pricing constraints.';
-  }
-  if (normalized === 'product-market-research') {
-    return 'Analyze this product feedback for core pain points, requested features, and user satisfaction signals. Group by user persona.';
-  }
-  return 'Identify all entities, locations, organizations, and the specific impact mechanisms described in this policy document. Focus strongly on sentiment and demographic effects.';
-}
-
 function getProcessingProviderLabel(provider: string) {
   const normalized = String(provider || '').trim().toLowerCase();
   if (normalized === 'google' || normalized === 'gemini') {
@@ -486,7 +475,6 @@ export default function PolicyUpload() {
       const resolvedSessionId = await ensureSession();
       const currentQuestions = analysisQuestionsRef.current;
       persistAnalysisQuestions(currentQuestions);
-      const combinedPrompt = currentQuestions.map((q) => q.question.trim()).filter(Boolean).join('\n\n') || getDefaultSystemPrompt(useCase);
       const serverParsedFiles = uploadedFiles.filter(isServerParsedDocument);
       const textFiles = uploadedFiles.filter((file) => !isServerParsedDocument(file));
       const metadataTargets = currentQuestions
@@ -537,7 +525,7 @@ export default function PolicyUpload() {
           artifacts.push(
             await processKnowledgeDocuments(resolvedSessionId, {
               documents,
-              guiding_prompt: combinedPrompt || undefined,
+              guiding_prompt: undefined,
             }),
           );
         }
@@ -547,12 +535,12 @@ export default function PolicyUpload() {
             await uploadKnowledgeFile(
               resolvedSessionId,
               file,
-              combinedPrompt || undefined,
+              undefined,
             ),
           );
         }
 
-        return mergeKnowledgeArtifacts(resolvedSessionId, artifacts, combinedPrompt || null);
+        return mergeKnowledgeArtifacts(resolvedSessionId, artifacts, null);
       })();
 
       const [artifact] = await Promise.all([
