@@ -370,6 +370,8 @@ export interface ConsoleAgentChatResponse {
   responses: ConsoleChatResponseMessage[];
 }
 
+const CHAT_REQUEST_TIMEOUT_MS = 90_000;
+
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
@@ -393,6 +395,31 @@ async function parseJson<T>(response: Response): Promise<T> {
     throw new Error(detail);
   }
   return response.json() as Promise<T>;
+}
+
+async function fetchChatWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = CHAT_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    const isAbortError =
+      (error instanceof DOMException && error.name === "AbortError")
+      || (error instanceof Error && error.name === "AbortError");
+    if (isAbortError) {
+      throw new Error(
+        `Live chat timed out after ${Math.round(timeoutMs / 1000)} seconds while waiting for backend memory retrieval. `
+        + "Please retry and check backend Graphiti/FalkorDB health.",
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 export function normalizeProviderId(provider: string | null | undefined): ModelProviderId | V2ProviderId {
@@ -704,7 +731,7 @@ export async function sendGroupChatMessage(
   sessionId: string,
   payload: { segment: string; message: string },
 ): Promise<ConsoleGroupChatResponse> {
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/chat/group`, {
+  const response = await fetchChatWithTimeout(`${API_BASE}/api/v2/console/session/${sessionId}/chat/group`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -720,7 +747,7 @@ export async function sendAgentChatMessage(
   sessionId: string,
   payload: { agent_id: string; message: string },
 ): Promise<ConsoleAgentChatResponse> {
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/chat/agent/${payload.agent_id}`, {
+  const response = await fetchChatWithTimeout(`${API_BASE}/api/v2/console/session/${sessionId}/chat/agent/${payload.agent_id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message: payload.message }),

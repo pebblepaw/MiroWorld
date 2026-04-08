@@ -100,6 +100,7 @@ class SimulationStore:
                 CREATE TABLE IF NOT EXISTS memory_sync_state (
                     simulation_id TEXT PRIMARY KEY,
                     last_interaction_id INTEGER NOT NULL DEFAULT 0,
+                    last_checkpoint_id INTEGER NOT NULL DEFAULT 0,
                     synced_events INTEGER NOT NULL DEFAULT 0,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
@@ -146,6 +147,10 @@ class SimulationStore:
                 conn.execute("ALTER TABLE console_sessions ADD COLUMN api_key TEXT")
             if "base_url" not in console_columns:
                 conn.execute("ALTER TABLE console_sessions ADD COLUMN base_url TEXT")
+
+            memory_sync_columns = [r[1] for r in conn.execute("PRAGMA table_info(memory_sync_state)").fetchall()]
+            if "last_checkpoint_id" not in memory_sync_columns:
+                conn.execute("ALTER TABLE memory_sync_state ADD COLUMN last_checkpoint_id INTEGER NOT NULL DEFAULT 0")
 
     def upsert_simulation(
         self,
@@ -237,6 +242,21 @@ class SimulationStore:
                 (simulation_id,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_interactions_after_id(
+        self,
+        simulation_id: str,
+        last_interaction_id: int,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM interactions WHERE simulation_id = ? AND id > ? ORDER BY id"
+        params: tuple[Any, ...] = (simulation_id, int(last_interaction_id))
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (simulation_id, int(last_interaction_id), int(limit))
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
 
     def get_simulation(self, simulation_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -471,18 +491,32 @@ class SimulationStore:
             ).fetchone()
         return dict(row) if row else None
 
-    def save_memory_sync_state(self, simulation_id: str, last_interaction_id: int, synced_events: int) -> None:
+    def save_memory_sync_state(
+        self,
+        simulation_id: str,
+        last_interaction_id: int,
+        synced_events: int,
+        *,
+        last_checkpoint_id: int | None = None,
+    ) -> None:
+        existing = self.get_memory_sync_state(simulation_id) or {}
+        checkpoint_id = int(
+            last_checkpoint_id
+            if last_checkpoint_id is not None
+            else existing.get("last_checkpoint_id", 0)
+        )
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO memory_sync_state(simulation_id, last_interaction_id, synced_events)
-                VALUES(?, ?, ?)
+                INSERT INTO memory_sync_state(simulation_id, last_interaction_id, last_checkpoint_id, synced_events)
+                VALUES(?, ?, ?, ?)
                 ON CONFLICT(simulation_id) DO UPDATE SET
                     last_interaction_id = excluded.last_interaction_id,
+                    last_checkpoint_id = excluded.last_checkpoint_id,
                     synced_events = excluded.synced_events,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (simulation_id, last_interaction_id, synced_events),
+                (simulation_id, last_interaction_id, checkpoint_id, synced_events),
             )
 
     def reset_memory_sync_state(self, simulation_id: str) -> None:
@@ -580,6 +614,34 @@ class SimulationStore:
         for row in rows:
             record = json.loads(row["stance_json"])
             record.setdefault("checkpoint_kind", row["checkpoint_kind"])
+            records.append(record)
+        return records
+
+    def list_checkpoint_records_after_id(
+        self,
+        session_id: str,
+        last_checkpoint_id: int,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT id, checkpoint_kind, stance_json, created_at
+            FROM simulation_checkpoints
+            WHERE session_id = ? AND id > ?
+            ORDER BY id
+        """
+        params: tuple[Any, ...] = (session_id, int(last_checkpoint_id))
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (session_id, int(last_checkpoint_id), int(limit))
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        records: list[dict[str, Any]] = []
+        for row in rows:
+            record = json.loads(row["stance_json"])
+            record.setdefault("checkpoint_kind", row["checkpoint_kind"])
+            record["id"] = int(row["id"])
+            record["created_at"] = row["created_at"]
             records.append(record)
         return records
 
