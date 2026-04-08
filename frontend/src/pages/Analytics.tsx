@@ -1150,25 +1150,42 @@ function formatPlainText(value: unknown): string {
 }
 
 function normalizeTopPostText(value: unknown): string {
+  let raw: string;
   if (typeof value === "string") {
-    return formatPlainText(value);
-  }
-  if (!value || typeof value !== "object") {
-    return formatPlainText(String(value ?? ""));
-  }
-
-  const entry = value as Record<string, unknown>;
-  const candidates = [entry.content, entry.body, entry.title, entry.text, entry.summary, entry.quote];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      return formatPlainText(candidate);
+    raw = formatPlainText(value);
+  } else if (!value || typeof value !== "object") {
+    raw = formatPlainText(String(value ?? ""));
+  } else {
+    const entry = value as Record<string, unknown>;
+    const candidates = [entry.content, entry.body, entry.title, entry.text, entry.summary, entry.quote];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return stripPromptBoilerplate(formatPlainText(candidate));
+      }
+      if (candidate != null && typeof candidate !== "object") {
+        return stripPromptBoilerplate(formatPlainText(String(candidate)));
+      }
     }
-    if (candidate != null && typeof candidate !== "object") {
-      return formatPlainText(String(candidate));
-    }
+    return "";
   }
+  return stripPromptBoilerplate(raw);
+}
 
-  return "";
+// Strip "Community prompt: [question]. Policy brief: [...]" boilerplate from backend-generated post summaries.
+function stripPromptBoilerplate(text: string): string {
+  // Remove "Community prompt: <text>. Policy brief: " template prefix
+  const policyBriefIdx = text.indexOf("Policy brief:");
+  if (policyBriefIdx > 0) {
+    const after = text.slice(policyBriefIdx + "Policy brief:".length).trim();
+    if (after.length > 0) return after;
+  }
+  // Remove standalone "Community prompt: <text>" prefix leaving only the agent's actual response
+  const communityPromptMatch = text.match(/^Community prompt:\s*.+?\.\s*/s);
+  if (communityPromptMatch) {
+    const after = text.slice(communityPromptMatch[0].length).trim();
+    if (after.length > 0) return after;
+  }
+  return text;
 }
 
 function normalizeCascadesPayload(payload: Record<string, unknown>, agentNamesById: Map<string, string>): ViralPost[] | null {

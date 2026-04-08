@@ -5,14 +5,11 @@ import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, X
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useApp } from '@/contexts/AppContext';
 import {
-  getDynamicFilters,
   isLiveBootMode,
   previewPopulation,
-  ConsoleDynamicFilterFieldResponse,
 } from '@/lib/console-api';
 import { toast } from '@/hooks/use-toast';
 import { SingaporeMap } from '@/components/SingaporeMap';
@@ -28,41 +25,6 @@ const INDUSTRY_COLORS = [
 
 type SampleMode = 'affected_groups' | 'population_baseline';
 type GroupDimension = 'industry' | 'ageBucket' | 'planningArea' | 'sex' | 'occupation';
-type DynamicFilterSelection = string | string[] | { min: number; max: number };
-
-const FALLBACK_FILTERS: ConsoleDynamicFilterFieldResponse[] = [
-  {
-    field: 'age',
-    type: 'range',
-    label: 'Age Range',
-    min: 18,
-    max: 85,
-    default_min: 20,
-    default_max: 65,
-    options: [],
-  },
-  {
-    field: 'planning_area',
-    type: 'multi-select-chips',
-    label: 'Planning Area',
-    options: ['All Areas', 'Central', 'East', 'West', 'North'],
-    default: ['All Areas'],
-  },
-  {
-    field: 'occupation',
-    type: 'dropdown',
-    label: 'Occupation',
-    options: ['All Occupations', 'Professional', 'Service', 'Clerical'],
-    default: 'All Occupations',
-  },
-  {
-    field: 'gender',
-    type: 'single-select-chips',
-    label: 'Gender',
-    options: ['All', 'Male', 'Female'],
-    default: 'All',
-  },
-];
 
 export default function AgentConfig() {
   const {
@@ -94,62 +56,6 @@ export default function AgentConfig() {
   } = useApp();
 
   const [groupCategory, setGroupCategory] = useState<string>('industry');
-  const [dynamicFilters, setDynamicFilters] = useState<ConsoleDynamicFilterFieldResponse[]>([]);
-  const [dynamicFilterValues, setDynamicFilterValues] = useState<Record<string, DynamicFilterSelection>>({});
-  const [dynamicFiltersLoading, setDynamicFiltersLoading] = useState(false);
-  const [dynamicFiltersError, setDynamicFiltersError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const liveMode = isLiveBootMode();
-    if (!sessionId) {
-      if (liveMode) {
-        setDynamicFilters([]);
-        setDynamicFilterValues({});
-        setDynamicFiltersError('Complete Screen 1 before loading live filters.');
-      } else {
-        setDynamicFilters(FALLBACK_FILTERS);
-        setDynamicFilterValues(buildDefaultFilterValues(FALLBACK_FILTERS));
-      }
-      setDynamicFiltersLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setDynamicFiltersLoading(true);
-    setDynamicFiltersError(null);
-
-    void getDynamicFilters(sessionId)
-      .then((payload) => {
-        if (cancelled) return;
-        const nextFilters = payload.filters.length > 0 ? payload.filters : (liveMode ? [] : FALLBACK_FILTERS);
-        setDynamicFilters(nextFilters);
-        setDynamicFilterValues((current) => mergeFilterDefaults(nextFilters, current));
-        if (liveMode && nextFilters.length === 0) {
-          setDynamicFiltersError('Live filter discovery returned no filter definitions.');
-        }
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        if (liveMode) {
-          setDynamicFilters([]);
-          setDynamicFilterValues({});
-          setDynamicFiltersError(error instanceof Error ? error.message : 'Unable to load dynamic filters.');
-        } else {
-          setDynamicFilters(FALLBACK_FILTERS);
-          setDynamicFilterValues((current) => mergeFilterDefaults(FALLBACK_FILTERS, current));
-          setDynamicFiltersError(error instanceof Error ? error.message : 'Unable to load dynamic filters.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setDynamicFiltersLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId]);
 
   const resetPopulationPreview = useCallback(() => {
     setPopulationArtifact(null);
@@ -179,10 +85,7 @@ export default function AgentConfig() {
     resetPopulationPreview();
   }, [resetPopulationPreview, setSampleMode]);
 
-  const handleFilterChange = useCallback((field: ConsoleDynamicFilterFieldResponse, value: DynamicFilterSelection) => {
-    setDynamicFilterValues((current) => ({ ...current, [field.field]: value }));
-    resetPopulationPreview();
-  }, [resetPopulationPreview]);
+
 
   const handleInstructionsChange = useCallback((nextValue: string) => {
     setSamplingInstructions(nextValue);
@@ -208,16 +111,11 @@ export default function AgentConfig() {
     try {
       setPopulationLoading(true);
       setPopulationError(null);
-      const payload = buildSamplingPayload(dynamicFilters, dynamicFilterValues);
       const artifact = await previewPopulation(sessionId, {
         agent_count: requestedAgentCount,
         sample_mode: sampleMode,
         sampling_instructions: samplingInstructions.trim() || undefined,
         seed: requestedSeed,
-        min_age: payload.min_age,
-        max_age: payload.max_age,
-        planning_areas: payload.planning_areas,
-        dynamic_filters: payload.dynamic_filters,
       });
       setPopulationArtifact(artifact);
       setSampleSeed(artifact.sample_seed);
@@ -274,7 +172,6 @@ export default function AgentConfig() {
     knowledgeArtifact,
     sampleMode,
     sampleSeed,
-    dynamicFilterValues,
     samplingInstructions,
     sessionId,
     setAgents,
@@ -407,13 +304,13 @@ export default function AgentConfig() {
           <Slider
             value={[agentCount]}
             onValueChange={handleCountChange}
-            min={0}
+            min={10}
             max={500}
-            step={2}
+            step={10}
             className="w-full mb-2"
           />
           <div className="flex justify-between text-[11px] text-muted-foreground font-mono mb-6">
-            <span>0</span><span>500</span>
+            <span>10</span><span>500</span>
           </div>
 
           <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3">Sampling Strategy</div>
@@ -430,24 +327,7 @@ export default function AgentConfig() {
             />
           </div>
 
-          <div className="mt-5 pt-5 border-t border-white/5">
-            <div className="flex items-center justify-end gap-3 mb-3">
-              {dynamicFiltersLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
-            </div>
-            {dynamicFiltersError && (
-              <p className="text-[11px] text-muted-foreground mb-3">{dynamicFiltersError}</p>
-            )}
-            <div className="space-y-4">
-              {dynamicFilters.map((field) => (
-                <DynamicFilterField
-                  key={field.field}
-                  field={field}
-                  value={dynamicFilterValues[field.field]}
-                  onChange={(nextValue) => handleFilterChange(field, nextValue)}
-                />
-              ))}
-            </div>
-          </div>
+
         </div>
 
         <div className="surface-card border border-white/5 rounded-xl p-5 shadow-sm flex flex-col">
@@ -772,268 +652,6 @@ function WaffleTooltipContent({ data }: { data: any }) {
       </div>
     </div>
   );
-}
-
-function DynamicFilterField({
-  field,
-  value,
-  onChange,
-}: {
-  field: ConsoleDynamicFilterFieldResponse;
-  value: DynamicFilterSelection | undefined;
-  onChange: (value: DynamicFilterSelection) => void;
-}) {
-  const type = field.type;
-
-  if (type === 'range') {
-    const current = normalizeRangeValue(field, value);
-    const minBound = Number.isFinite(field.min) ? Number(field.min) : undefined;
-    const maxBound = Number.isFinite(field.max) ? Number(field.max) : undefined;
-    return (
-      <div className="space-y-2">
-        <div className="text-xs font-medium text-foreground">{field.label}</div>
-        <div className="flex items-center gap-2">
-          <Input
-            aria-label={`${field.label} minimum`}
-            type="number"
-            min={minBound}
-            max={maxBound}
-            value={current.min}
-            onChange={(event) =>
-              onChange({
-                min: clampNumber(Number(event.target.value), minBound, maxBound),
-                max: Math.max(clampNumber(Number(event.target.value), minBound, maxBound), current.max),
-              })
-            }
-            className="h-9 bg-[#0A0A0A] border-white/10 text-sm"
-          />
-          <span className="text-xs text-muted-foreground">to</span>
-          <Input
-            aria-label={`${field.label} maximum`}
-            type="number"
-            min={minBound}
-            max={maxBound}
-            value={current.max}
-            onChange={(event) =>
-              onChange({
-                min: current.min,
-                max: Math.max(clampNumber(Number(event.target.value), minBound, maxBound), current.min),
-              })
-            }
-            className="h-9 bg-[#0A0A0A] border-white/10 text-sm"
-          />
-        </div>
-      </div>
-    );
-  }
-
-  if (type === 'multi-select-chips') {
-    const selected = normalizeMultiSelectValue(field, value);
-    return (
-      <div className="space-y-2">
-        <div className="text-xs font-medium text-foreground">{field.label}</div>
-        <div className="flex flex-wrap gap-2">
-          {field.options.map((option) => {
-            const active = selected.includes(option);
-            return (
-              <button
-                key={option}
-                type="button"
-                onClick={() => onChange(toggleMultiSelectOption(field, selected, option))}
-                className={`rounded-full border px-3 py-1 text-[11px] transition-colors ${
-                  active ? 'border-orange-400/50 bg-orange-400/15 text-orange-200' : 'border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground'
-                }`}
-              >
-                {option}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  if (type === 'single-select-chips') {
-    const selected = normalizeSingleSelectValue(field, value);
-    return (
-      <div className="space-y-2">
-        <div className="text-xs font-medium text-foreground">{field.label}</div>
-        <div className="flex flex-wrap gap-2">
-          {field.options.map((option) => {
-            const active = selected === option;
-            return (
-              <button
-                key={option}
-                type="button"
-                onClick={() => onChange(option)}
-                className={`rounded-full border px-3 py-1 text-[11px] transition-colors ${
-                  active ? 'border-orange-400/50 bg-orange-400/15 text-orange-200' : 'border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground'
-                }`}
-              >
-                {option}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  const selected = normalizeSingleSelectValue(field, value);
-  return (
-    <div className="space-y-2">
-      <label className="text-xs font-medium text-foreground" htmlFor={`filter-${field.field}`}>
-        {field.label}
-      </label>
-      <select
-        id={`filter-${field.field}`}
-        value={selected}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-md border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm text-foreground"
-      >
-        {field.options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-function buildDefaultFilterValues(filters: ConsoleDynamicFilterFieldResponse[]) {
-  return filters.reduce((acc, field) => {
-    acc[field.field] = defaultFilterValue(field);
-    return acc;
-  }, {} as Record<string, DynamicFilterSelection>);
-}
-
-function mergeFilterDefaults(
-  filters: ConsoleDynamicFilterFieldResponse[],
-  current: Record<string, DynamicFilterSelection>,
-) {
-  const next = { ...current };
-  filters.forEach((field) => {
-    if (next[field.field] === undefined) {
-      next[field.field] = defaultFilterValue(field);
-    }
-  });
-  return next;
-}
-
-function defaultFilterValue(field: ConsoleDynamicFilterFieldResponse): DynamicFilterSelection {
-  if (field.type === 'range') {
-    return {
-      min: Number(field.default_min ?? field.min ?? 0),
-      max: Number(field.default_max ?? field.max ?? 0),
-    };
-  }
-  if (field.type === 'multi-select-chips') {
-    if (Array.isArray(field.default) && field.default.length > 0) {
-      return [...field.default];
-    }
-    if (typeof field.default === 'string' && field.default.trim()) {
-      return [field.default];
-    }
-    return field.options.length > 0 ? [field.options[0]] : [];
-  }
-  if (typeof field.default === 'string' && field.default.trim()) {
-    return field.default;
-  }
-  return field.options[0] ?? '';
-}
-
-function normalizeRangeValue(field: ConsoleDynamicFilterFieldResponse, value: DynamicFilterSelection | undefined) {
-  const defaultValue = defaultFilterValue(field);
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return {
-      min: Number.isFinite(value.min) ? value.min : (defaultValue as { min: number; max: number }).min,
-      max: Number.isFinite(value.max) ? value.max : (defaultValue as { min: number; max: number }).max,
-    };
-  }
-  return defaultValue as { min: number; max: number };
-}
-
-function clampNumber(value: number, min?: number, max?: number) {
-  if (!Number.isFinite(value)) return min ?? max ?? 0;
-  let next = value;
-  if (Number.isFinite(min as number)) {
-    next = Math.max(next, Number(min));
-  }
-  if (Number.isFinite(max as number)) {
-    next = Math.min(next, Number(max));
-  }
-  return next;
-}
-
-function normalizeMultiSelectValue(field: ConsoleDynamicFilterFieldResponse, value: DynamicFilterSelection | undefined) {
-  if (Array.isArray(value)) return value;
-  const defaultValue = defaultFilterValue(field);
-  return Array.isArray(defaultValue) ? defaultValue : [];
-}
-
-function normalizeSingleSelectValue(field: ConsoleDynamicFilterFieldResponse, value: DynamicFilterSelection | undefined) {
-  if (typeof value === 'string') return value;
-  const defaultValue = defaultFilterValue(field);
-  return typeof defaultValue === 'string' ? defaultValue : field.options[0] ?? '';
-}
-
-function toggleMultiSelectOption(
-  field: ConsoleDynamicFilterFieldResponse,
-  selected: string[],
-  option: string,
-) {
-  if (option.toLowerCase().includes('all')) {
-    return [option];
-  }
-
-  const next = selected.filter((item) => !item.toLowerCase().includes('all'));
-  if (next.includes(option)) {
-    return next.filter((item) => item !== option);
-  }
-  return [...next, option];
-}
-
-function buildSamplingPayload(
-  filters: ConsoleDynamicFilterFieldResponse[],
-  values: Record<string, DynamicFilterSelection>,
-) {
-  const payload: {
-    min_age?: number;
-    max_age?: number;
-    planning_areas: string[];
-    dynamic_filters: Record<string, unknown>;
-  } = {
-    planning_areas: [],
-    dynamic_filters: {},
-  };
-
-  filters.forEach((field) => {
-    const value = values[field.field];
-    if (field.type === 'range') {
-      const range = normalizeRangeValue(field, value);
-      payload.dynamic_filters[field.field] = range;
-      if (field.field === 'age') {
-        payload.min_age = range.min;
-        payload.max_age = range.max;
-      }
-      return;
-    }
-
-    if (field.type === 'multi-select-chips') {
-      const selected = normalizeMultiSelectValue(field, value);
-      payload.dynamic_filters[field.field] = selected;
-      if (field.field === 'planning_area') {
-        payload.planning_areas = selected.filter((item) => !item.toLowerCase().includes('all'));
-      }
-      return;
-    }
-
-    const selected = normalizeSingleSelectValue(field, value);
-    payload.dynamic_filters[field.field] = selected;
-  });
-
-  return payload;
 }
 
 // Data Transformers

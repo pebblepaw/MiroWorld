@@ -612,23 +612,18 @@ export default function Simulation() {
                 </div>
               </GlassCard>
 
-              <GlassCard className="p-4 min-h-[168px] flex h-full flex-col justify-between gap-3">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-2 w-full cursor-help" title="Models social media ragebait amplification by boosting high-engagement controversial content.">
-                      <Flame className="w-4 h-4 text-[hsl(var(--data-red))]" />
-                      <h3 className="text-sm font-medium text-foreground flex-1">Controversy Boost</h3>
-                      <span className="font-mono text-sm text-[hsl(var(--data-red))]">{controversyBoost.toFixed(1)}</span>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-[220px] text-xs leading-relaxed bg-[#1A1A1A] text-white/90 border-white/10">
-                    Models social media ragebait amplification by boosting high-engagement controversial content.
-                  </TooltipContent>
-                </Tooltip>
-                <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-3 py-3">
-                  <div className="text-xs text-muted-foreground">
-                    Off = 0.0, On = 0.5
-                  </div>
+              <GlassCard className="p-4 min-h-[168px] flex h-full flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <Flame className="w-4 h-4 text-[hsl(var(--data-red))] shrink-0" />
+                  <h3 className="text-sm font-medium text-foreground">Controversy Boost</h3>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed flex-1">
+                  Amplifies divisive content in the social feed, simulating how real platforms boost engagement through controversial posts.
+                </p>
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-xs text-muted-foreground font-mono">
+                    {controversyBoostEnabled ? 'On' : 'Off'}
+                  </span>
                   <Switch
                     aria-label="Controversy Boost"
                     checked={controversyBoostEnabled}
@@ -836,14 +831,52 @@ export default function Simulation() {
                   {formatSeconds(simulationState?.elapsed_seconds ?? 0)}
                 </span>
               </div>
-              
-              {running && (
-                <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Simulation in progress...</span>
-                </div>
-              )}
-              
+
+              {/* Phase progress strip */}
+              <div className="mt-3 space-y-1.5">
+                {[
+                  {
+                    label: "Setting up OASIS",
+                    done: simulationState !== null,
+                    active: !simulationState,
+                  },
+                  {
+                    label: "Initial interview of all agents",
+                    done: baselineStatus === "completed",
+                    active: baselineStatus === "running",
+                  },
+                  {
+                    label: `Round ${Math.max(1, simulationState?.current_round ?? 0)} of ${Math.max(1, simulationState?.planned_rounds ?? simulationRounds)}`,
+                    done: completed,
+                    active: running && (simulationState?.current_round ?? 0) > 0,
+                  },
+                  {
+                    label: "Final interview of all agents",
+                    done: finalStatus === "completed",
+                    active: finalStatus === "running",
+                  },
+                ].map((phase, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 transition-colors ${
+                      phase.done
+                        ? "bg-emerald-400"
+                        : phase.active
+                          ? "bg-primary animate-pulse"
+                          : "bg-white/15"
+                    }`} />
+                    <span className={`text-[10px] font-mono transition-colors ${
+                      phase.done
+                        ? "text-emerald-400"
+                        : phase.active
+                          ? "text-foreground"
+                          : "text-muted-foreground/50"
+                    }`}>
+                      {phase.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
               {completed && (
                 <div className="mt-2 flex items-center gap-2 text-xs text-emerald-400">
                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />

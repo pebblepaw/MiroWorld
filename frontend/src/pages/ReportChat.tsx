@@ -891,20 +891,37 @@ export default function ReportChat() {
             </div>
 
             {/* Segment Tabs */}
-            <div className="px-4 py-2.5 border-b border-border flex gap-1.5 flex-shrink-0">
-              {(['dissenters', 'supporters', 'one-on-one'] as ChatSegment[]).map(seg => (
-                <button
-                  key={seg}
-                  onClick={() => setChatSegment(seg)}
-                  className={`px-3 py-1.5 rounded text-[10px] font-mono uppercase tracking-wider transition-colors ${
-                    chatSegment === seg
-                      ? 'bg-white/10 text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {seg === 'one-on-one' ? '1:1 Chat' : `Top ${seg}`}
-                </button>
-              ))}
+            <div className="px-4 py-2.5 border-b border-border flex-shrink-0">
+              <div className="flex gap-1.5 mb-2">
+                {(['dissenters', 'supporters', 'one-on-one'] as ChatSegment[]).map(seg => (
+                  <button
+                    key={seg}
+                    onClick={() => setChatSegment(seg)}
+                    className={`px-3 py-1.5 rounded text-[10px] font-mono uppercase tracking-wider transition-colors ${
+                      chatSegment === seg
+                        ? 'bg-white/10 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {seg === 'one-on-one' ? '1:1 Chat' : `Top ${seg}`}
+                  </button>
+                ))}
+              </div>
+              {(chatSegment === 'dissenters' || chatSegment === 'supporters') && (
+                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
+                  {(chatSegment === 'dissenters' ? topDissenters : topSupporters).map(agent => (
+                    <span
+                      key={agent.id}
+                      className="shrink-0 inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[10px] font-mono bg-white/5 border border-white/10 text-muted-foreground whitespace-nowrap"
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        chatSegment === 'dissenters' ? 'bg-red-400' : 'bg-emerald-400'
+                      }`} />
+                      {agent.name}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {(chatError || chatPending) && (
@@ -1426,7 +1443,7 @@ function formatMetricDelta(value: unknown, unit: unknown, type?: unknown): strin
     return '—';
   }
   const display = formatMetricValue(Math.abs(numeric), unit, type);
-  return `${numeric >= 0 ? '+' : '−'} ${display}`;
+  return display;
 }
 
 function formatPlainText(value: unknown): string {

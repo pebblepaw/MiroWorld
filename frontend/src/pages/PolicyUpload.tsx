@@ -751,7 +751,7 @@ export default function PolicyUpload() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-0 h-full">
       {/* ───── LEFT PANEL ───── */}
-      <div className="flex flex-col border-r border-border overflow-y-auto scrollbar-thin bg-background">
+      <div className="flex flex-col border-r border-border overflow-y-auto scrollbar-thin bg-background min-h-0">
         {/* Header */}
         <div className="p-5 pb-4 border-b border-border">
           <h2 className="text-lg font-bold text-foreground font-mono uppercase tracking-wider">NEW SIMULATION RUN</h2>
@@ -882,7 +882,7 @@ export default function PolicyUpload() {
             <button
               type="button"
               onClick={addNewAnalysisQuestion}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground transition-colors hover:border-white/15 hover:bg-white/[0.03] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground transition-colors hover:border-white/15 hover:bg-white/[0.03] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               <Plus className="w-3 h-3" /> Add Question
             </button>
@@ -923,7 +923,7 @@ export default function PolicyUpload() {
                         value={q.question}
                         onChange={(e) => updateQuestionText(index, e.target.value)}
                         placeholder="Type your analysis question..."
-                        className="min-h-[58px] resize-none border-0 bg-transparent p-0 text-sm text-foreground focus-visible:ring-0"
+                        className="min-h-[58px] resize-none border-0 bg-transparent p-0 text-sm text-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
                       />
                       <div className="mt-1.5 flex flex-wrap items-center gap-2">
                         <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
@@ -1204,7 +1204,15 @@ export default function PolicyUpload() {
               linkDirectionalArrowLength={4}
               linkDirectionalArrowRelPos={1}
               backgroundColor="transparent"
-              cooldownTicks={80}
+              cooldownTicks={200}
+              warmupTicks={50}
+              nodePointerAreaPaint={(node: GraphNodeDatum, color, ctx) => {
+                const radius = (node as GraphNodeDatum).renderRadius || 5;
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc((node as GraphNodeDatum).x ?? 0, (node as GraphNodeDatum).y ?? 0, radius + 4, 0, 2 * Math.PI);
+                ctx.fill();
+              }}
             />
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">

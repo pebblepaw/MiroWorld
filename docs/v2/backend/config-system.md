@@ -56,6 +56,17 @@ Current important fields:
 - `analysis_questions`
 - `config_json`
 
+Related session runtime data in `console_sessions`:
+
+- `mode` (`demo` or `live`)
+- `model_provider`
+- `model_name`
+- `embed_model_name`
+- `api_key`
+- `base_url`
+
+These `console_sessions` fields are what Graphiti memory search uses to build provider-aware LLM/embedder/reranker clients per session.
+
 ## `analysis_questions` Rules
 
 `analysis_questions` is the runtime source of truth.
@@ -77,6 +88,22 @@ The config system still exposes a compatibility fallback:
 
 This field remains for compatibility only and should not be treated as the user-facing analysis primitive.
 
+## Graphiti-Relevant Config Resolution
+
+When memory search runs through Graphiti, backend runtime configuration is resolved in this order:
+
+1. session overrides from `console_sessions`
+2. provider defaults from `Settings`
+
+Resolved values include provider, chat model, embed model, API key, and base URL.
+
+This means config changes on Screen 0 or session model settings directly affect Graphiti query behavior in live chat.
+
+### Live activation coupling
+
+- `console_sessions.mode == live` is the gate used by `ConsoleService` when deciding whether chat calls run in live memory mode.
+- In live mode, group and 1:1 agent chat request Graphiti-backed memory search and do not use local fallback.
+
 ## Question Metadata
 
 `QuestionMetadataService` normalizes user-defined Screen 1 questions into the same shape used by preset questions.
@@ -96,3 +123,4 @@ Expected fields include:
 
 - if a use-case YAML has no explicit `analysis_questions`, compatibility fallbacks still exist for older `checkpoint_questions` layouts
 - report configuration is currently derived from `analysis_questions` plus `preset_sections`
+- Graphiti host/port are runtime env vars (`FALKORDB_HOST`, `FALKORDB_PORT`) and are not stored in `session_configs`

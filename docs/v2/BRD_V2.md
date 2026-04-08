@@ -1,7 +1,7 @@
 # McKAInsey V2 — Business Requirements Document
 
 > Version: 2.1  
-> Date: 2026-04-07  
+> Date: 2026-04-08  
 > Status: Implemented and documentation-synchronized
 
 This document describes the current V2 product and engineering contract. It supersedes earlier V2 planning language that still referenced separate Screen 6 behavior, generic policy kickoff posts, retired Gemini defaults, or V1-style use-case metrics.
@@ -53,13 +53,35 @@ Current rules:
 - Backend: FastAPI
 - Simulation: native OASIS runner in Python 3.11
 - Knowledge extraction: LightRAG-backed processing
-- Memory: Graphiti preferred; Zep compatibility fallback still exists in `MemoryService`
+- Memory: Graphiti + FalkorDB for live chat memory; Zep/local compatibility paths exist for non-live flows
 - Storage:
   - SQLite for sessions, session config, checkpoints, and simulation state
   - local files for uploads, exports, and run logs
   - FalkorDB for Graphiti when enabled
 
-### 3.2 Session Model
+### 3.2 Memory Runtime Contract (Graphiti)
+
+Graphiti is the live-memory backend for Screen 4 chat behavior in live sessions.
+
+Current dependency contract:
+
+- Python package `graphiti-core` must be importable
+- FalkorDB must be reachable at `FALKORDB_HOST:FALKORDB_PORT`
+- session provider/model credentials must resolve from `console_sessions` or provider defaults
+
+Current activation contract:
+
+- session mode `live` activates strict live-memory behavior
+- live group and 1:1 agent chat route through Graphiti-backed memory search
+- in live mode, Graphiti failures are surfaced as runtime errors (no silent local fallback)
+
+Current ingestion contract:
+
+- Graphiti ingestion is incremental and on-demand during memory search
+- source rows are simulation interactions plus checkpoint records from SQLite
+- sync cursor is tracked in `memory_sync_state`
+
+### 3.3 Session Model
 
 All user-visible runtime state is keyed by `session_id`.
 
@@ -167,6 +189,12 @@ Current rendering rules:
 - yes/no metrics are normalized to percentages
 - markdown formatting should be stripped before display
 - chat-only is a Screen 4 view state, not a separate routed Screen 6
+
+Current memory behavior:
+
+- live group chat and live 1:1 agent chat use Graphiti-backed retrieval
+- live memory path performs incremental Graphiti sync on query
+- report-chat memory path still uses compatibility retrieval semantics (non-live fallback behavior)
 
 ### 4.6 Screen 5 — Analytics
 
@@ -303,7 +331,7 @@ Current normalized question shape:
 
 - Canonical V2 ids are used everywhere new state is written.
 - `guiding_prompt` is still accepted by some backend methods for compatibility but is no longer the user-facing analysis primitive.
-- Graphiti is the preferred memory backend, but Zep compatibility code still exists for deployments that explicitly configure it.
+- Graphiti is the live memory backend, while Zep/local compatibility code remains for non-live and legacy flows.
 - Old sessions created before the Screen 3 seeding fix may still contain generic kickoff content in their stored interactions; new runs should not.
 
 ## 9. Validation Standard

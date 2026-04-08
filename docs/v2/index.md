@@ -9,6 +9,15 @@ Read this file first, then open only the documents relevant to the task at hand.
 3. [architecture.md](architecture.md) if you need cross-cutting context
 4. [handoffs/latest_handoff.md](handoffs/latest_handoff.md) for the most recent implementation status
 
+## Fast Handoff Path for Graphiti/Memory Work
+
+If your task touches Screen 4 chat, live memory, or backend runtime failures, read in this order:
+
+1. [infrastructure/graphiti.md](infrastructure/graphiti.md)
+2. [backend/context-caching.md](backend/context-caching.md)
+3. [backend/config-system.md](backend/config-system.md)
+4. [BRD_V2.md](BRD_V2.md) sections 3 and 4.5
+
 ## Core Documents
 
 ### Master References
@@ -29,15 +38,15 @@ Read this file first, then open only the documents relevant to the task at hand.
 
 ### Backend Specs
 
-- [backend/config-system.md](backend/config-system.md)
-- [backend/context-caching.md](backend/context-caching.md)
-- [backend/controversy-boost.md](backend/controversy-boost.md)
-- [backend/metrics-heuristics.md](backend/metrics-heuristics.md)
+- [backend/config-system.md](backend/config-system.md): canonical ids, session config persistence, and model/runtime resolution used by memory backends
+- [backend/context-caching.md](backend/context-caching.md): token cache behavior plus Graphiti ingestion/retrieval/fallback policy
+- [backend/controversy-boost.md](backend/controversy-boost.md): OASIS feed ranking control and runtime contract
+- [backend/metrics-heuristics.md](backend/metrics-heuristics.md): quantitative metric generation and analytics derivation rules
 
 ### Infrastructure Specs
 
 - [infrastructure/docker.md](infrastructure/docker.md)
-- [infrastructure/graphiti.md](infrastructure/graphiti.md)
+- [infrastructure/graphiti.md](infrastructure/graphiti.md): Graphiti dependencies, activation triggers, ingestion loop, retrieval path, and failure behavior
 
 ## Current V2 Artboard Map
 
