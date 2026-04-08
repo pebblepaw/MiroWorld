@@ -232,6 +232,7 @@ class V2GroupChatRequest(BaseModel):
     segment: Literal["supporter", "neutral", "dissenter", "engaged"]
     message: str = Field(min_length=3)
     top_n: int = Field(default=5, ge=1, le=20)
+    metric_name: str | None = None
 
 
 class V2GroupChatResponse(BaseModel):
@@ -261,11 +262,13 @@ class V2AgentChatResponse(BaseModel):
 
 class V2PolarizationResponse(BaseModel):
     session_id: str
+    metric_name: str | None = None
     series: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class V2OpinionFlowResponse(BaseModel):
     session_id: str
+    metric_name: str | None = None
     initial: dict[str, int] = Field(default_factory=dict)
     final: dict[str, int] = Field(default_factory=dict)
     flows: list[dict[str, Any]] = Field(default_factory=list)

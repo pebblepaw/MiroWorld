@@ -729,7 +729,7 @@ export async function getAnalysisQuestions(
 
 export async function sendGroupChatMessage(
   sessionId: string,
-  payload: { segment: string; message: string },
+  payload: { segment: string; message: string; metric_name?: string },
 ): Promise<ConsoleGroupChatResponse> {
   const response = await fetchChatWithTimeout(`${API_BASE}/api/v2/console/session/${sessionId}/chat/group`, {
     method: "POST",
@@ -759,13 +759,17 @@ export async function sendAgentChatMessage(
   return normalizeAgentChatPayload(payload.agent_id, await parseJson<Record<string, unknown>>(response));
 }
 
-export async function getAnalyticsPolarization(sessionId: string): Promise<Record<string, unknown>> {
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/polarization`);
+export async function getAnalyticsPolarization(sessionId: string, metricName?: string): Promise<Record<string, unknown>> {
+  const url = new URL(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/polarization`);
+  if (metricName) url.searchParams.set("metric_name", metricName);
+  const response = await fetch(url.toString());
   return parseJson(response);
 }
 
-export async function getAnalyticsOpinionFlow(sessionId: string): Promise<Record<string, unknown>> {
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/opinion-flow`);
+export async function getAnalyticsOpinionFlow(sessionId: string, metricName?: string): Promise<Record<string, unknown>> {
+  const url = new URL(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/opinion-flow`);
+  if (metricName) url.searchParams.set("metric_name", metricName);
+  const response = await fetch(url.toString());
   return parseJson(response);
 }
 
@@ -776,6 +780,13 @@ export async function getAnalyticsInfluence(sessionId: string): Promise<Record<s
 
 export async function getAnalyticsCascades(sessionId: string): Promise<Record<string, unknown>> {
   const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/cascades`);
+  return parseJson(response);
+}
+
+export async function getAnalyticsAgentStances(sessionId: string, metricName?: string): Promise<Record<string, unknown>> {
+  const url = new URL(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/agent-stances`);
+  if (metricName) url.searchParams.set("metric_name", metricName);
+  const response = await fetch(url.toString());
   return parseJson(response);
 }
 

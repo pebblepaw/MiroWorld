@@ -13,12 +13,14 @@ import { Activity, Flame, GitBranch, Megaphone, Users2 } from "lucide-react";
 import { useApp } from "@/contexts/AppContext";
 import { generateAgents, type Agent } from "@/data/mockData";
 import {
+  getAnalyticsAgentStances,
   getAnalyticsCascades,
   getAnalyticsInfluence,
   getAnalyticsOpinionFlow,
   getAnalyticsPolarization,
   isLiveBootMode,
 } from "@/lib/console-api";
+import { MetricSelector } from "@/components/MetricSelector";
 
 type PolarizationPoint = {
   round: string;
@@ -291,12 +293,14 @@ export default function Analytics() {
   );
 
   const [dimension, setDimension] = useState<DemographicDimension>(() => defaultDimensionForUseCase(useCase));
+  const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [polarizationData, setPolarizationData] = useState<PolarizationPoint[]>(() => (liveMode ? [] : POLARIZATION_DATA));
   const [opinionFlowData, setOpinionFlowData] = useState<OpinionFlowData>(() => (liveMode ? { initial: { supporter: 0, neutral: 0, dissenter: 0 }, final: { supporter: 0, neutral: 0, dissenter: 0 }, flows: [] } : OPINION_FLOW));
   const [leaderData, setLeaderData] = useState<Leader[]>(() => (liveMode ? [] : KEY_OPINION_LEADERS));
   const [viralPostData, setViralPostData] = useState<ViralPost[]>(() => (liveMode ? [] : VIRAL_POSTS));
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  const [agentStanceOverrides, setAgentStanceOverrides] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (!liveMode || !sessionId) {
@@ -369,8 +373,8 @@ export default function Analytics() {
     setAnalyticsError(null);
 
     void Promise.allSettled([
-      getAnalyticsPolarization(sessionId),
-      getAnalyticsOpinionFlow(sessionId),
+      getAnalyticsPolarization(sessionId, selectedMetric ?? undefined),
+      getAnalyticsOpinionFlow(sessionId, selectedMetric ?? undefined),
       getAnalyticsInfluence(sessionId),
       getAnalyticsCascades(sessionId),
     ]).then(([polarization, flow, influence, cascades]) => {
@@ -452,7 +456,22 @@ export default function Analytics() {
     return () => {
       active = false;
     };
-  }, [agentNamesById, sessionId]);
+  }, [agentNamesById, sessionId, selectedMetric]);
+
+  useEffect(() => {
+    if (!sessionId || !selectedMetric) {
+      setAgentStanceOverrides(new Map());
+      return;
+    }
+    getAnalyticsAgentStances(sessionId, selectedMetric).then((data: any) => {
+      const overrides = new Map<string, string>();
+      for (const item of (data.stances || [])) {
+        const sentiment = item.score >= 7 ? "positive" : item.score < 5 ? "negative" : "neutral";
+        overrides.set(item.agent_id, sentiment);
+      }
+      setAgentStanceOverrides(overrides);
+    }).catch(() => setAgentStanceOverrides(new Map()));
+  }, [sessionId, selectedMetric]);
 
   const sourceAgents = useMemo<Agent[]>(() => {
     if (agents.length > 0) return agents;
@@ -475,8 +494,14 @@ export default function Analytics() {
     const groups = Array.from(grouped.entries())
       .sort((left, right) => right[1].length - left[1].length)
       .map(([name, agentsInGroup]) => {
-        const supporters = agentsInGroup.filter((agent) => agent.sentiment === "positive").length;
-        const dissenters = agentsInGroup.filter((agent) => agent.sentiment === "negative").length;
+        const supporters = agentsInGroup.filter((agent) => {
+          const eff = agentStanceOverrides.get(agent.id) ?? agent.sentiment;
+          return eff === "positive";
+        }).length;
+        const dissenters = agentsInGroup.filter((agent) => {
+          const eff = agentStanceOverrides.get(agent.id) ?? agent.sentiment;
+          return eff === "negative";
+        }).length;
         const neutral = agentsInGroup.length - supporters - dissenters;
 
         return {
@@ -494,8 +519,14 @@ export default function Analytics() {
     if (overflow.length === 0) return topGroups;
 
     const overflowAgents = overflow.flatMap((group) => group.agents);
-    const supporters = overflowAgents.filter((agent) => agent.sentiment === "positive").length;
-    const dissenters = overflowAgents.filter((agent) => agent.sentiment === "negative").length;
+    const supporters = overflowAgents.filter((agent) => {
+      const eff = agentStanceOverrides.get(agent.id) ?? agent.sentiment;
+      return eff === "positive";
+    }).length;
+    const dissenters = overflowAgents.filter((agent) => {
+      const eff = agentStanceOverrides.get(agent.id) ?? agent.sentiment;
+      return eff === "negative";
+    }).length;
 
     return [
       ...topGroups,
@@ -507,7 +538,7 @@ export default function Analytics() {
         dissenters,
       },
     ];
-  }, [dimension, sourceAgents]);
+  }, [dimension, sourceAgents, agentStanceOverrides]);
 
   const dimensionOptions = useMemo(() => {
     if (useCase === "public-policy-testing" || useCase === "policy-review") {
@@ -552,6 +583,12 @@ export default function Analytics() {
           <p className="mt-1 text-[11px] font-mono uppercase tracking-[0.15em] text-muted-foreground">
             {formatCountry(country)} · {formatUseCase(useCase)} · {sourceAgents.length} agents · {simulationRounds} rounds
           </p>
+          <MetricSelector
+            sessionId={sessionId}
+            value={selectedMetric}
+            onChange={setSelectedMetric}
+            className="mt-3 flex items-center"
+          />
         </header>
 
         {analyticsLoading && (
@@ -634,14 +671,17 @@ export default function Analytics() {
                     </div>
 
                     <div className="flex max-w-[340px] flex-wrap gap-1">
-                      {group.agents.map((agent) => (
-                        <span
-                          key={agent.id}
-                          className="h-3.5 w-3.5 cursor-crosshair rounded-[2px] border border-black/20 transition-transform hover:z-10 hover:scale-125"
-                          style={{ backgroundColor: sentimentColor(agent.sentiment) }}
-                          title={`${agent.name} · ${agent.sentiment}`}
-                        />
-                      ))}
+                      {group.agents.map((agent) => {
+                        const eff = (agentStanceOverrides.get(agent.id) ?? agent.sentiment) as Agent["sentiment"];
+                        return (
+                          <span
+                            key={agent.id}
+                            className="h-3.5 w-3.5 cursor-crosshair rounded-[2px] border border-black/20 transition-transform hover:z-10 hover:scale-125"
+                            style={{ backgroundColor: sentimentColor(eff) }}
+                            title={`${agent.name} · ${eff}`}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
                 ))}

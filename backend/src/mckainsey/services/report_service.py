@@ -14,6 +14,7 @@ from mckainsey.config import Settings
 from mckainsey.services.config_service import ConfigService
 from mckainsey.services.llm_client import GeminiChatClient
 from mckainsey.services.memory_service import MemoryService
+from mckainsey.services.metrics_service import compute_polarization, compute_opinion_flow, build_influence_graph
 from mckainsey.services.storage import SimulationStore
 
 
@@ -554,6 +555,103 @@ class ReportService:
                     continue
                 document.add_heading(str(section.get("title", "Section")), level=2)
                 document.add_paragraph(str(section.get("answer", "")))
+
+        # ── Analytics Summary ──
+        try:
+            store = SimulationStore(self.settings.simulation_db_path)
+            agents_raw = store.get_agents(simulation_id)
+            interactions = store.get_interactions(simulation_id)
+            checkpoint_records = store.list_checkpoint_records(simulation_id, checkpoint_kind="post")
+            if not checkpoint_records:
+                checkpoint_records = store.list_checkpoint_records(simulation_id)
+
+            # Enrich agents with checkpoint metrics
+            metric_by_agent: dict[str, dict[str, Any]] = {}
+            for record in checkpoint_records:
+                aid = str(record.get("agent_id", "")).strip()
+                if not aid:
+                    continue
+                answers = record.get("metric_answers") or {}
+                if isinstance(answers, dict):
+                    metric_by_agent.setdefault(aid, {}).update(answers)
+
+            enriched_agents: list[dict[str, Any]] = []
+            for row in agents_raw:
+                agent = dict(row)
+                agent["id"] = agent.get("id") or agent.get("agent_id")
+                aid = str(agent.get("agent_id") or agent.get("id") or "")
+                for metric_name, value in metric_by_agent.get(aid, {}).items():
+                    agent[f"checkpoint_{metric_name}"] = value
+                enriched_agents.append(agent)
+
+            # Resolve analysis questions from config
+            resolved_use_case = use_case or payload.get("use_case", "")
+            analysis_questions: list[dict[str, Any]] = []
+            if resolved_use_case:
+                config_service = ConfigService(self.settings)
+                try:
+                    analysis_questions = config_service.get_checkpoint_questions(str(resolved_use_case))
+                except Exception:  # noqa: BLE001
+                    analysis_questions = []
+
+            has_analytics = False
+
+            # Per-metric analytics
+            for q in analysis_questions:
+                if not isinstance(q, dict) or q.get("type") == "open-ended":
+                    continue
+                name = str(q.get("metric_name", "")).strip()
+                label = str(q.get("metric_label", name)).strip()
+                if not name:
+                    continue
+
+                score_field = f"checkpoint_{name}"
+                pol = compute_polarization(enriched_agents, score_field=score_field)
+                flow = compute_opinion_flow(enriched_agents, score_field=score_field)
+
+                if not has_analytics:
+                    document.add_heading("Analytics Summary", level=1)
+                    has_analytics = True
+
+                document.add_heading(f"{label}", level=2)
+                dist = pol.get("distribution", {})
+                document.add_paragraph(
+                    f"Polarization Index: {pol.get('polarization_index', 0):.2f} ({pol.get('severity', 'low')})",
+                    style="List Bullet",
+                )
+                document.add_paragraph(
+                    f"Distribution: {dist.get('supporter_pct', 0):.0f}% supporters, "
+                    f"{dist.get('neutral_pct', 0):.0f}% neutral, "
+                    f"{dist.get('dissenter_pct', 0):.0f}% dissenters",
+                    style="List Bullet",
+                )
+                initial = flow.get("initial", {})
+                final = flow.get("final", {})
+                document.add_paragraph(
+                    f"Opinion Shift: Supporters {initial.get('supporter', 0)} → {final.get('supporter', 0)}, "
+                    f"Neutral {initial.get('neutral', 0)} → {final.get('neutral', 0)}, "
+                    f"Dissenters {initial.get('dissenter', 0)} → {final.get('dissenter', 0)}",
+                    style="List Bullet",
+                )
+
+            # KOL section
+            influence = build_influence_graph(interactions, enriched_agents)
+            top_influencers = influence.get("top_influencers", [])[:5]
+            if top_influencers:
+                if not has_analytics:
+                    document.add_heading("Analytics Summary", level=1)
+                    has_analytics = True
+                document.add_heading("Key Opinion Leaders", level=2)
+                for inf in top_influencers:
+                    name_str = inf.get("name", inf.get("agent_id", ""))
+                    stance = inf.get("stance", "unknown")
+                    score = inf.get("influence_score", 0)
+                    document.add_paragraph(
+                        f"{name_str} ({stance}) — Influence: {score:.2f}",
+                        style="List Bullet",
+                    )
+        except Exception:  # noqa: BLE001
+            pass  # Analytics section is best-effort; don't fail export
 
         document.add_paragraph(
             f"Methodology: Simulated agents={quick_stats.get('agent_count', 0)}, "

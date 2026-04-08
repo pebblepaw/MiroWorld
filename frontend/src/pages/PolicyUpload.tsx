@@ -1204,7 +1204,7 @@ export default function PolicyUpload() {
               linkDirectionalArrowLength={4}
               linkDirectionalArrowRelPos={1}
               backgroundColor="transparent"
-              cooldownTicks={200}
+              cooldownTicks={120}
               warmupTicks={50}
               nodePointerAreaPaint={(node: GraphNodeDatum, color, ctx) => {
                 const radius = (node as GraphNodeDatum).renderRadius || 5;

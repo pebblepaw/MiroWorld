@@ -127,28 +127,28 @@ def _numeric_engagement(row: dict[str, Any]) -> tuple[int, int]:
     return likes, dislikes
 
 
-def compute_group_polarization(agents: list[dict[str, Any]], group_key: str = "planning_area") -> dict[str, Any]:
-    groups: dict[str, list[float]] = defaultdict(list)
-    all_scores: list[float] = []
-    for agent in agents:
-        key = str(agent.get("persona", {}).get(group_key, "Unknown"))
-        score = _as_float(agent.get("opinion_post", 0.0))
-        groups[key].append(score)
-        all_scores.append(score)
+def compute_polarization(agents: list[dict[str, Any]], score_field: str = "opinion_post") -> dict[str, Any]:
+    """Compute polarization as bimodal clustering at opinion extremes.
 
-    if not all_scores:
+    Polarization is high when agents cluster at both ends (≥7 and <5).
+    It is 0 when all agents agree (consensus) and 1.0 when perfectly split 50/50.
+    Formula: ``2 * min(supporter_pct, dissenter_pct)``.
+    """
+    scores = [_as_float(agent.get(score_field, 5.0)) for agent in agents]
+    if not scores:
         return {
             "polarization_index": 0.0,
             "severity": "low",
-            "by_group_means": {},
-            "group_sizes": {},
+            "distribution": {"supporter_pct": 0.0, "neutral_pct": 0.0, "dissenter_pct": 0.0},
         }
 
-    overall_mean = _mean(all_scores)
-    n = max(1, len(all_scores))
-    between = sum(len(values) * ((_mean(values) - overall_mean) ** 2) for values in groups.values()) / n
-    total_var = sum((score - overall_mean) ** 2 for score in all_scores) / n
-    polarization_index = (between / total_var) if total_var > 0 else 0.0
+    total = len(scores)
+    supporters = sum(1 for s in scores if s >= 7) / total
+    neutrals = sum(1 for s in scores if 5 <= s < 7) / total
+    dissenters = sum(1 for s in scores if s < 5) / total
+
+    polarization_index = round(2 * min(supporters, dissenters), 4)
+
     severity = (
         "low" if polarization_index < 0.2 else
         "moderate" if polarization_index < 0.5 else
@@ -157,14 +157,21 @@ def compute_group_polarization(agents: list[dict[str, Any]], group_key: str = "p
     )
 
     return {
-        "polarization_index": round(polarization_index, 4),
+        "polarization_index": polarization_index,
         "severity": severity,
-        "by_group_means": {key: round(_mean(values), 4) for key, values in groups.items()},
-        "group_sizes": {key: len(values) for key, values in groups.items()},
+        "distribution": {
+            "supporter_pct": round(supporters * 100, 1),
+            "neutral_pct": round(neutrals * 100, 1),
+            "dissenter_pct": round(dissenters * 100, 1),
+        },
     }
 
 
-def compute_opinion_flow(agents: list[dict[str, Any]]) -> dict[str, Any]:
+def compute_opinion_flow(
+    agents: list[dict[str, Any]],
+    score_field: str = "opinion_post",
+    pre_field: str | None = None,
+) -> dict[str, Any]:
     def bucket(score: float) -> str:
         if score >= 7:
             return "supporter"
@@ -172,13 +179,15 @@ def compute_opinion_flow(agents: list[dict[str, Any]]) -> dict[str, Any]:
             return "neutral"
         return "dissenter"
 
+    actual_pre_field = pre_field or ("opinion_pre" if score_field == "opinion_post" else score_field)
+
     initial = {"supporter": 0, "neutral": 0, "dissenter": 0}
     final = {"supporter": 0, "neutral": 0, "dissenter": 0}
     flows: dict[tuple[str, str], int] = defaultdict(int)
 
     for agent in agents:
-        pre = bucket(_as_float(agent.get("opinion_pre", 5)))
-        post = bucket(_as_float(agent.get("opinion_post", 5)))
+        pre = bucket(_as_float(agent.get(actual_pre_field, 5)))
+        post = bucket(_as_float(agent.get(score_field, 5)))
         initial[pre] += 1
         final[post] += 1
         flows[(pre, post)] += 1
@@ -435,6 +444,7 @@ def select_group_chat_agents(
     interactions: list[dict[str, Any]],
     segment: str,
     top_n: int = 5,
+    score_field: str = "opinion_post",
 ) -> list[dict[str, Any]]:
     influence: dict[str, dict[str, float]] = {}
     for agent in agents:
@@ -468,7 +478,7 @@ def select_group_chat_agents(
         agent = agent_lookup.get(agent_id)
         if not agent:
             return "unknown"
-        score = _as_float(agent.get("opinion_post", 5))
+        score = _as_float(agent.get(score_field, 5))
         if score >= 7:
             return "supporter"
         if score >= 5:
@@ -569,14 +579,14 @@ class MetricsService:
 
     # ── Existing analytics methods ──
 
-    def compute_polarization_timeseries(self, agents_by_round: dict[int, list[dict[str, Any]]], group_key: str) -> list[dict[str, Any]]:
-        return [{"round": round_no, **compute_group_polarization(agents, group_key)} for round_no, agents in agents_by_round.items()]
+    def compute_polarization_timeseries(self, agents_by_round: dict[int, list[dict[str, Any]]], score_field: str = "opinion_post") -> list[dict[str, Any]]:
+        return [{"round": round_no, **compute_polarization(agents, score_field)} for round_no, agents in agents_by_round.items()]
 
-    def compute_group_polarization(self, agents: list[dict[str, Any]], group_key: str = "planning_area") -> dict[str, Any]:
-        return compute_group_polarization(agents, group_key)
+    def compute_polarization(self, agents: list[dict[str, Any]], score_field: str = "opinion_post") -> dict[str, Any]:
+        return compute_polarization(agents, score_field)
 
-    def compute_opinion_flow(self, agents: list[dict[str, Any]]) -> dict[str, Any]:
-        return compute_opinion_flow(agents)
+    def compute_opinion_flow(self, agents: list[dict[str, Any]], score_field: str = "opinion_post", pre_field: str | None = None) -> dict[str, Any]:
+        return compute_opinion_flow(agents, score_field, pre_field)
 
     def compute_influence(self, interactions: list[dict[str, Any]], agents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         return build_influence_graph(interactions, agents)
@@ -590,8 +600,9 @@ class MetricsService:
         interactions: list[dict[str, Any]],
         segment: str,
         top_n: int = 5,
+        score_field: str = "opinion_post",
     ) -> list[dict[str, Any]]:
-        return select_group_chat_agents(agents, interactions, segment, top_n=top_n)
+        return select_group_chat_agents(agents, interactions, segment, top_n=top_n, score_field=score_field)
 
     # ── New V2 insight-block methods ──
 
@@ -813,39 +824,33 @@ class MetricsService:
 
         Returns the computed data, or a not_applicable status if data is insufficient.
         """
-        try:
-            if block_type == "polarization_index":
-                return self.compute_group_polarization(agents, kwargs.get("group_key", "planning_area"))
-            elif block_type == "opinion_flow":
-                return self.compute_opinion_flow(agents)
-            elif block_type == "top_influencers":
-                return self.compute_influence(interactions, agents)
-            elif block_type == "viral_cascade":
-                posts = [r for r in interactions if str(r.get("action_type", "")).lower() in {"create_post", "post_created", "post"}]
-                comments = [r for r in interactions if "comment" in str(r.get("action_type", "")).lower()]
-                return compute_top_cascade(posts, comments, agents)
-            elif block_type == "segment_heatmap":
-                return self.compute_segment_heatmap(agents, analysis_questions, kwargs.get("group_key", "planning_area"))
-            elif block_type == "pain_points":
-                return self.extract_pain_points(interactions, top_n=kwargs.get("count", 5))
-            elif block_type == "top_advocates":
-                metric_ref = kwargs.get("metric_ref")
-                return self.get_top_advocates(agents, interactions, metric_name=metric_ref, top_n=kwargs.get("count", 3))
-            elif block_type == "competitive_mentions":
-                # Placeholder — would require LLM extraction in production
-                return {"status": "not_applicable", "reason": "Competitive mention extraction requires LLM analysis."}
-            elif block_type == "reaction_spectrum":
-                metric_ref = kwargs.get("metric_ref", "engagement_score")
-                return self.compute_reaction_distribution(agents, metric_ref)
-            elif block_type == "top_objections":
-                metric_ref = kwargs.get("metric_ref", "conversion_intent")
-                return self.extract_top_objections(agents, interactions, metric_ref, top_n=kwargs.get("count", 5))
-            elif block_type == "viral_posts":
-                return self.get_viral_posts(interactions, top_n=kwargs.get("count", 3))
-            else:
-                return {"status": "not_applicable", "reason": f"Unknown insight block type: {block_type}"}
-        except Exception as exc:  # noqa: BLE001
-            return {"status": "not_applicable", "reason": str(exc)}
+        if block_type == "polarization_index":
+            return self.compute_polarization(agents)
+        elif block_type == "opinion_flow":
+            return self.compute_opinion_flow(agents)
+        elif block_type == "top_influencers":
+            return self.compute_influence(interactions, agents)
+        elif block_type == "viral_cascade":
+            posts = [r for r in interactions if str(r.get("action_type", "")).lower() in {"create_post", "post_created", "post"}]
+            comments = [r for r in interactions if "comment" in str(r.get("action_type", "")).lower()]
+            return compute_top_cascade(posts, comments, agents)
+        elif block_type == "segment_heatmap":
+            return self.compute_segment_heatmap(agents, analysis_questions, kwargs.get("group_key", "planning_area"))
+        elif block_type == "reaction_spectrum":
+            # Alias: treat reaction_spectrum as segment_heatmap
+            return self.compute_segment_heatmap(agents, analysis_questions, kwargs.get("group_key", "planning_area"))
+        elif block_type == "pain_points":
+            return self.extract_pain_points(interactions, top_n=kwargs.get("count", 5))
+        elif block_type == "top_advocates":
+            metric_ref = kwargs.get("metric_ref")
+            return self.get_top_advocates(agents, interactions, metric_name=metric_ref, top_n=kwargs.get("count", 3))
+        elif block_type == "top_objections":
+            metric_ref = kwargs.get("metric_ref", "conversion_intent")
+            return self.extract_top_objections(agents, interactions, metric_ref, top_n=kwargs.get("count", 5))
+        elif block_type == "viral_posts":
+            return self.get_viral_posts(interactions, top_n=kwargs.get("count", 3))
+        else:
+            raise ValueError(f"Unknown insight block type: {block_type}")
 
 
 def _build_persona_summary(agent: dict[str, Any]) -> str:

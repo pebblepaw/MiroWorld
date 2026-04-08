@@ -49,15 +49,17 @@ analysis_questions:
     report_title: "Content Credibility"
     tooltip: "Mean credibility/trust rating across all agents."
 
+  - question: "What concerns or objections do you have about this content?"
+    type: "open-ended"
+    metric_name: "objections"
+    report_title: "Top Objections"
+    tooltip: "Most common reasons agents rejected or were skeptical of the content."
+
 insight_blocks:
-  - type: "reaction_spectrum"
-    title: "Audience Reaction Spectrum"
+  - type: "segment_heatmap"
+    title: "Audience Segments"
     description: "Distribution of engagement scores across the population."
     metric_ref: "engagement_score"
-  - type: "top_objections"
-    title: "Top Objections"
-    count: 5
-    description: "Most common reasons agents rejected or were skeptical."
   - type: "top_advocates"
     title: "Top Advocates"
     count: 3

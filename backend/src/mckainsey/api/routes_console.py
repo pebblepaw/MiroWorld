@@ -509,6 +509,7 @@ def v2_group_chat(
             segment=parsed.segment,
             message=parsed.message,
             top_n=parsed.top_n,
+            metric_name=parsed.metric_name,
         )
     except HTTPException:
         raise

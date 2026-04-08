@@ -62,6 +62,10 @@ insight_blocks:
   - type: "viral_cascade"
     title: "Pivotal Discussion"
     description: "The thread that caused the largest aggregate opinion shift."
+  - type: "segment_heatmap"
+    title: "Demographic Sentiment Map"
+    description: "Which demographic segments show highest/lowest approval?"
+    metric_ref: "approval_rate"
 
 preset_sections:
   - title: "Recommendations"

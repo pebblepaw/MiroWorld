@@ -7,6 +7,7 @@ import {
 import { useApp } from '@/contexts/AppContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MetricSelector } from '@/components/MetricSelector';
 import {
   StructuredReportState,
   exportReportDocx,
@@ -87,7 +88,6 @@ function hasRenderableReportContent(report: StructuredReportState): boolean {
     String(report.executive_summary ?? '').trim() ||
       (Array.isArray(report.metric_deltas) && report.metric_deltas.length > 0) ||
       (Array.isArray(report.sections) && report.sections.length > 0) ||
-      (Array.isArray(report.insight_blocks) && report.insight_blocks.length > 0) ||
       (Array.isArray(report.preset_sections) && report.preset_sections.length > 0) ||
       (Array.isArray(report.insight_cards) && report.insight_cards.length > 0),
   );
@@ -158,6 +158,7 @@ export default function ReportChat() {
   const [message, setMessage] = useState('');
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatPending, setChatPending] = useState(false);
+  const [chatMetric, setChatMetric] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const topSupporters = useMemo(
@@ -487,6 +488,7 @@ export default function ReportChat() {
       const response = await sendGroupChatMessage(sessionId, {
         segment: chatSegment === 'supporters' ? 'supporter' : 'dissenter',
         message: trimmed,
+        ...(chatMetric ? { metric_name: chatMetric } : {}),
       });
       if (response.responses.length > 0) {
         response.responses.forEach((entry, index) => {
@@ -776,31 +778,6 @@ export default function ReportChat() {
                   </section>
                 )}
 
-                {/* Insight Blocks */}
-                {(report as any).insight_blocks && (report as any).insight_blocks.length > 0 && (
-                  <section className="space-y-4">
-                    <span className="label-meta block">Insight Blocks</span>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {((report as any).insight_blocks as any[]).map((block: any, i: number) => (
-                        <div key={i} className="surface-card p-5">
-                          <div className="flex items-center gap-2 mb-3">
-                            <BadgeCheck className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm font-medium text-foreground">{block.title}</span>
-                          </div>
-                          {block.description && (
-                            <p className="text-xs text-muted-foreground mb-3">{block.description}</p>
-                          )}
-                          {block.data && block.data.status !== 'not_applicable' ? (
-                            <InsightBlockData data={block.data} type={block.type} />
-                          ) : (
-                            <p className="text-xs text-muted-foreground/50 italic">Not applicable for this use case.</p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
                 {/* Preset Sections */}
                 {(report as any).preset_sections && (report as any).preset_sections.length > 0 && (
                   <section className="space-y-4">
@@ -890,8 +867,14 @@ export default function ReportChat() {
               )}
             </div>
 
-            {/* Segment Tabs */}
+            {/* Metric Selector + Segment Tabs */}
             <div className="px-4 py-2.5 border-b border-border flex-shrink-0">
+              <MetricSelector
+                sessionId={sessionId}
+                value={chatMetric}
+                onChange={setChatMetric}
+                className="mb-2 flex items-center"
+              />
               <div className="flex gap-1.5 mb-2">
                 {(['dissenters', 'supporters', 'one-on-one'] as ChatSegment[]).map(seg => (
                   <button
@@ -1148,63 +1131,6 @@ function ThemeCard({ title, color, themes }: { title: string; color: string; the
       </ul>
     </div>
   );
-}
-
-function InsightBlockData({ data, type }: { data: any; type: string }) {
-  if (!data) return null;
-
-  // If data is an array (e.g. pain_points, top_advocates, viral_posts)
-  if (Array.isArray(data)) {
-    return (
-      <ul className="space-y-1.5">
-        {data.slice(0, 8).map((item: any, i: number) => (
-          <li key={i} className="text-xs text-foreground/80 leading-relaxed flex gap-2">
-            <span className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 bg-white/20" />
-            <span>{typeof item === 'string' ? item : JSON.stringify(item)}</span>
-          </li>
-        ))}
-      </ul>
-    );
-  }
-
-  // If data has items/entries array
-  const entries = data.items || data.entries || data.segments || data.rows;
-  if (Array.isArray(entries)) {
-    return (
-      <div className="space-y-2">
-        {entries.slice(0, 8).map((entry: any, i: number) => (
-          <div key={i} className="flex items-center justify-between text-xs">
-            <span className="text-foreground/80 truncate mr-2">
-              {entry.label || entry.name || entry.segment || `Item ${i + 1}`}
-            </span>
-            <span className="font-mono text-muted-foreground flex-shrink-0">
-              {entry.value ?? entry.count ?? entry.score ?? ''}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  // If data is an object with key-value pairs
-  if (typeof data === 'object' && data !== null) {
-    const displayKeys = Object.keys(data).filter(k => k !== 'status');
-    if (displayKeys.length === 0) return null;
-    return (
-      <div className="space-y-1.5">
-        {displayKeys.slice(0, 8).map((key) => (
-          <div key={key} className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">{key.replace(/_/g, ' ')}</span>
-            <span className="font-mono text-foreground/80">
-              {typeof data[key] === 'object' ? JSON.stringify(data[key]).slice(0, 40) : String(data[key])}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  return <p className="text-xs text-muted-foreground">{String(data)}</p>;
 }
 
 function ChatBubble({

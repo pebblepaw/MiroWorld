@@ -1342,20 +1342,22 @@ class ConsoleService:
         docx_bytes = report_service.export_v2_report_docx(session_id, report=report_payload, use_case=use_case)
         return (f"mckainsey-{session_id}-report.docx", docx_bytes)
 
-    def group_chat(self, session_id: str, segment: str, message: str, top_n: int = 5) -> dict[str, Any]:
+    def group_chat(self, session_id: str, segment: str, message: str, top_n: int = 5, metric_name: str | None = None) -> dict[str, Any]:
         runtime_settings = self._runtime_settings_for_session(session_id)
         config_service = ConfigService(runtime_settings)
         metrics = MetricsService(config_service)
         memory_service = MemoryService(runtime_settings)
 
         segment_key = self._normalize_group_chat_segment(segment)
+        agents_enriched, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
 
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
             selected = metrics.select_group_chat_agents(
-                agents=self._agents_for_metrics(session_id),
+                agents=agents_enriched,
                 interactions=self.store.get_interactions(session_id),
                 segment=segment_key,
                 top_n=max(1, int(top_n)),
+                score_field=score_field,
             )
             if not selected:
                 hub = self.demo.get_interaction_hub(session_id)
@@ -1403,13 +1405,14 @@ class ConsoleService:
                 "responses": responses,
             }
 
-        agents = self._agents_for_metrics(session_id)
+        agents = agents_enriched
         interactions = self.store.get_interactions(session_id)
         selected = metrics.select_group_chat_agents(
             agents=agents,
             interactions=interactions,
             segment=segment_key,
             top_n=max(1, int(top_n)),
+            score_field=score_field,
         )
         if not selected:
             notice = {
@@ -1583,11 +1586,11 @@ class ConsoleService:
         payload["response"] = response_text
         return payload
 
-    def get_analytics_polarization(self, session_id: str) -> dict[str, Any]:
+    def get_analytics_polarization(self, session_id: str, metric_name: str | None = None) -> dict[str, Any]:
         runtime_settings = self._runtime_settings_for_session(session_id)
         config_service = ConfigService(runtime_settings)
         metrics = MetricsService(config_service)
-        agents = self._agents_for_metrics(session_id)
+        agents, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
         interactions = self.store.get_interactions(session_id)
         max_round = max((int(item.get("round_no", 0) or 0) for item in interactions), default=0)
         if max_round <= 0:
@@ -1597,7 +1600,7 @@ class ConsoleService:
 
         series = []
         for round_no in round_numbers:
-            metric = metrics.compute_group_polarization(agents, "planning_area")
+            metric = metrics.compute_polarization(agents, score_field)
             series.append(
                 {
                     "round": f"R{round_no}",
@@ -1607,15 +1610,16 @@ class ConsoleService:
                     "group_sizes": metric.get("group_sizes", {}),
                 }
             )
-        return {"session_id": session_id, "series": series}
+        return {"session_id": session_id, "metric_name": metric_name, "series": series}
 
-    def get_analytics_opinion_flow(self, session_id: str) -> dict[str, Any]:
+    def get_analytics_opinion_flow(self, session_id: str, metric_name: str | None = None) -> dict[str, Any]:
         runtime_settings = self._runtime_settings_for_session(session_id)
         config_service = ConfigService(runtime_settings)
         metrics = MetricsService(config_service)
-        agents = self._agents_for_metrics(session_id)
-        flow = metrics.compute_opinion_flow(agents)
+        agents, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
+        flow = metrics.compute_opinion_flow(agents, score_field)
         flow["session_id"] = session_id
+        flow["metric_name"] = metric_name
         return flow
 
     def get_analytics_influence(self, session_id: str) -> dict[str, Any]:
@@ -1645,6 +1649,28 @@ class ConsoleService:
         payload = metrics.compute_cascades(posts, comments, self._agents_for_metrics(session_id))
         payload["session_id"] = session_id
         return payload
+
+    def get_agent_stances(self, session_id: str, metric_name: str | None = None) -> dict[str, Any]:
+        agents, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
+        stances: list[dict[str, Any]] = []
+        for agent in agents:
+            aid = str(agent.get("agent_id") or agent.get("id") or "")
+            score = agent.get(score_field)
+            if score is None:
+                continue
+            try:
+                numeric = float(score)
+            except (TypeError, ValueError):
+                continue
+            persona = agent.get("persona") or {}
+            stances.append({
+                "agent_id": aid,
+                "score": numeric,
+                "planning_area": persona.get("planning_area", ""),
+                "age_group": persona.get("age_group", ""),
+                "archetype": persona.get("archetype", ""),
+            })
+        return {"session_id": session_id, "metric_name": metric_name, "score_field": score_field, "stances": stances}
 
     def report_chat(self, session_id: str, message: str) -> dict[str, Any]:
         # Check if demo mode
@@ -1695,6 +1721,38 @@ class ConsoleService:
             payload["id"] = payload.get("id") or payload.get("agent_id")
             normalized.append(payload)
         return normalized
+
+    def _agents_with_checkpoint_metrics(self, session_id: str, metric_name: str | None = None) -> tuple[list[dict[str, Any]], str]:
+        """Return (agents, score_field) with per-metric checkpoint data merged in.
+
+        When *metric_name* is ``None`` (or empty), falls back to the aggregate
+        ``opinion_post`` field already present on every agent row.
+        """
+        agents = self._agents_for_metrics(session_id)
+        if not metric_name:
+            return agents, "opinion_post"
+
+        score_field = f"checkpoint_{metric_name}"
+        checkpoints = self.store.list_checkpoint_records(session_id, checkpoint_kind="post")
+        if not checkpoints:
+            checkpoints = self.store.list_checkpoint_records(session_id)
+
+        # Build lookup: agent_id → latest metric value
+        metric_by_agent: dict[str, Any] = {}
+        for record in checkpoints:
+            aid = str(record.get("agent_id", "")).strip()
+            if not aid:
+                continue
+            answers = record.get("metric_answers") or {}
+            if metric_name in answers:
+                metric_by_agent[aid] = answers[metric_name]
+
+        for agent in agents:
+            aid = str(agent.get("agent_id") or agent.get("id") or "")
+            if aid in metric_by_agent:
+                agent[score_field] = metric_by_agent[aid]
+
+        return agents, score_field
 
     def _build_selected_agent_state(
         self,

@@ -51,27 +51,27 @@ analysis_questions:
     report_title: "Net Promoter Score"
     tooltip: "Percentage of agents who would recommend (score ≥ 8), following NPS methodology."
 
-# Note: The system_prompt already instructs agents to discuss pain points and
-# compare alternatives in their posts. The open-ended "Product Feedback" question
-# as a seed post explicitly solicits this discussion, and the insight blocks below
-# extract structured themes from the resulting agent posts.
+  - question: "What are the main pain points or problems you see with this product?"
+    type: "open-ended"
+    metric_name: "pain_points"
+    report_title: "Pain Points"
+    tooltip: "Top pain points and unmet needs raised by agents."
+
+  - question: "What alternatives or competitors would you compare this to, and why?"
+    type: "open-ended"
+    metric_name: "competitive_landscape"
+    report_title: "Competitive Landscape"
+    tooltip: "Alternatives and competitors mentioned by agents with comparison reasoning."
 
 insight_blocks:
   - type: "segment_heatmap"
     title: "Best-Fit Segments"
     description: "Which demographic segments show highest interest/satisfaction?"
     metric_ref: "product_interest"
-  - type: "pain_points"
-    title: "Top Pain Points"
-    count: 5
-    description: "Most frequently mentioned complaints or unmet needs. (Raw data extraction — complements the 'Improvement Priorities' preset section which synthesizes these into actionable recommendations.)"
   - type: "top_advocates"
     title: "Top Advocates"
     count: 3
     description: "Agents with the highest scores — your ideal customer profile."
-  - type: "competitive_mentions"
-    title: "Competitive Landscape"
-    description: "Alternatives and competitors mentioned by agents."
 
 preset_sections:
   - title: "Best-Fit Demographics"
