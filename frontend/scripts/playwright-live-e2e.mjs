@@ -90,6 +90,19 @@ async function clickWhenEnabled(page, name, timeoutMs) {
   await button.click();
 }
 
+async function waitForChatSendReady(page, timeoutMs = 60_000) {
+  const sendButton = page.locator("button.h-10.w-10.shrink-0").first();
+  await sendButton.waitFor({ state: "visible", timeout: timeoutMs });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await sendButton.isEnabled()) {
+      return;
+    }
+    await page.waitForTimeout(300);
+  }
+  throw new Error("Chat send button did not become ready in time.");
+}
+
 async function patchProviderCatalog(page) {
   await page.route("**/api/v2/providers", async (route) => {
     const response = await route.fetch();
@@ -104,6 +117,95 @@ async function patchProviderCatalog(page) {
       : body;
     await route.fulfill({ response, json: patched });
   });
+}
+
+async function expectChatOutcome(page, endpointMatcher, timeoutMs = 180_000) {
+  const response = await page
+    .waitForResponse(
+      (res) => endpointMatcher.test(res.url()) && res.request().method() === "POST",
+      { timeout: timeoutMs },
+    )
+    .catch(() => null);
+
+  if (!response) {
+    const errorText = await page
+      .locator("p.text-xs.text-destructive")
+      .first()
+      .textContent()
+      .then((value) => compactWhitespace(value || ""))
+      .catch(() => "");
+    return {
+      ok: false,
+      status: null,
+      response_count: 0,
+      ui_error_visible: Boolean(errorText),
+      detail: errorText || "No backend response and no visible chat error.",
+    };
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  const responses = Array.isArray(payload?.responses)
+    ? payload.responses
+    : (typeof payload?.response === "string" && payload.response.trim()
+        ? [{ content: payload.response }]
+        : []);
+  if (response.ok() && responses.length > 0) {
+    return {
+      ok: true,
+      status: response.status(),
+      response_count: responses.length,
+      ui_error_visible: false,
+      detail: null,
+    };
+  }
+
+  const errorVisible = await page.locator("p.text-xs.text-destructive").first().isVisible().catch(() => false);
+  return {
+    ok: false,
+    status: response.status(),
+    response_count: responses.length,
+    ui_error_visible: errorVisible,
+    detail: compactWhitespace(payload?.detail || payload?.message || ""),
+  };
+}
+
+async function runGroupChatProbe(page, segmentButtonName, promptText) {
+  await page.getByRole("button", { name: segmentButtonName }).first().click();
+  await waitForChatSendReady(page, 60_000);
+  const input = page.getByPlaceholder("Ask the group a question...").first();
+  await input.fill(promptText);
+  await input.press("Enter");
+  return expectChatOutcome(page, /\/api\/v2\/console\/session\/[^/]+\/chat\/group$/i);
+}
+
+async function runOneToOneChatProbe(page, promptText) {
+  await page.getByRole("button", { name: "1:1 Chat" }).first().click();
+  const search = page.getByPlaceholder("Search agents...").first();
+  await search.fill("a");
+
+  const firstCandidate = page.locator("div.max-h-36 button").first();
+  await firstCandidate.waitFor({ state: "visible", timeout: 60_000 });
+  await firstCandidate.click();
+
+  await waitForChatSendReady(page, 60_000);
+  const directInput = page.locator('input[placeholder^="Ask "]').first();
+  await directInput.waitFor({ state: "visible", timeout: 30_000 });
+  await directInput.fill(promptText);
+  await directInput.press("Enter");
+
+  return expectChatOutcome(page, /\/api\/v2\/console\/session\/[^/]+\/chat\/agent\//i);
+}
+
+async function navigateSidebar(page, labelPattern, timeoutMs = 60_000) {
+  const button = page.getByRole("button", { name: labelPattern }).first();
+  await button.waitFor({ state: "visible", timeout: timeoutMs });
+  await button.click();
 }
 
 async function run() {
@@ -121,7 +223,7 @@ async function run() {
     const match = request.url().match(/\/api\/v2\/console\/session\/([^/]+)/);
     if (match?.[1]) {
       const id = decodeURIComponent(match[1]).trim();
-      if (/^session-[a-z0-9]+$/i.test(id)) {
+      if (/^(session|demo)-[a-z0-9]+$/i.test(id)) {
         observedSessionIds.add(id);
         sessionId = id;
       }
@@ -135,7 +237,7 @@ async function run() {
       const payload = await response.json();
       if (payload?.session_id) {
         const id = String(payload.session_id).trim();
-        if (/^session-[a-z0-9]+$/i.test(id)) {
+        if (/^(session|demo)-[a-z0-9]+$/i.test(id)) {
           createdSessionId = id;
           observedSessionIds.add(id);
           sessionId = id;
@@ -169,7 +271,41 @@ async function run() {
     }
 
     await clickWhenEnabled(page, /Launch Simulation Environment/i, ONBOARDING_TIMEOUT);
-    await page.getByText("Configure your simulation environment", { exact: false }).waitFor({ state: "hidden", timeout: ONBOARDING_TIMEOUT });
+
+    let onboardingClosed = await page
+      .getByText("Configure your simulation environment", { exact: false })
+      .waitFor({ state: "hidden", timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!onboardingClosed) {
+      const launchError = await page
+        .locator("p.text-xs.text-destructive")
+        .first()
+        .textContent()
+        .then((value) => compactWhitespace(value || ""))
+        .catch(() => "");
+
+      if (/api key is required|select a provider and model|provider catalog/i.test(launchError)) {
+        await providerSelect.selectOption("ollama").catch(() => undefined);
+
+        const fallbackModelValue = await modelSelect.locator("option").first().getAttribute("value");
+        if (fallbackModelValue) {
+          await modelSelect.selectOption(fallbackModelValue);
+        }
+
+        await clickWhenEnabled(page, /Launch Simulation Environment/i, ONBOARDING_TIMEOUT);
+        onboardingClosed = await page
+          .getByText("Configure your simulation environment", { exact: false })
+          .waitFor({ state: "hidden", timeout: ONBOARDING_TIMEOUT })
+          .then(() => true)
+          .catch(() => false);
+      }
+
+      if (!onboardingClosed) {
+        throw new Error(`Onboarding did not close after launch attempt. Error=${launchError || "unknown"}`);
+      }
+    }
 
     await page.getByText("NEW SIMULATION RUN", { exact: false }).waitFor({ timeout: 60_000 });
 
@@ -207,8 +343,40 @@ async function run() {
     await page.getByText("Analysis Report", { exact: false }).waitFor({ timeout: 120_000 });
     await page.waitForFunction(() => !document.body.innerText.includes("Generating report..."), { timeout: REPORT_TIMEOUT });
 
+    const groupDissenters = await runGroupChatProbe(
+      page,
+      /Top dissenters/i,
+      `E2E dissenters check ${Date.now()}: what is your main concern?`,
+    );
+    const groupSupporters = await runGroupChatProbe(
+      page,
+      /Top supporters/i,
+      `E2E supporters check ${Date.now()}: what should be prioritized next?`,
+    );
+    const oneToOne = await runOneToOneChatProbe(
+      page,
+      `E2E 1:1 check ${Date.now()}: summarize your position in one paragraph.`,
+    );
+
     await clickWhenEnabled(page, /^Proceed\b/i, 120_000);
     await page.getByText("Simulation Analytics", { exact: false }).waitFor({ timeout: 120_000 });
+
+    const firstAnalyticsWarningVisible = await page.getByText("Live analytics returned incomplete data.", { exact: false }).first().isVisible().catch(() => false);
+    const firstAnalyticsEmptyPolar = await page.getByText("No polarization data yet.", { exact: false }).first().isVisible().catch(() => false);
+    const firstAnalyticsEmptyFlow = await page.getByText("No opinion flow data yet.", { exact: false }).first().isVisible().catch(() => false);
+
+    await navigateSidebar(page, /\bReport\b/i);
+    await page.getByText("Analysis Report", { exact: false }).waitFor({ timeout: 120_000 });
+
+    const reportHasExecutiveSummary = await page.getByText("Executive Summary", { exact: false }).first().isVisible().catch(() => false);
+    const reportFailedFetchVisible = await page.getByText("Failed to fetch", { exact: false }).first().isVisible().catch(() => false);
+
+    await navigateSidebar(page, /\bAnalytics\b/i);
+    await page.getByText("Simulation Analytics", { exact: false }).waitFor({ timeout: 120_000 });
+
+    const secondAnalyticsWarningVisible = await page.getByText("Live analytics returned incomplete data.", { exact: false }).first().isVisible().catch(() => false);
+    const secondAnalyticsEmptyPolar = await page.getByText("No polarization data yet.", { exact: false }).first().isVisible().catch(() => false);
+    const secondAnalyticsEmptyFlow = await page.getByText("No opinion flow data yet.", { exact: false }).first().isVisible().catch(() => false);
 
     const resolvedSessionId = createdSessionId || sessionId || Array.from(observedSessionIds).at(-1) || null;
     if (!resolvedSessionId) {
@@ -275,6 +443,21 @@ async function run() {
           match_count: firstPersonMatches.length,
           examples: firstPersonMatches.slice(0, 20),
         },
+        live_chat: {
+          group_dissenters: groupDissenters,
+          group_supporters: groupSupporters,
+          one_to_one: oneToOne,
+        },
+        report_analytics_navigation: {
+          report_has_executive_summary_after_return: reportHasExecutiveSummary,
+          report_failed_to_fetch_visible_after_return: reportFailedFetchVisible,
+          analytics_warning_visible_before_return: firstAnalyticsWarningVisible,
+          analytics_warning_visible_after_return: secondAnalyticsWarningVisible,
+          analytics_empty_polar_before_return: firstAnalyticsEmptyPolar,
+          analytics_empty_flow_before_return: firstAnalyticsEmptyFlow,
+          analytics_empty_polar_after_return: secondAnalyticsEmptyPolar,
+          analytics_empty_flow_after_return: secondAnalyticsEmptyFlow,
+        },
       },
     };
 
@@ -289,6 +472,11 @@ async function run() {
       duplicate_post_examples: duplicatePosts.slice(0, 5),
       refusal_match_count: refusalMatches.length,
       report_first_person_match_count: firstPersonMatches.length,
+      group_chat_dissenters_ok: groupDissenters.ok,
+      group_chat_supporters_ok: groupSupporters.ok,
+      one_to_one_chat_ok: oneToOne.ok,
+      report_persisted_after_return: reportHasExecutiveSummary && !reportFailedFetchVisible,
+      analytics_empty_after_return: secondAnalyticsEmptyPolar && secondAnalyticsEmptyFlow,
       ui_post_count: uiPosts.length,
       report_section_count: reportSections.length,
     })}\n`);

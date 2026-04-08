@@ -24,6 +24,8 @@ const POLL_INTERVAL_MS = 1500;
 type ViewMode = 'report' | 'split' | 'chat';
 type ChatSegment = 'dissenters' | 'supporters' | 'one-on-one';
 
+type ChatAgent = Pick<Agent, 'id' | 'name' | 'sentiment'> & Partial<Omit<Agent, 'id' | 'name' | 'sentiment'>>;
+
 const EMPTY_REPORT: StructuredReportState = {
   session_id: '',
   status: 'idle',
@@ -91,6 +93,37 @@ function hasRenderableReportContent(report: StructuredReportState): boolean {
   );
 }
 
+function reportCacheKey(sessionId: string): string {
+  return `mckainsey-report-${sessionId}`;
+}
+
+function loadCachedReport(sessionId: string): StructuredReportState | null {
+  if (!sessionId || typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(reportCacheKey(sessionId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as StructuredReportState;
+    return hasRenderableReportContent(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedReport(sessionId: string, report: StructuredReportState): void {
+  if (!sessionId || typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(reportCacheKey(sessionId), JSON.stringify(report));
+  } catch {
+    // Ignore browser storage write failures.
+  }
+}
+
 export default function ReportChat() {
   const {
     sessionId,
@@ -114,13 +147,17 @@ export default function ReportChat() {
   const startedRef = useRef<string | null>(null);
   const hydratedReportSessionRef = useRef<string | null>(null);
   const hydrateRequestSeqRef = useRef(0);
+  const lastSessionRef = useRef<string | null>(null);
+  const lastGoodReportRef = useRef<StructuredReportState | null>(null);
 
   // Chat state
   const [chatSegment, setChatSegment] = useState<ChatSegment>('dissenters');
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-  const [profileAgent, setProfileAgent] = useState<Agent | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<ChatAgent | null>(null);
+  const [profileAgent, setProfileAgent] = useState<ChatAgent | null>(null);
   const [search, setSearch] = useState('');
   const [message, setMessage] = useState('');
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatPending, setChatPending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const topSupporters = useMemo(
@@ -131,7 +168,51 @@ export default function ReportChat() {
     () => agents.filter((agent) => agent.sentiment === 'negative').slice(0, 5),
     [agents],
   );
-  const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
+  const reportEvidenceAgents = useMemo<ChatAgent[]>(() => {
+    const sections = Array.isArray((reportState as any).sections) ? ((reportState as any).sections as any[]) : [];
+    const byId = new Map<string, ChatAgent>();
+    for (const section of sections) {
+      const evidence = Array.isArray(section?.evidence) ? section.evidence : [];
+      for (const item of evidence) {
+        const agentId = String(item?.agent_id ?? '').trim();
+        if (!agentId) {
+          continue;
+        }
+        const fallbackName = String(item?.agent_name ?? agentId).trim() || agentId;
+        const existing = byId.get(agentId);
+        if (existing) {
+          if ((!existing.name || existing.name === agentId) && fallbackName && fallbackName !== agentId) {
+            existing.name = fallbackName;
+          }
+          continue;
+        }
+        byId.set(agentId, {
+          id: agentId,
+          name: fallbackName,
+          sentiment: 'neutral',
+        });
+      }
+    }
+    return Array.from(byId.values());
+  }, [reportState]);
+
+  const availableAgents = useMemo<ChatAgent[]>(() => {
+    const byId = new Map<string, ChatAgent>();
+    for (const agent of agents) {
+      byId.set(agent.id, agent);
+    }
+    for (const fallbackAgent of reportEvidenceAgents) {
+      if (!byId.has(fallbackAgent.id)) {
+        byId.set(fallbackAgent.id, fallbackAgent);
+      }
+    }
+    return Array.from(byId.values());
+  }, [agents, reportEvidenceAgents]);
+
+  const agentsById = useMemo<Map<string, ChatAgent>>(
+    () => new Map(availableAgents.map((agent) => [agent.id, agent])),
+    [availableAgents],
+  );
 
   const loadDemoReport = useCallback(async (): Promise<void> => {
     try {
@@ -160,6 +241,41 @@ export default function ReportChat() {
     }
   }, [loadDemoReport, reportState.status, loading]);
 
+  useEffect(() => {
+    if (!sessionId) {
+      lastSessionRef.current = null;
+      lastGoodReportRef.current = null;
+      setReportState(EMPTY_REPORT);
+      setReportError(null);
+      return;
+    }
+
+    if (lastSessionRef.current === sessionId) {
+      return;
+    }
+
+    lastSessionRef.current = sessionId;
+    startedRef.current = null;
+    hydratedReportSessionRef.current = null;
+    const cached = loadCachedReport(sessionId);
+    if (cached) {
+      lastGoodReportRef.current = cached;
+      setReportState(cached);
+    } else {
+      lastGoodReportRef.current = null;
+      setReportState({ ...EMPTY_REPORT, session_id: sessionId, status: 'idle' });
+    }
+    setReportError(null);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !hasRenderableReportContent(reportState)) {
+      return;
+    }
+    lastGoodReportRef.current = reportState;
+    saveCachedReport(sessionId, reportState);
+  }, [reportState, sessionId]);
+
   const beginReportGeneration = useCallback(async () => {
     if (!sessionId) {
       setReportError('Complete a simulation before generating a report.');
@@ -182,8 +298,14 @@ export default function ReportChat() {
         });
       } else {
         const message = error instanceof Error ? error.message : 'Report generation failed.';
-        setReportState(EMPTY_REPORT);
-        setReportError(message);
+        const lastGood = lastGoodReportRef.current;
+        if (lastGood && hasRenderableReportContent(lastGood)) {
+          setReportState(lastGood);
+          setReportError(`Unable to refresh report. Showing last available report. ${message}`);
+        } else {
+          setReportState({ ...EMPTY_REPORT, session_id: sessionId, status: 'failed' });
+          setReportError(message);
+        }
         toast({
           title: 'Report generation failed',
           description: message,
@@ -222,7 +344,13 @@ export default function ReportChat() {
       } catch {
         if (cancelled || requestSeq !== hydrateRequestSeqRef.current) return;
         hydratedReportSessionRef.current = null;
-        await beginReportGeneration();
+        const lastGood = lastGoodReportRef.current;
+        if (lastGood && hasRenderableReportContent(lastGood)) {
+          setReportState(lastGood);
+          setReportError('Unable to refresh report from backend. Showing last available report.');
+        } else {
+          await beginReportGeneration();
+        }
       } finally {
         if (!cancelled && requestSeq === hydrateRequestSeqRef.current) {
           setLoading(false);
@@ -255,6 +383,10 @@ export default function ReportChat() {
     chatEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
   }, [chatHistory, selectedAgent]);
 
+  useEffect(() => {
+    setChatError(null);
+  }, [chatSegment, selectedAgent?.id]);
+
   const enqueueDemoGroupReplies = useCallback((threadId: string, responders: Agent[]) => {
     responders.slice(0, 5).forEach((agent, index) => {
       window.setTimeout(() => {
@@ -265,7 +397,7 @@ export default function ReportChat() {
     });
   }, [addChatMessage]);
 
-  const enqueueDemoOneToOneReply = useCallback((threadId: string, selected: Agent) => {
+  const enqueueDemoOneToOneReply = useCallback((threadId: string, selected: ChatAgent) => {
     window.setTimeout(() => {
       const responses = agentResponses[selected.sentiment] || agentResponses.neutral;
       const reply = responses[Math.floor(Math.random() * responses.length)];
@@ -274,11 +406,23 @@ export default function ReportChat() {
   }, [addChatMessage]);
 
   const sendMessage = useCallback(async () => {
+    if (chatPending) return;
     const trimmed = message.trim();
     if (!trimmed) return;
+    setChatError(null);
 
     if (chatSegment === 'one-on-one') {
-      if (!selectedAgent) return;
+      if (!selectedAgent) {
+        setChatError('Select an agent before starting 1:1 chat.');
+        if (liveMode) {
+          toast({
+            title: 'Live chat unavailable',
+            description: 'Select an agent before starting 1:1 chat.',
+            variant: 'destructive',
+          });
+        }
+        return;
+      }
       const threadId = selectedAgent.id;
       addChatMessage(threadId, 'user', trimmed, selectedAgent.id);
       setMessage('');
@@ -286,6 +430,7 @@ export default function ReportChat() {
         enqueueDemoOneToOneReply(threadId, selectedAgent);
         return;
       }
+      setChatPending(true);
       try {
         const response = await sendAgentChatMessage(sessionId, {
           agent_id: selectedAgent.id,
@@ -298,6 +443,7 @@ export default function ReportChat() {
           return;
         }
         if (liveMode) {
+          setChatError('Live agent chat returned no response.');
           toast({
             title: 'Live chat unavailable',
             description: 'The backend returned no agent response.',
@@ -308,6 +454,7 @@ export default function ReportChat() {
         enqueueDemoOneToOneReply(threadId, selectedAgent);
       } catch (error) {
         if (liveMode) {
+          setChatError(error instanceof Error ? error.message : 'The backend request failed.');
           toast({
             title: 'Live chat unavailable',
             description: error instanceof Error ? error.message : 'The backend request failed.',
@@ -316,32 +463,29 @@ export default function ReportChat() {
           return;
         }
         enqueueDemoOneToOneReply(threadId, selectedAgent);
+      } finally {
+        setChatPending(false);
       }
       return;
     }
 
     const threadId = `group-${chatSegment}`;
     const responders = chatSegment === 'supporters' ? topSupporters : topDissenters;
-    if (!responders.length) {
-      if (liveMode) {
-        toast({
-          title: 'Live chat unavailable',
-          description: 'No live agents are available for this chat segment.',
-          variant: 'destructive',
-        });
-      }
-      return;
-    }
 
     addChatMessage(threadId, 'user', trimmed);
     setMessage('');
     if (!sessionId) {
+      if (!responders.length) {
+        setChatError('No agents are available for this chat segment yet.');
+        return;
+      }
       enqueueDemoGroupReplies(threadId, responders);
       return;
     }
+    setChatPending(true);
     try {
       const response = await sendGroupChatMessage(sessionId, {
-        segment: chatSegment,
+        segment: chatSegment === 'supporters' ? 'supporter' : 'dissenter',
         message: trimmed,
       });
       if (response.responses.length > 0) {
@@ -356,6 +500,7 @@ export default function ReportChat() {
         return;
       }
       if (liveMode) {
+        setChatError('Live group chat returned no agent responses.');
         toast({
           title: 'Live chat unavailable',
           description: 'The backend returned no agent responses.',
@@ -366,6 +511,7 @@ export default function ReportChat() {
       enqueueDemoGroupReplies(threadId, responders);
     } catch (error) {
       if (liveMode) {
+        setChatError(error instanceof Error ? error.message : 'The backend request failed.');
         toast({
           title: 'Live chat unavailable',
           description: error instanceof Error ? error.message : 'The backend request failed.',
@@ -374,9 +520,12 @@ export default function ReportChat() {
         return;
       }
       enqueueDemoGroupReplies(threadId, responders);
+    } finally {
+      setChatPending(false);
     }
   }, [
     addChatMessage,
+    chatPending,
     chatSegment,
     enqueueDemoGroupReplies,
     enqueueDemoOneToOneReply,
@@ -417,9 +566,9 @@ export default function ReportChat() {
   }, [completeStep, setCurrentStep]);
 
   const report = reportState;
-  const filteredAgents = agents.filter(a => {
+  const filteredAgents = availableAgents.filter(a => {
     const matchSearch = a.name.toLowerCase().includes(search.toLowerCase()) ||
-      a.occupation.toLowerCase().includes(search.toLowerCase());
+      String(a.occupation ?? '').toLowerCase().includes(search.toLowerCase());
     return matchSearch;
   }).slice(0, 30);
 
@@ -440,7 +589,7 @@ export default function ReportChat() {
       .slice(0, 3);
   }, [profileAgent, simPosts]);
 
-  const openOneToOneChat = useCallback((agent: Agent) => {
+  const openOneToOneChat = useCallback((agent: ChatAgent) => {
     setSelectedAgent(agent);
     setChatSegment('one-on-one');
     setViewMode('split');
@@ -499,7 +648,7 @@ export default function ReportChat() {
                 <Loader2 className="w-6 h-6 animate-spin text-white/40" />
                 <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">Generating report...</span>
               </div>
-            ) : reportError ? (
+            ) : reportError && !hasReportContent ? (
               <div className="text-center py-16">
                 <AlertTriangle className="w-8 h-8 text-destructive mx-auto mb-3" />
                 <p className="text-sm text-destructive">{reportError}</p>
@@ -509,6 +658,11 @@ export default function ReportChat() {
               </div>
             ) : (
               <>
+                {reportError && (
+                  <section className="surface-card border border-amber-500/30 bg-amber-500/5 px-4 py-3">
+                    <p className="text-xs text-amber-200">{reportError}</p>
+                  </section>
+                )}
                 {/* Executive Summary */}
                 <section className="surface-card p-5">
                   <div className="flex items-center gap-2 mb-3">
@@ -605,12 +759,12 @@ export default function ReportChat() {
                                       onClick={() => openEvidenceDrilldown(String(item.agent_id))}
                                       className="text-foreground underline-offset-2 hover:underline"
                                     >
-                                      {resolveAgentDisplayName(String(item.agent_id), agentsById) ?? String(item.agent_id)}
+                                      {resolveAgentDisplayName(String(item.agent_id), agentsById) ?? String(item.agent_name || item.agent_id)}
                                     </button>
                                   ) : (
                                     <span>Unknown agent</span>
                                   )}
-                                  {item.post_id && <span>· {String(item.post_id)}</span>}
+                                  {item.source_label && <span>· {String(item.source_label)}</span>}
                                 </div>
                                 <p className="text-xs leading-relaxed text-foreground/80">{String(item.quote || item.content || '')}</p>
                               </div>
@@ -753,6 +907,17 @@ export default function ReportChat() {
               ))}
             </div>
 
+            {(chatError || chatPending) && (
+              <div className="px-4 py-2 border-b border-border space-y-1">
+                {chatPending && (
+                  <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Waiting for live agent response...</p>
+                )}
+                {chatError && (
+                  <p className="text-xs text-destructive">{chatError}</p>
+                )}
+              </div>
+            )}
+
             {/* Agent selector for 1:1 */}
             {chatSegment === 'one-on-one' && (
               <div className="px-4 py-2.5 border-b border-border flex-shrink-0">
@@ -779,7 +944,7 @@ export default function ReportChat() {
                         }`}
                       >
                         <span className="font-medium">{agent.name}</span>
-                        <span className="text-muted-foreground ml-1.5">{agent.occupation}</span>
+                        {agent.occupation && <span className="text-muted-foreground ml-1.5">{agent.occupation}</span>}
                       </button>
                     ))}
                   </div>
@@ -880,6 +1045,7 @@ export default function ReportChat() {
               <Button
                 onClick={() => void sendMessage()}
                 size="icon"
+                disabled={chatPending}
                 className="h-10 w-10 shrink-0 bg-[hsl(210,100%,56%)] hover:bg-[hsl(210,100%,50%)] text-white border-0"
               >
                 <Send className="w-4 h-4" />
@@ -1032,8 +1198,8 @@ function ChatBubble({
 }: {
   msg: { role: string; content: string };
   isUser: boolean;
-  agent?: Agent | null;
-  onAgentClick?: (agent: Agent) => void;
+  agent?: ChatAgent | null;
+  onAgentClick?: (agent: ChatAgent) => void;
 }) {
   const agentLabel = agent ? `${agent.name} · ${sentimentLabel(agent.sentiment)}` : 'Agent';
 
@@ -1083,17 +1249,27 @@ function AgentProfileDrawer({
   onClose,
   onOpenOneToOne,
 }: {
-  agent: Agent;
+  agent: ChatAgent;
   posts: SimPost[];
   onClose: () => void;
   onOpenOneToOne: () => void;
 }) {
-  const score = Math.max(1, Math.min(10, Math.round(agent.approvalScore / 10)));
+  const rawScore = Number(agent.approvalScore);
+  const hasScore = Number.isFinite(rawScore);
+  const score = hasScore ? Math.max(1, Math.min(10, Math.round(rawScore / 10))) : null;
   const scoreColor = agent.sentiment === 'positive'
     ? 'hsl(var(--data-green))'
     : agent.sentiment === 'negative'
     ? 'hsl(var(--data-red))'
     : 'hsl(var(--muted-foreground))';
+  const occupation = String(agent.occupation ?? '').trim() || 'Unknown occupation';
+  const planningArea = String(agent.planningArea ?? '').trim() || 'Unknown area';
+  const incomeBracket = String(agent.incomeBracket ?? '').trim() || 'Unknown income bracket';
+  const demographicBits = [
+    typeof agent.age === 'number' && Number.isFinite(agent.age) ? `Age ${Math.round(agent.age)}` : null,
+    String(agent.gender ?? '').trim() || null,
+    String(agent.ethnicity ?? '').trim() || null,
+  ].filter((item): item is string => Boolean(item));
 
   return (
     <aside className="absolute inset-y-0 right-0 z-30 w-[340px] border-l border-white/10 bg-[#0B0B0B]/95 backdrop-blur-sm">
@@ -1125,10 +1301,12 @@ function AgentProfileDrawer({
             </div>
 
             <div className="space-y-2 text-xs text-muted-foreground">
-              <div className="flex items-center gap-2"><BriefcaseBusiness className="h-3.5 w-3.5" /> {agent.occupation}</div>
-              <div className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5" /> {agent.planningArea}</div>
-              <div className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" /> {agent.incomeBracket}</div>
-              <div className="text-muted-foreground/90">Age {agent.age} · {agent.gender} · {agent.ethnicity}</div>
+              <div className="flex items-center gap-2"><BriefcaseBusiness className="h-3.5 w-3.5" /> {occupation}</div>
+              <div className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5" /> {planningArea}</div>
+              <div className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" /> {incomeBracket}</div>
+              <div className="text-muted-foreground/90">
+                {demographicBits.length > 0 ? demographicBits.join(' · ') : 'Demographic details unavailable'}
+              </div>
             </div>
           </div>
 
@@ -1136,18 +1314,20 @@ function AgentProfileDrawer({
             <div className="label-meta mb-2">Core Viewpoint</div>
             <p className="text-xs leading-relaxed text-foreground/80">{buildCoreViewpoint(agent)}</p>
 
-            <div className="mt-3 border-t border-border pt-3">
-              <div className="mb-2 flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                <span>Stance Score</span>
-                <span style={{ color: scoreColor }}>{score}/10</span>
+            {hasScore && score !== null && (
+              <div className="mt-3 border-t border-border pt-3">
+                <div className="mb-2 flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                  <span>Stance Score</span>
+                  <span style={{ color: scoreColor }}>{score}/10</span>
+                </div>
+                <div className="h-2 rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${score * 10}%`, backgroundColor: scoreColor }}
+                  />
+                </div>
               </div>
-              <div className="h-2 rounded-full bg-white/10">
-                <div
-                  className="h-full rounded-full"
-                  style={{ width: `${score * 10}%`, backgroundColor: scoreColor }}
-                />
-              </div>
-            </div>
+            )}
           </div>
 
           <div className="surface-card p-4">
@@ -1175,20 +1355,23 @@ function AgentProfileDrawer({
   );
 }
 
-function sentimentLabel(sentiment: Agent['sentiment']): string {
+function sentimentLabel(sentiment: ChatAgent['sentiment']): string {
   if (sentiment === 'positive') return 'Supporter';
   if (sentiment === 'negative') return 'Dissenter';
   return 'Neutral';
 }
 
-function buildCoreViewpoint(agent: Agent): string {
+function buildCoreViewpoint(agent: ChatAgent): string {
+  const firstName = agent.name.split(' ')[0] || 'This agent';
+  const planningArea = String(agent.planningArea ?? '').trim() || 'their planning area';
+  const occupation = String(agent.occupation ?? '').trim() || 'resident';
   if (agent.sentiment === 'positive') {
-    return `${agent.name.split(' ')[0]} generally supports the policy direction, while asking for implementation details that protect everyday households in ${agent.planningArea}.`;
+    return `${firstName} generally supports the policy direction, while asking for implementation details that protect everyday households in ${planningArea}.`;
   }
   if (agent.sentiment === 'negative') {
-    return `${agent.name.split(' ')[0]} believes the current approach puts disproportionate pressure on working residents and wants stronger cost-of-living safeguards for ${agent.occupation.toLowerCase()} households.`;
+    return `${firstName} believes the current approach puts disproportionate pressure on working residents and wants stronger cost-of-living safeguards for ${occupation.toLowerCase()} households.`;
   }
-  return `${agent.name.split(' ')[0]} sees tradeoffs on both sides and asks for clearer data transparency before committing to a stronger stance.`;
+  return `${firstName} sees tradeoffs on both sides and asks for clearer data transparency before committing to a stronger stance.`;
 }
 
 function formatCountry(country: string): string {
@@ -1209,7 +1392,7 @@ function formatUseCase(useCase: string): string {
   return 'Public Policy Testing';
 }
 
-function resolveAgentDisplayName(agentId: string, agentsById: Map<string, Agent>): string | null {
+function resolveAgentDisplayName(agentId: string, agentsById: Map<string, ChatAgent>): string | null {
   const match = agentsById.get(agentId);
   if (match?.name) {
     return match.name;

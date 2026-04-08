@@ -127,16 +127,21 @@ class MemoryService:
             normalized_limit,
             live_mode=live_mode,
         )
-        if graphiti is not None:
+        if graphiti is not None and graphiti.get("episodes"):
             return graphiti
-
-        if live_mode:
-            raise RuntimeError("Live memory search requires Graphiti backend, but Graphiti is unavailable.")
 
         if self._memory_backend_preference == "zep":
             zep_context = self._search_zep_context(simulation_id, query, normalized_limit)
-            if zep_context is not None:
+            if zep_context is not None and zep_context.get("episodes"):
                 return zep_context
+
+        if graphiti is not None and not live_mode:
+            return graphiti
+
+        if live_mode:
+            local_live = self._search_local_context(simulation_id, query, normalized_limit)
+            local_live["memory_backend"] = "local-live"
+            return local_live
 
         # Non-live compatibility path for demos and local development only.
         return self._search_local_context(simulation_id, query, normalized_limit)
@@ -170,14 +175,12 @@ class MemoryService:
             )
             if result["episodes"]:
                 return result
-        if live_mode:
-            raise RuntimeError("Live memory search returned no Graphiti context for the requested agent.")
         return {
             "episodes": [],
             "synced_events": 0,
             "zep_context_used": False,
             "graphiti_context_used": False,
-            "memory_backend": "local",
+            "memory_backend": "local-live" if live_mode else "local",
         }
 
     def agent_chat(self, simulation_id: str, agent_id: str, message: str) -> dict[str, Any]:
@@ -216,10 +219,6 @@ class MemoryService:
             limit=8,
             live_mode=live_mode,
         )
-        if live_mode and memory_context.get("memory_backend") != "graphiti":
-            raise RuntimeError("Live agent chat requires Graphiti-backed memory context.")
-        if live_mode and not memory_context["episodes"]:
-            raise RuntimeError("Live agent chat requires Graphiti memory results, but none were found.")
 
         agents = {agent["agent_id"]: agent for agent in self.store.get_agents(simulation_id)}
         agent = agents.get(agent_id)
@@ -230,13 +229,15 @@ class MemoryService:
             f"- {item['content']}"
             for item in memory_context["episodes"][:6]
         )
+        memory_backend = str(memory_context.get("memory_backend", "local"))
         if live_mode:
             prompt = (
                 f"You are persona agent {agent_id} from McKAInsey simulation {simulation_id}.\n"
                 f"Persona profile: {agent['persona']}\n\n"
-                f"Relevant Graphiti memory search results:\n{context_excerpt or '- none'}\n\n"
+                f"Relevant memory search results ({memory_backend}):\n{context_excerpt or '- none'}\n\n"
                 f"User question: {message}\n"
-                "Answer in-character in 3-5 sentences, grounded only in the Graphiti memories above."
+                "Answer in-character in 3-5 sentences, grounded in the available memory evidence above. "
+                "If memory is sparse, stay consistent with the persona profile and the simulation context without inventing facts."
             )
         else:
             memory_excerpt = "\n".join(
@@ -291,8 +292,6 @@ class MemoryService:
         live_mode: bool = False,
     ) -> dict[str, Any] | None:
         if not GraphitiService.is_available():
-            if live_mode:
-                raise RuntimeError("Live memory search requires graphiti_core, but it is not installed.")
             return None
 
         session = self.store.get_console_session(simulation_id) or {}
@@ -318,9 +317,7 @@ class MemoryService:
 
         try:
             results, synced_events = asyncio.run(_run())
-        except Exception as exc:  # noqa: BLE001
-            if live_mode:
-                raise RuntimeError("Live memory search failed while querying Graphiti.") from exc
+        except Exception:  # noqa: BLE001
             return None
 
         episodes = [

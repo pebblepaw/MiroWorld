@@ -1430,16 +1430,21 @@ class ConsoleService:
             }
 
         responses: list[dict[str, Any]] = []
+        failed_agents: list[tuple[str, str]] = []
         for row in selected:
             agent_id = str(row.get("agent_id") or "")
             if not agent_id:
                 continue
-            payload = memory_service.agent_chat_realtime(
-                session_id,
-                agent_id,
-                message,
-                live_mode=self._is_live_session(session_id),
-            )
+            try:
+                payload = memory_service.agent_chat_realtime(
+                    session_id,
+                    agent_id,
+                    message,
+                    live_mode=self._is_live_session(session_id),
+                )
+            except Exception as exc:  # noqa: BLE001
+                failed_agents.append((agent_id, str(exc).strip() or exc.__class__.__name__))
+                continue
             response_item = {
                 "agent_id": agent_id,
                 "response": payload.get("response", ""),
@@ -1451,6 +1456,38 @@ class ConsoleService:
             }
             responses.append(response_item)
             self.store.append_interaction_transcript(session_id, "group_chat", "assistant", response_item["response"], agent_id=agent_id)
+
+        if not responses:
+            if failed_agents:
+                detail = "; ".join(
+                    f"{agent_id}: {reason}"
+                    for agent_id, reason in failed_agents[:3]
+                )
+                raise RuntimeError(
+                    self._format_runtime_failure_detail(
+                        session_id,
+                        RuntimeError(detail),
+                        action="Group chat",
+                    )
+                )
+            raise RuntimeError("Group chat failed because no eligible agents produced a response.")
+
+        if failed_agents:
+            unavailable = ", ".join(agent_id for agent_id, _reason in failed_agents[:5])
+            responses.append(
+                {
+                    "agent_id": "system",
+                    "response": (
+                        f"Some agents were temporarily unavailable during this reply: {unavailable}. "
+                        "Showing responses from agents that succeeded."
+                    ),
+                    "influence_score": 0.0,
+                    "memory_used": False,
+                    "zep_context_used": False,
+                    "graphiti_context_used": False,
+                    "memory_backend": "system",
+                }
+            )
 
         self.store.append_interaction_transcript(session_id, "group_chat", "user", message)
         return {
@@ -1521,14 +1558,29 @@ class ConsoleService:
 
         runtime_settings = self._runtime_settings_for_session(session_id)
         memory_service = MemoryService(runtime_settings)
-        payload = memory_service.agent_chat_realtime(
-            session_id,
-            agent_id,
-            augmented_message,
-            live_mode=self._is_live_session(session_id),
-        )
+        try:
+            payload = memory_service.agent_chat_realtime(
+                session_id,
+                agent_id,
+                augmented_message,
+                live_mode=self._is_live_session(session_id),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                self._format_runtime_failure_detail(
+                    session_id,
+                    exc,
+                    action="Live 1:1 chat",
+                )
+            ) from exc
+
+        response_text = str(payload.get("response") or "").strip()
+        if not response_text:
+            raise RuntimeError("Live 1:1 chat returned an empty response from the selected agent.")
+
         self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
-        self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)
+        self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", response_text, agent_id=agent_id)
+        payload["response"] = response_text
         return payload
 
     def get_analytics_polarization(self, session_id: str) -> dict[str, Any]:

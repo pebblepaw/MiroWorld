@@ -69,6 +69,13 @@ type DemographicGroup = {
   dissenters: number;
 };
 
+type AnalyticsSnapshot = {
+  polarizationData: PolarizationPoint[];
+  opinionFlowData: OpinionFlowData;
+  leaderData: Leader[];
+  viralPostData: ViralPost[];
+};
+
 const POLARIZATION_DATA: PolarizationPoint[] = [
   { round: "R1", index: 0.12, severity: "low" },
   { round: "R2", index: 0.28, severity: "moderate" },
@@ -245,10 +252,43 @@ const VIRAL_POSTS: ViralPost[] = [
 
 const STANCE_ORDER: Stance[] = ["supporter", "neutral", "dissenter"];
 
+function analyticsCacheKey(sessionId: string): string {
+  return `mckainsey-analytics-${sessionId}`;
+}
+
+function loadAnalyticsSnapshot(sessionId: string): AnalyticsSnapshot | null {
+  if (!sessionId || typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(analyticsCacheKey(sessionId));
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw) as AnalyticsSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+function saveAnalyticsSnapshot(sessionId: string, snapshot: AnalyticsSnapshot): void {
+  if (!sessionId || typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(analyticsCacheKey(sessionId), JSON.stringify(snapshot));
+  } catch {
+    // Ignore browser storage write failures.
+  }
+}
+
 export default function Analytics() {
   const { agents, useCase, country, simulationRounds, sessionId } = useApp();
   const liveMode = isLiveBootMode();
-  const agentNamesById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
+  const agentNamesById = useMemo<Map<string, string>>(
+    () => new Map(agents.map((agent) => [agent.id, agent.name])),
+    [agents],
+  );
 
   const [dimension, setDimension] = useState<DemographicDimension>(() => defaultDimensionForUseCase(useCase));
   const [polarizationData, setPolarizationData] = useState<PolarizationPoint[]>(() => (liveMode ? [] : POLARIZATION_DATA));
@@ -257,6 +297,48 @@ export default function Analytics() {
   const [viralPostData, setViralPostData] = useState<ViralPost[]>(() => (liveMode ? [] : VIRAL_POSTS));
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!liveMode || !sessionId) {
+      return;
+    }
+    const cached = loadAnalyticsSnapshot(sessionId);
+    if (!cached) {
+      return;
+    }
+    if (polarizationData.length === 0 && cached.polarizationData.length > 0) {
+      setPolarizationData(cached.polarizationData);
+    }
+    if (opinionFlowData.flows.length === 0 && cached.opinionFlowData.flows.length > 0) {
+      setOpinionFlowData(cached.opinionFlowData);
+    }
+    if (leaderData.length === 0 && cached.leaderData.length > 0) {
+      setLeaderData(cached.leaderData);
+    }
+    if (viralPostData.length === 0 && cached.viralPostData.length > 0) {
+      setViralPostData(cached.viralPostData);
+    }
+  }, [leaderData.length, liveMode, opinionFlowData.flows.length, polarizationData.length, sessionId, viralPostData.length]);
+
+  useEffect(() => {
+    if (!liveMode || !sessionId) {
+      return;
+    }
+    const hasAnyData =
+      polarizationData.length > 0 ||
+      opinionFlowData.flows.length > 0 ||
+      leaderData.length > 0 ||
+      viralPostData.length > 0;
+    if (!hasAnyData) {
+      return;
+    }
+    saveAnalyticsSnapshot(sessionId, {
+      polarizationData,
+      opinionFlowData,
+      leaderData,
+      viralPostData,
+    });
+  }, [leaderData, liveMode, opinionFlowData, polarizationData, sessionId, viralPostData]);
 
   useEffect(() => {
     setDimension(defaultDimensionForUseCase(useCase));
@@ -313,10 +395,18 @@ export default function Analytics() {
         const hasLeaders = (normalizedLeaders?.length ?? 0) > 0;
         const hasCascades = (normalizedCascades?.length ?? 0) > 0;
 
-        setPolarizationData(hasPolarization ? normalizedPolarization! : []);
-        setOpinionFlowData(hasFlow ? normalizedFlow! : { initial: { supporter: 0, neutral: 0, dissenter: 0 }, final: { supporter: 0, neutral: 0, dissenter: 0 }, flows: [] });
-        setLeaderData(hasLeaders ? normalizedLeaders! : []);
-        setViralPostData(hasCascades ? normalizedCascades! : []);
+        if (hasPolarization) {
+          setPolarizationData(normalizedPolarization!);
+        }
+        if (hasFlow) {
+          setOpinionFlowData(normalizedFlow!);
+        }
+        if (hasLeaders) {
+          setLeaderData(normalizedLeaders!);
+        }
+        if (hasCascades) {
+          setViralPostData(normalizedCascades!);
+        }
 
         const anyFailure =
           [polarization, flow, influence, cascades].some((entry) => entry.status === "rejected") ||
@@ -324,7 +414,17 @@ export default function Analytics() {
           !hasFlow ||
           !hasLeaders ||
           !hasCascades;
-        setAnalyticsError(anyFailure ? "Live analytics returned incomplete data." : null);
+        if (anyFailure) {
+          const missing: string[] = [];
+          if (!hasPolarization) missing.push("polarization");
+          if (!hasFlow) missing.push("opinion flow");
+          if (!hasLeaders) missing.push("influence leaders");
+          if (!hasCascades) missing.push("viral cascades");
+          const suffix = missing.length > 0 ? ` Missing: ${missing.join(", ")}.` : "";
+          setAnalyticsError(`Live analytics returned incomplete data.${suffix}`);
+        } else {
+          setAnalyticsError(null);
+        }
       } else {
         setPolarizationData(normalizedPolarization ?? POLARIZATION_DATA);
         setOpinionFlowData(normalizedFlow ?? OPINION_FLOW);
@@ -338,11 +438,7 @@ export default function Analytics() {
     }).catch(() => {
       if (!active) return;
       if (isLive) {
-        setPolarizationData([]);
-        setOpinionFlowData({ initial: { supporter: 0, neutral: 0, dissenter: 0 }, final: { supporter: 0, neutral: 0, dissenter: 0 }, flows: [] });
-        setLeaderData([]);
-        setViralPostData([]);
-        setAnalyticsError("Live analytics request failed.");
+        setAnalyticsError("Live analytics request failed. Showing the latest available analytics snapshot.");
       } else {
         setPolarizationData(POLARIZATION_DATA);
         setOpinionFlowData(OPINION_FLOW);
@@ -921,7 +1017,7 @@ function EmptyAnalyticsCard({ title, label }: { title: string; label: string }) 
 }
 
 function normalizePolarizationPayload(payload: Record<string, unknown>): PolarizationPoint[] | null {
-  const candidate = payload.points ?? payload.polarization ?? payload.rounds ?? payload.data;
+  const candidate = payload.series ?? payload.points ?? payload.polarization ?? payload.rounds ?? payload.data;
   if (!Array.isArray(candidate)) {
     return null;
   }
@@ -935,6 +1031,7 @@ function normalizePolarizationPayload(payload: Record<string, unknown>): Polariz
       const severityRaw = String(data.severity ?? "");
       let severity: PolarizationPoint["severity"] = "moderate";
       if (severityRaw === "low") severity = "low";
+      if (severityRaw === "moderate") severity = "moderate";
       if (severityRaw === "high" || severityRaw === "critical") severity = "high";
       return {
         round: typeof data.round === "string" ? data.round : `R${Math.max(1, roundNo)}`,
@@ -1016,8 +1113,8 @@ function normalizeLeadersPayload(payload: Record<string, unknown>, agentNamesByI
         topPost: normalizeTopPostText(entry.top_post ?? entry.topPost ?? entry.example_post ?? ""),
       } satisfies Leader;
     })
-    .filter((row): row is Leader => Boolean(row));
-  return normalized;
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+  return normalized as Leader[];
 }
 
 function resolveAnalyticsDisplayName(value: string, agentNamesById: Map<string, string>): string {

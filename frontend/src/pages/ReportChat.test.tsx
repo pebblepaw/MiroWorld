@@ -213,6 +213,7 @@ describe("ReportChat", () => {
   const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
 
   beforeEach(() => {
+    window.sessionStorage.clear();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       value: vi.fn(),
       configurable: true,
@@ -231,6 +232,7 @@ describe("ReportChat", () => {
   });
 
   afterEach(() => {
+    window.sessionStorage.clear();
     global.fetch = originalFetch;
     vi.unstubAllEnvs();
     toastMock.mockClear();
@@ -297,7 +299,7 @@ describe("ReportChat", () => {
     const chatCall = vi.mocked(global.fetch).mock.calls.find(([url]) => String(url).includes("/chat/group"));
     expect(chatCall).toBeDefined();
     expect(JSON.parse(String(chatCall?.[1]?.body))).toEqual({
-      segment: "dissenters",
+      segment: "dissenter",
       message: "What changed over the rounds?",
     });
 
@@ -316,7 +318,7 @@ describe("ReportChat", () => {
       expect(supportCall).toBeTruthy();
     });
     const supportCall = vi.mocked(global.fetch).mock.calls.filter(([url]) => String(url).includes("/chat/group")).at(-1);
-    expect(JSON.parse(String(supportCall?.[1]?.body)).segment).toBe("supporters");
+    expect(JSON.parse(String(supportCall?.[1]?.body)).segment).toBe("supporter");
 
     const reportAgentButton = (await screen.findAllByRole("button", { name: /alex tan/i })).find(
       (button) => button.textContent?.trim() === "Alex Tan",

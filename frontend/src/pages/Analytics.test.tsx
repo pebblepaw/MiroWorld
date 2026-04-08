@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppProvider, useApp } from "@/contexts/AppContext";
 import Analytics from "@/pages/Analytics";
@@ -74,6 +74,10 @@ function SeedAnalyticsContextWithAgents() {
 
 describe("Analytics", () => {
   const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
 
   afterEach(() => {
     global.fetch = originalFetch;
@@ -480,7 +484,9 @@ describe("Analytics", () => {
       </AppProvider>,
     );
 
-    expect(await screen.findByText("Live analytics returned incomplete data.")).toBeInTheDocument();
+    expect(
+      await screen.findByText((text) => text.includes("Live analytics returned incomplete data.")),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Raj Kumar")).not.toBeInTheDocument();
     expect(screen.queryByText("API Leader")).not.toBeInTheDocument();
     expect(screen.queryByText("API Viral Thread")).not.toBeInTheDocument();

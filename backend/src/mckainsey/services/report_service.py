@@ -391,13 +391,20 @@ class ReportService:
                 use_case=use_case,
             )
             answer = _clean_report_text(answer)
+            section_evidence = self._select_section_evidence(
+                question_text,
+                answer,
+                evidence_pool,
+                limit=4,
+            )
+            answer = self._replace_post_id_references(answer, section_evidence or evidence_pool)
 
             section: dict[str, Any] = {
                 "question": question_text,
                 "report_title": q.get("report_title", question_text[:60]),
                 "type": q_type,
                 "answer": answer,
-                "evidence": evidence_pool[:3],
+                "evidence": section_evidence,
             }
 
             # Add metric spotlight for quantitative questions
@@ -442,7 +449,8 @@ class ReportService:
                 )
             else:
                 answer = ""
-            preset_sections.append({"title": title, "answer": answer})
+            clean_answer = self._replace_post_id_references(_clean_report_text(answer), evidence_pool)
+            preset_sections.append({"title": title, "answer": clean_answer})
 
         # ── Executive summary ──
         executive_summary = self._build_v2_executive_summary_from_metrics(
@@ -604,21 +612,196 @@ class ReportService:
             )
             agent_names[agent_id] = display_name or agent_id
 
+        discourse_actions = {
+            "create_post",
+            "post_created",
+            "post",
+            "comment",
+            "comment_created",
+            "reply",
+        }
         evidence: list[dict[str, Any]] = []
+        seen_quotes: set[str] = set()
         for row in interactions:
-            quote = str(row.get("content", "")).strip()
+            action_type = str(row.get("action_type") or "").strip().lower()
+            if action_type not in discourse_actions:
+                continue
+
+            quote = _clean_report_text(row.get("content") or row.get("body") or row.get("title"))
             if not quote:
                 continue
+            if self._is_prompt_like_interaction(quote):
+                continue
+            if not self._is_opinion_like_interaction(quote):
+                continue
+
+            quote_key = quote.lower()
+            if quote_key in seen_quotes:
+                continue
+            seen_quotes.add(quote_key)
+
             agent_id = str(row.get("actor_agent_id", "")).strip()
+            agent_name = agent_names.get(agent_id, agent_id)
+            source_type = "comment" if "comment" in action_type or "reply" in action_type else "post"
             evidence.append(
                 {
                     "agent_id": agent_id,
-                    "agent_name": agent_names.get(agent_id, agent_id),
+                    "agent_name": agent_name,
                     "post_id": str(row.get("post_id") or row.get("id") or ""),
-                    "quote": quote[:280],
+                    "action_type": action_type,
+                    "source_type": source_type,
+                    "source_label": f"{'Comment' if source_type == 'comment' else 'Post'} by {agent_name or 'Unknown agent'}",
+                    "round_no": int(row.get("round_no", 0) or 0),
+                    "quote": quote,
                 }
             )
         return evidence
+
+    def _tokenize_evidence_text(self, value: str) -> set[str]:
+        stopwords = {
+            "a", "an", "the", "and", "or", "to", "of", "for", "with", "in", "on", "at", "by",
+            "is", "are", "was", "were", "be", "been", "being", "this", "that", "these", "those",
+            "it", "its", "as", "from", "about", "into", "over", "under", "than", "then", "if",
+            "but", "we", "our", "ours", "you", "your", "yours", "they", "their", "theirs",
+            "agent", "policy", "persona", "perspective", "community", "prompt", "brief",
+        }
+        tokens = set(re.findall(r"[a-zA-Z][a-zA-Z0-9']+", str(value).lower()))
+        return {token for token in tokens if len(token) >= 3 and token not in stopwords}
+
+    def _is_prompt_like_interaction(self, text: str) -> bool:
+        lowered = text.lower()
+        if lowered.startswith("community prompt:"):
+            return True
+        if lowered.startswith("policy brief:"):
+            return True
+        if "community prompt:" in lowered and "policy brief:" in lowered:
+            return True
+        if (
+            lowered.startswith("from your persona")
+            or lowered.startswith("would you")
+            or lowered.startswith("how strongly")
+        ) and "?" in lowered:
+            return True
+        return False
+
+    def _is_opinion_like_interaction(self, text: str) -> bool:
+        lowered = text.lower().strip()
+        if len(lowered.split()) < 8:
+            return False
+        opinion_markers = (
+            "i ",
+            "i'm",
+            "i am",
+            "my ",
+            "we ",
+            "our ",
+            "because",
+            "concern",
+            "worried",
+            "support",
+            "oppose",
+            "agree",
+            "disagree",
+            "insufficient",
+            "enough",
+            "not enough",
+            "rate",
+            "/10",
+        )
+        if any(marker in lowered for marker in opinion_markers):
+            return True
+        return lowered.count("?") == 0
+
+    def _select_section_evidence(
+        self,
+        question: str,
+        answer: str,
+        evidence_pool: list[dict[str, Any]],
+        *,
+        limit: int = 4,
+    ) -> list[dict[str, Any]]:
+        if not evidence_pool:
+            return []
+
+        query_tokens = self._tokenize_evidence_text(f"{question} {answer}")
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for item in evidence_pool:
+            quote = str(item.get("quote") or "").strip()
+            if not quote:
+                continue
+
+            quote_tokens = self._tokenize_evidence_text(quote)
+            overlap = len(query_tokens.intersection(quote_tokens))
+            base_score = float(overlap * 3)
+
+            source_type = str(item.get("source_type") or "")
+            if source_type == "comment":
+                base_score += 1.5
+
+            round_no = int(item.get("round_no") or 0)
+            if round_no > 0:
+                base_score += min(round_no, 5) * 0.1
+
+            # Prefer richer, specific statements over short generic replies.
+            base_score += min(len(quote_tokens), 40) / 20.0
+            scored.append((base_score, item))
+
+        if not scored:
+            return evidence_pool[:limit]
+
+        scored.sort(key=lambda row: row[0], reverse=True)
+
+        selected: list[dict[str, Any]] = []
+        seen_agents: set[str] = set()
+        for _score, item in scored:
+            if len(selected) >= limit:
+                break
+            agent_id = str(item.get("agent_id") or "")
+            if agent_id and agent_id in seen_agents:
+                continue
+            selected.append(item)
+            if agent_id:
+                seen_agents.add(agent_id)
+
+        if len(selected) < limit:
+            existing_ids = {id(item) for item in selected}
+            for _score, item in scored:
+                if len(selected) >= limit:
+                    break
+                if id(item) in existing_ids:
+                    continue
+                selected.append(item)
+
+        return selected[:limit]
+
+    def _replace_post_id_references(self, text: str, evidence: list[dict[str, Any]]) -> str:
+        cleaned = _clean_report_text(text)
+        if not cleaned:
+            return cleaned
+
+        post_owner: dict[str, str] = {}
+        for item in evidence:
+            post_id = str(item.get("post_id") or "").strip()
+            agent_name = _clean_report_text(item.get("agent_name"))
+            if post_id and agent_name:
+                post_owner[post_id] = agent_name
+
+        fallback_name = ""
+        for item in evidence:
+            fallback_name = _clean_report_text(item.get("agent_name"))
+            if fallback_name:
+                break
+
+        def _replacement(match: re.Match[str]) -> str:
+            ref_id = str(match.group(1) or "").strip()
+            owner = post_owner.get(ref_id) or fallback_name
+            if owner:
+                return f"post by {owner}"
+            return "post"
+
+        rewritten = re.sub(r"\bpost\s*id\s*#?\s*(\d+)\b", _replacement, cleaned, flags=re.IGNORECASE)
+        rewritten = re.sub(r"\bpost\s*#\s*(\d+)\b", _replacement, rewritten, flags=re.IGNORECASE)
+        return rewritten
 
     def _knowledge_context_lines(self, knowledge: dict[str, Any]) -> list[str]:
         if not isinstance(knowledge, dict):

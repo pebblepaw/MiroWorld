@@ -232,7 +232,9 @@ class GraphitiService:
         raw = str(group_id)
         escaped: list[str] = []
         for ch in raw:
-            if ch.isalnum() or ch == "_":
+            # Falkor full-text filters accept hyphens inside quoted values.
+            # Escaping '-' produced invalid queries for session ids.
+            if ch.isalnum() or ch in {"_", "-"}:
                 escaped.append(ch)
             else:
                 escaped.append(f"\\{ch}")
