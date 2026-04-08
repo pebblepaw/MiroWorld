@@ -1349,7 +1349,10 @@ class ConsoleService:
         memory_service = MemoryService(runtime_settings)
 
         segment_key = self._normalize_group_chat_segment(segment)
-        agents_enriched, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
+        if not metric_name and segment_key in ("dissenter", "supporter"):
+            agents_enriched, score_field = self._agents_with_aggregate_extreme_scores(session_id, segment_key)
+        else:
+            agents_enriched, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
 
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
             selected = metrics.select_group_chat_agents(
@@ -1590,37 +1593,119 @@ class ConsoleService:
         runtime_settings = self._runtime_settings_for_session(session_id)
         config_service = ConfigService(runtime_settings)
         metrics = MetricsService(config_service)
-        agents, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
+
+        agents_post = self._agents_for_metrics(session_id)
+        agents_pre = self._agents_for_metrics(session_id)
+        baseline_cps = self._load_checkpoint_records(session_id, "baseline")
+        final_cps = self._load_checkpoint_records(session_id, "post")
+
+        if metric_name:
+            post_field = f"checkpoint_{metric_name}"
+            pre_field = f"checkpoint_pre_{metric_name}"
+            self._enrich_agents_metric_score(agents_post, final_cps, metric_name, post_field)
+            self._enrich_agents_metric_score(agents_pre, baseline_cps, metric_name, pre_field)
+        else:
+            post_field = "agg_post_score"
+            pre_field = "agg_pre_score"
+            self._enrich_agents_aggregate_scores(agents_post, final_cps, post_field)
+            self._enrich_agents_aggregate_scores(agents_pre, baseline_cps, pre_field)
+
+        post_metric = metrics.compute_polarization(agents_post, post_field)
+        pre_metric = metrics.compute_polarization(agents_pre, pre_field)
+
         interactions = self.store.get_interactions(session_id)
         max_round = max((int(item.get("round_no", 0) or 0) for item in interactions), default=0)
-        if max_round <= 0:
-            round_numbers = [1]
-        else:
-            round_numbers = list(range(1, max_round + 1))
 
-        series = []
-        for round_no in round_numbers:
-            metric = metrics.compute_polarization(agents, score_field)
-            series.append(
-                {
-                    "round": f"R{round_no}",
-                    "polarization_index": metric.get("polarization_index", 0.0),
-                    "severity": metric.get("severity", "low"),
-                    "by_group_means": metric.get("by_group_means", {}),
-                    "group_sizes": metric.get("group_sizes", {}),
-                }
-            )
+        series = [
+            {
+                "round": "Initial",
+                "polarization_index": pre_metric.get("polarization_index", 0.0),
+                "severity": pre_metric.get("severity", "low"),
+                "by_group_means": pre_metric.get("by_group_means", {}),
+                "group_sizes": pre_metric.get("group_sizes", {}),
+            },
+            {
+                "round": f"R{max(1, max_round)}",
+                "polarization_index": post_metric.get("polarization_index", 0.0),
+                "severity": post_metric.get("severity", "low"),
+                "by_group_means": post_metric.get("by_group_means", {}),
+                "group_sizes": post_metric.get("group_sizes", {}),
+            },
+        ]
         return {"session_id": session_id, "metric_name": metric_name, "series": series}
 
     def get_analytics_opinion_flow(self, session_id: str, metric_name: str | None = None) -> dict[str, Any]:
         runtime_settings = self._runtime_settings_for_session(session_id)
         config_service = ConfigService(runtime_settings)
         metrics = MetricsService(config_service)
-        agents, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
-        flow = metrics.compute_opinion_flow(agents, score_field)
+
+        agents = self._agents_for_metrics(session_id)
+        baseline_cps = self._load_checkpoint_records(session_id, "baseline")
+        final_cps = self._load_checkpoint_records(session_id, "post")
+
+        if not metric_name:
+            # Aggregate: average across ALL numeric metric scores from checkpoints
+            pre_field = "agg_pre_score"
+            post_field = "agg_post_score"
+            self._enrich_agents_aggregate_scores(agents, baseline_cps, pre_field)
+            self._enrich_agents_aggregate_scores(agents, final_cps, post_field)
+        else:
+            # Per-metric: parse specific metric from baseline & final checkpoints
+            pre_field = f"checkpoint_pre_{metric_name}"
+            post_field = f"checkpoint_{metric_name}"
+            self._enrich_agents_metric_score(agents, final_cps, metric_name, post_field)
+            self._enrich_agents_metric_score(agents, baseline_cps, metric_name, pre_field)
+
+        flow = metrics.compute_opinion_flow(agents, post_field, pre_field=pre_field)
         flow["session_id"] = session_id
         flow["metric_name"] = metric_name
         return flow
+
+    def _enrich_agents_metric_score(
+        self,
+        agents: list[dict[str, Any]],
+        checkpoints: list[dict[str, Any]],
+        metric_name: str,
+        target_field: str,
+    ) -> None:
+        """Parse a single metric from checkpoint records and store on agents."""
+        lookup: dict[str, float] = {}
+        for record in checkpoints:
+            aid = str(record.get("agent_id", "")).strip()
+            if not aid:
+                continue
+            answers = record.get("metric_answers") or {}
+            if metric_name in answers:
+                parsed = self._extract_metric_score(answers[metric_name])
+                if parsed is not None:
+                    lookup[aid] = parsed
+        for agent in agents:
+            aid = str(agent.get("agent_id") or agent.get("id") or "")
+            if aid in lookup:
+                agent[target_field] = lookup[aid]
+
+    def _enrich_agents_aggregate_scores(
+        self,
+        agents: list[dict[str, Any]],
+        checkpoints: list[dict[str, Any]],
+        target_field: str,
+    ) -> None:
+        """Compute average of all parseable metric scores and store on agents."""
+        scores_by_agent: dict[str, list[float]] = {}
+        for record in checkpoints:
+            aid = str(record.get("agent_id", "")).strip()
+            if not aid:
+                continue
+            answers = record.get("metric_answers") or {}
+            for value in answers.values():
+                parsed = self._extract_metric_score(value)
+                if parsed is not None:
+                    scores_by_agent.setdefault(aid, []).append(parsed)
+        for agent in agents:
+            aid = str(agent.get("agent_id") or agent.get("id") or "")
+            agent_scores = scores_by_agent.get(aid)
+            if agent_scores:
+                agent[target_field] = sum(agent_scores) / len(agent_scores)
 
     def get_analytics_influence(self, session_id: str) -> dict[str, Any]:
         runtime_settings = self._runtime_settings_for_session(session_id)
@@ -1722,35 +1807,130 @@ class ConsoleService:
             normalized.append(payload)
         return normalized
 
+    @staticmethod
+    def _extract_metric_score(value: Any) -> float | None:
+        """Extract a numeric score from a free-text LLM metric answer.
+
+        Handles patterns like:
+        - ``"7/10"`` or ``"7/10. I think..."`` → 7.0
+        - ``"7"`` or ``"7.5"`` → 7.0 / 7.5
+        - ``"Yes"`` → 10.0  (full approval)
+        - ``"No"``  →  1.0  (full disapproval)
+        - Open-ended text  → None
+        """
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        low = text.lower()
+        if low == "yes":
+            return 10.0
+        if low == "no":
+            return 1.0
+        # Try leading number: "7/10", "7.5/10", "7 out of 10", or just "7"
+        m = re.match(r"(\d+(?:\.\d+)?)", text)
+        if m:
+            return float(m.group(1))
+        return None
+
+    def _load_checkpoint_records(self, session_id: str, checkpoint_kind: str) -> list[dict[str, Any]]:
+        """Load checkpoint records, trying the requested kind first, then common fallbacks."""
+        records = self.store.list_checkpoint_records(session_id, checkpoint_kind=checkpoint_kind)
+        if records:
+            return records
+        # Try alternate names: "post" ↔ "final"
+        alt = "final" if checkpoint_kind == "post" else ("post" if checkpoint_kind == "final" else None)
+        if alt:
+            records = self.store.list_checkpoint_records(session_id, checkpoint_kind=alt)
+            if records:
+                return records
+        return []
+
     def _agents_with_checkpoint_metrics(self, session_id: str, metric_name: str | None = None) -> tuple[list[dict[str, Any]], str]:
         """Return (agents, score_field) with per-metric checkpoint data merged in.
 
-        When *metric_name* is ``None`` (or empty), falls back to the aggregate
-        ``opinion_post`` field already present on every agent row.
+        When *metric_name* is ``None`` (or empty), computes an average score
+        across ALL parseable metrics from checkpoint data.  Falls back to
+        ``opinion_post`` only when no checkpoint data is available.
         """
         agents = self._agents_for_metrics(session_id)
-        if not metric_name:
-            return agents, "opinion_post"
 
-        score_field = f"checkpoint_{metric_name}"
-        checkpoints = self.store.list_checkpoint_records(session_id, checkpoint_kind="post")
+        checkpoints = self._load_checkpoint_records(session_id, "post")
         if not checkpoints:
             checkpoints = self.store.list_checkpoint_records(session_id)
 
-        # Build lookup: agent_id → latest metric value
-        metric_by_agent: dict[str, Any] = {}
+        if not metric_name:
+            # Aggregate: average across all parseable metric scores
+            if not checkpoints:
+                return agents, "opinion_post"
+            score_field = "aggregate_avg"
+            self._enrich_agents_aggregate_scores(agents, checkpoints, score_field)
+            return agents, score_field
+
+        score_field = f"checkpoint_{metric_name}"
+
+        # Build lookup: agent_id → parsed numeric metric value
+        metric_by_agent: dict[str, float] = {}
         for record in checkpoints:
             aid = str(record.get("agent_id", "")).strip()
             if not aid:
                 continue
             answers = record.get("metric_answers") or {}
             if metric_name in answers:
-                metric_by_agent[aid] = answers[metric_name]
+                parsed = self._extract_metric_score(answers[metric_name])
+                if parsed is not None:
+                    metric_by_agent[aid] = parsed
 
         for agent in agents:
             aid = str(agent.get("agent_id") or agent.get("id") or "")
             if aid in metric_by_agent:
                 agent[score_field] = metric_by_agent[aid]
+
+        return agents, score_field
+
+    def _agents_with_aggregate_extreme_scores(
+        self, session_id: str, segment: str,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Enrich agents with min/max checkpoint scores across ALL metrics.
+
+        For *dissenter* segment: uses the **minimum** score across all metrics
+        so that any agent who dissents on ANY metric is captured.
+        For *supporter* segment: uses the **maximum** score across all metrics
+        so that any agent who supports ANY metric is captured.
+        Falls back to ``opinion_post`` when no checkpoint data exists.
+        """
+        agents = self._agents_for_metrics(session_id)
+        checkpoints = self._load_checkpoint_records(session_id, "post")
+        if not checkpoints:
+            checkpoints = self.store.list_checkpoint_records(session_id)
+        if not checkpoints:
+            return agents, "opinion_post"
+
+        # Gather all numeric scores per agent across all metrics
+        scores_by_agent: dict[str, list[float]] = {}
+        for record in checkpoints:
+            aid = str(record.get("agent_id", "")).strip()
+            if not aid:
+                continue
+            answers = record.get("metric_answers") or {}
+            for value in answers.values():
+                parsed = self._extract_metric_score(value)
+                if parsed is not None:
+                    scores_by_agent.setdefault(aid, []).append(parsed)
+
+        if not scores_by_agent:
+            return agents, "opinion_post"
+
+        score_field = "aggregate_extreme"
+        pick = min if segment == "dissenter" else max
+        for agent in agents:
+            aid = str(agent.get("agent_id") or agent.get("id") or "")
+            agent_scores = scores_by_agent.get(aid)
+            if agent_scores:
+                agent[score_field] = pick(agent_scores)
+
+        return agents, score_field
 
         return agents, score_field
 

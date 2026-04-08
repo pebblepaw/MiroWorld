@@ -666,7 +666,7 @@ export default function Analytics() {
 
                     <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted-foreground">
                       <span className="text-[hsl(var(--data-green))]">{group.supporters}</span>
-                      <span className="text-white/35">neutral {group.neutral}</span>
+                      <span className="text-white/35">{group.neutral}</span>
                       <span className="text-[hsl(var(--data-red))]">{group.dissenters}</span>
                     </div>
 
@@ -962,6 +962,7 @@ function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loadin
 }
 
 function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boolean }) {
+  const [expandedPosts, setExpandedPosts] = useState<Set<number>>(new Set());
   if (loading) {
     return <LoadingAnalyticsCard title="Viral Posts" label="Loading viral post data..." />;
   }
@@ -969,6 +970,14 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
     return <EmptyAnalyticsCard title="Viral Posts" label="No viral post data yet." />;
   }
   const safePosts = posts;
+  const toggleExpand = (index: number) => {
+    setExpandedPosts((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
   return (
     <section className="surface-card p-5">
       <div className="mb-4 flex items-center gap-2">
@@ -977,7 +986,10 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
       </div>
 
       <div className="space-y-4">
-        {safePosts.slice(0, 3).map((post, index) => (
+        {safePosts.slice(0, 3).map((post, index) => {
+          const expanded = expandedPosts.has(index);
+          const visibleComments = expanded ? post.comments : post.comments.slice(0, 3);
+          return (
           <article key={`${post.author}-${index}`} className="rounded border border-white/10 bg-white/[0.02] p-4">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -1002,7 +1014,7 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
             </div>
 
             <div className="mt-3 space-y-2 border-l border-white/10 pl-3">
-              {post.comments.slice(0, 3).map((comment, commentIndex) => (
+              {visibleComments.map((comment, commentIndex) => (
                 <div key={`${post.author}-comment-${commentIndex}`} className="rounded border border-white/10 bg-black/20 p-2.5">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="text-xs font-medium text-white/90">{comment.author}</span>
@@ -1020,9 +1032,19 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
                   </div>
                 </div>
               ))}
+              {post.comments.length > 3 && (
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(index)}
+                  className="mt-1 text-[10px] font-mono uppercase tracking-wider text-white/50 hover:text-white/80 transition-colors"
+                >
+                  {expanded ? "Show fewer replies" : `Show all ${post.comments.length} replies`}
+                </button>
+              )}
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

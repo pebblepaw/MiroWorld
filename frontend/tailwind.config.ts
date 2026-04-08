@@ -81,6 +81,14 @@ export default {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
+        typingDot: {
+          "0%, 60%, 100%": { opacity: "0.3", transform: "scale(1)" },
+          "30%": { opacity: "1", transform: "scale(1.25)" },
+        },
+        livePulse: {
+          "0%, 100%": { opacity: "0.4" },
+          "50%": { opacity: "1" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",

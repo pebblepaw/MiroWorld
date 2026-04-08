@@ -688,11 +688,11 @@ export default function ReportChat() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {((report as any).metric_deltas as any[]).map((delta: any, i: number) => (
                         <div key={i} className="surface-card p-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-0">
                               {formatPlainText(delta.metric_label || delta.metric_name)}
                             </span>
-                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 ${
                               delta.direction === 'up' ? 'bg-emerald-500/10 text-emerald-400' :
                               delta.direction === 'down' ? 'bg-red-500/10 text-red-400' :
                               'bg-white/5 text-muted-foreground'
@@ -910,7 +910,11 @@ export default function ReportChat() {
             {(chatError || chatPending) && (
               <div className="px-4 py-2 border-b border-border space-y-1">
                 {chatPending && (
-                  <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Waiting for live agent response...</p>
+                  <div className="flex items-center gap-2 py-1">
+                    <p className="text-xs text-muted-foreground animate-[livePulse_2s_ease-in-out_infinite]">
+                      Waiting for live agent response…
+                    </p>
+                  </div>
                 )}
                 {chatError && (
                   <p className="text-xs text-destructive">{chatError}</p>
