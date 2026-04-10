@@ -51,17 +51,14 @@ class Settings(BaseSettings):
     openai_api: str | None = None
     openrouter_api_key: str | None = None
 
-    # The repo historically used GEMINI_API and ZEP_CLOUD key names. We keep
-    # compatibility aliases to avoid breaking existing local setup.
+    # The repo historically used GEMINI_API key names. We keep compatibility
+    # aliases to avoid breaking existing local setup.
     gemini_api_key: str | None = None
     gemini_api: str | None = None
     gemini_model: str = "qwen3:4b-instruct-2507-q4_K_M"
     gemini_embed_model: str = "nomic-embed-text"
     gemini_openai_base_url: str = "http://127.0.0.1:11434/v1/"
     gemini_timeout_seconds: int = 20
-
-    zep_api_key: str | None = None
-    zep_cloud: str | None = None
 
     lightrag_workdir: str = "data/lightrag"
     demo_default_policy_markdown: str = "Sample_Inputs/fy2026_budget_statement.md"
@@ -200,10 +197,6 @@ class Settings(BaseSettings):
     @property
     def resolved_gemini_key(self) -> str | None:
         return self.resolved_key_for_provider(self.llm_provider)
-
-    @property
-    def resolved_zep_key(self) -> str | None:
-        return self.zep_api_key or self.zep_cloud
 
 
 @lru_cache(maxsize=1)

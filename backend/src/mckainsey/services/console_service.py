@@ -1440,7 +1440,7 @@ class ConsoleService:
                 "memory_used": bool(payload.get("memory_used", False)),
                 "zep_context_used": bool(payload.get("zep_context_used", False)),
                 "graphiti_context_used": bool(payload.get("graphiti_context_used", False)),
-                "memory_backend": payload.get("memory_backend", "local"),
+                "memory_backend": payload.get("memory_backend", "sqlite"),
             }
             responses.append(response_item)
             self.store.append_interaction_transcript(session_id, "group_chat", "assistant", response_item["response"], agent_id=agent_id)

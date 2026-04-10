@@ -11,6 +11,8 @@ class SyncMemoryResponse(BaseModel):
     simulation_id: str
     synced_events: int
     zep_enabled: bool
+    external_sync_enabled: bool = False
+    memory_backend: str = "sqlite"
 
 
 class AgentMemoryResponse(BaseModel):

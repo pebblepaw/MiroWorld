@@ -129,6 +129,50 @@ class SimulationStore:
                     state_json TEXT NOT NULL,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS interactions_fts USING fts5(
+                    content,
+                    content='interactions',
+                    content_rowid='id',
+                    tokenize='unicode61'
+                );
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS interaction_transcripts_fts USING fts5(
+                    content,
+                    content='interaction_transcripts',
+                    content_rowid='id',
+                    tokenize='unicode61'
+                );
+
+                CREATE TRIGGER IF NOT EXISTS interactions_fts_ai AFTER INSERT ON interactions BEGIN
+                    INSERT INTO interactions_fts(rowid, content) VALUES (new.id, COALESCE(new.content, ''));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS interactions_fts_ad AFTER DELETE ON interactions BEGIN
+                    INSERT INTO interactions_fts(interactions_fts, rowid, content)
+                    VALUES ('delete', old.id, COALESCE(old.content, ''));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS interactions_fts_au AFTER UPDATE ON interactions BEGIN
+                    INSERT INTO interactions_fts(interactions_fts, rowid, content)
+                    VALUES ('delete', old.id, COALESCE(old.content, ''));
+                    INSERT INTO interactions_fts(rowid, content) VALUES (new.id, COALESCE(new.content, ''));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS interaction_transcripts_fts_ai AFTER INSERT ON interaction_transcripts BEGIN
+                    INSERT INTO interaction_transcripts_fts(rowid, content) VALUES (new.id, COALESCE(new.content, ''));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS interaction_transcripts_fts_ad AFTER DELETE ON interaction_transcripts BEGIN
+                    INSERT INTO interaction_transcripts_fts(interaction_transcripts_fts, rowid, content)
+                    VALUES ('delete', old.id, COALESCE(old.content, ''));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS interaction_transcripts_fts_au AFTER UPDATE ON interaction_transcripts BEGIN
+                    INSERT INTO interaction_transcripts_fts(interaction_transcripts_fts, rowid, content)
+                    VALUES ('delete', old.id, COALESCE(old.content, ''));
+                    INSERT INTO interaction_transcripts_fts(rowid, content) VALUES (new.id, COALESCE(new.content, ''));
+                END;
                 """
             )
             # Backward-compatible migration for existing local DB files.
@@ -151,6 +195,16 @@ class SimulationStore:
             memory_sync_columns = [r[1] for r in conn.execute("PRAGMA table_info(memory_sync_state)").fetchall()]
             if "last_checkpoint_id" not in memory_sync_columns:
                 conn.execute("ALTER TABLE memory_sync_state ADD COLUMN last_checkpoint_id INTEGER NOT NULL DEFAULT 0")
+
+            interaction_count = int(conn.execute("SELECT COUNT(*) FROM interactions").fetchone()[0])
+            interaction_fts_count = int(conn.execute("SELECT COUNT(*) FROM interactions_fts").fetchone()[0])
+            if interaction_count and interaction_fts_count == 0:
+                conn.execute("INSERT INTO interactions_fts(interactions_fts) VALUES ('rebuild')")
+
+            transcript_count = int(conn.execute("SELECT COUNT(*) FROM interaction_transcripts").fetchone()[0])
+            transcript_fts_count = int(conn.execute("SELECT COUNT(*) FROM interaction_transcripts_fts").fetchone()[0])
+            if transcript_count and transcript_fts_count == 0:
+                conn.execute("INSERT INTO interaction_transcripts_fts(interaction_transcripts_fts) VALUES ('rebuild')")
 
     def upsert_simulation(
         self,
@@ -242,6 +296,30 @@ class SimulationStore:
                 (simulation_id,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def search_interactions_fts(
+        self,
+        simulation_id: str,
+        query: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        normalized_query = str(query or "").strip()
+        if not normalized_query:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT i.*, bm25(interactions_fts) AS fts_rank
+                FROM interactions_fts
+                JOIN interactions AS i ON i.id = interactions_fts.rowid
+                WHERE interactions_fts MATCH ?
+                  AND i.simulation_id = ?
+                ORDER BY bm25(interactions_fts), i.id DESC
+                LIMIT ?
+                """,
+                (normalized_query, simulation_id, int(limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_interactions_after_id(
         self,
@@ -561,6 +639,53 @@ class SimulationStore:
         with self._connect() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+    def get_interaction_transcripts(
+        self,
+        session_id: str,
+        agent_id: str | None = None,
+        channel: str | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT id, session_id, channel, agent_id, role, content, created_at
+            FROM interaction_transcripts
+            WHERE session_id = ?
+        """
+        params: list[Any] = [session_id]
+        if agent_id is not None:
+            sql += " AND agent_id = ?"
+            params.append(agent_id)
+        if channel is not None:
+            sql += " AND channel = ?"
+            params.append(channel)
+        sql += " ORDER BY id"
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        return [dict(row) for row in rows]
+
+    def search_interaction_transcripts_fts(
+        self,
+        session_id: str,
+        query: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        normalized_query = str(query or "").strip()
+        if not normalized_query:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.*, bm25(interaction_transcripts_fts) AS fts_rank
+                FROM interaction_transcripts_fts
+                JOIN interaction_transcripts AS t ON t.id = interaction_transcripts_fts.rowid
+                WHERE interaction_transcripts_fts MATCH ?
+                  AND t.session_id = ?
+                ORDER BY bm25(interaction_transcripts_fts), t.id DESC
+                LIMIT ?
+                """,
+                (normalized_query, session_id, int(limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def clear_interaction_transcripts(self, session_id: str) -> None:
         with self._connect() as conn:

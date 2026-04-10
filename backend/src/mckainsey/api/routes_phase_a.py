@@ -11,7 +11,6 @@ from mckainsey.models.phase_a import (
 )
 from mckainsey.services.lightrag_service import LightRAGService
 from mckainsey.services.persona_sampler import PersonaSampler
-from mckainsey.services.zep_logger import ZepEventLogger
 
 router = APIRouter(prefix="/api/v1/phase-a", tags=["phase-a"])
 
@@ -65,13 +64,6 @@ async def process_knowledge(
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    zep = ZepEventLogger(settings.resolved_zep_key)
-    zep.log_phase_a_event(
-        simulation_id=req.simulation_id,
-        payload=f"Processed policy doc {result['document_id']} via LightRAG.",
-        source="phase-a-knowledge-process",
-    )
 
     return KnowledgeProcessResponse(**result)
 

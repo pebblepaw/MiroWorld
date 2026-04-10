@@ -299,17 +299,16 @@ class ReportService:
 
     def report_chat_payload(self, simulation_id: str, message: str) -> dict[str, Any]:
         report = self.build_report(simulation_id)
-        zep_context = self.memory.search_simulation_context(simulation_id, message, limit=8)
+        memory_context = self.memory.search_simulation_context(simulation_id, message, limit=8)
         knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
-        zep_excerpt = "\n".join(
-            f"- {item['content']}"
-            for item in zep_context["episodes"][:6]
-        )
+        memory_excerpt = "\n".join(f"- {item['content']}" for item in memory_context["episodes"][:6])
+        checkpoint_excerpt = self.memory.format_checkpoint_records(memory_context["checkpoint_records"], limit=6)
         knowledge_excerpt = "\n".join(self._knowledge_context_lines(knowledge))
         prompt = (
             f"Report JSON:\n{report}\n\n"
             f"Original document context:\n{knowledge_excerpt or '- none'}\n\n"
-            f"Relevant Zep Cloud memory search results:\n{zep_excerpt or '- none'}\n\n"
+            f"Relevant memory search results:\n{memory_excerpt or '- none'}\n\n"
+            f"Checkpoint evidence:\n{checkpoint_excerpt or '- none'}\n\n"
             f"User asks: {message}\n"
             "Provide a direct, data-grounded answer with concrete cohort references."
         )
@@ -321,7 +320,9 @@ class ReportService:
             "model_provider": self.llm.provider,
             "model_name": self.llm.model_name,
             "gemini_model": self.llm.model_name,
-            "zep_context_used": zep_context["zep_context_used"],
+            "zep_context_used": False,
+            "graphiti_context_used": False,
+            "memory_backend": memory_context.get("memory_backend", "sqlite"),
         }
 
     def build_v2_report(self, simulation_id: str, use_case: str | None = None) -> dict[str, Any]:
