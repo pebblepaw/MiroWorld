@@ -352,6 +352,16 @@ function SeedPersistedSimulationState() {
   return null;
 }
 
+function SessionSwitchHarness() {
+  const { setSessionId } = useApp();
+
+  return (
+    <button type="button" onClick={() => setSessionId("session-screen3-fresh")}>
+      Switch session
+    </button>
+  );
+}
+
 function Screen3ToggleHarness() {
   const [visible, setVisible] = useState(true);
 
@@ -575,6 +585,95 @@ describe("Simulation", () => {
     expect(await screen.findByText("Round 4 of 6")).toBeInTheDocument();
     expect(screen.getByText("82.3%")).toBeInTheDocument();
     expect(screen.getByText("Persisted thread title")).toBeInTheDocument();
+  });
+
+  it("clears stale Screen 3 state when the session changes", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/simulation/state") && url.includes("session-screen3-fresh")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen3-fresh",
+            status: "running",
+            event_count: 3,
+            last_round: 1,
+            platform: "reddit",
+            planned_rounds: 8,
+            current_round: 1,
+            elapsed_seconds: 18,
+            estimated_total_seconds: 120,
+            estimated_remaining_seconds: 102,
+            counters: { posts: 1, comments: 2, reactions: 1, active_authors: 1 },
+            checkpoint_status: {
+              baseline: { status: "completed", completed_agents: 3, total_agents: 3 },
+              final: { status: "pending", completed_agents: 0, total_agents: 3 },
+            },
+            top_threads: [{ title: "Fresh session thread", engagement: 4 }],
+            discussion_momentum: { approval_delta: 0.04, dominant_stance: "mixed" },
+            latest_metrics: {
+              approval_rate: { value: 71.2, label: "Approval Rate" },
+              net_sentiment: { value: 6.1, label: "Net Sentiment" },
+              round_progress_label: "Round 1 is in progress",
+            },
+            recent_events: [],
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          session_id: "session-screen3-persisted-state",
+          status: "running",
+          event_count: 12,
+          last_round: 4,
+          platform: "reddit",
+          planned_rounds: 6,
+          current_round: 4,
+          elapsed_seconds: 123,
+          estimated_total_seconds: 210,
+          estimated_remaining_seconds: 87,
+          counters: { posts: 8, comments: 19, reactions: 11, active_authors: 5 },
+          checkpoint_status: {
+            baseline: { status: "completed", completed_agents: 3, total_agents: 3 },
+            final: { status: "pending", completed_agents: 0, total_agents: 3 },
+          },
+          top_threads: [{ title: "Persisted hottest thread", engagement: 9 }],
+          discussion_momentum: { approval_delta: 0.21, dominant_stance: "support" },
+          latest_metrics: {
+            approval_rate: { value: 82.3, label: "Approval Rate" },
+            net_sentiment: { value: 7.4, label: "Net Sentiment" },
+            round_progress_label: "Round 4 is in progress",
+          },
+          recent_events: [{ event_type: "round_batch_flushed", round_no: 4, batch_index: 1, batch_count: 2 }],
+        }),
+      } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedPersistedSimulationState />
+        <SessionSwitchHarness />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Round 4 of 6")).toBeInTheDocument();
+    expect(screen.getByText("Persisted thread title")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /switch session/i }));
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([request]) =>
+          String(request).includes("/api/v2/console/session/session-screen3-fresh/simulation/state"),
+        ),
+      ).toBe(true),
+    );
+
+    expect(await screen.findByText("Round 1 of 8")).toBeInTheDocument();
+    expect(screen.queryByText("Round 4 of 6")).not.toBeInTheDocument();
+    expect(screen.queryByText("Persisted thread title")).not.toBeInTheDocument();
   });
 
   it("sends a 0.5 controversy boost when the binary toggle is enabled", async () => {

@@ -256,6 +256,12 @@ export default function Simulation() {
   }, [agents, feedThreads, setSimPosts]);
 
   useEffect(() => {
+    hydratedFeedRef.current = false;
+    setExpandedReplies({});
+    setFeedThreads(simPosts.map((post) => simPostToFeedThread(post)));
+  }, [sessionId]);
+
+  useEffect(() => {
     if (hydratedFeedRef.current) {
       return;
     }

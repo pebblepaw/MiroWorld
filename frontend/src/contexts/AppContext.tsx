@@ -135,7 +135,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ...s,
     completedSteps: s.completedSteps.includes(step) ? s.completedSteps : [...s.completedSteps, step],
   })), []);
-  const setSessionId = useCallback((sessionId: string | null) => setState(s => ({ ...s, sessionId })), []);
+  const setSessionId = useCallback((sessionId: string | null) => setState(s => {
+    if (s.sessionId === sessionId) {
+      return s;
+    }
+    return {
+      ...s,
+      sessionId,
+      simulationComplete: false,
+      simulationState: null,
+      simPosts: [],
+    };
+  }), []);
   const setCountry = useCallback((country: string) => setState(s => ({ ...s, country })), []);
   const setUseCase = useCallback((useCase: string) => setState(s => ({ ...s, useCase })), []);
   const setModelProvider = useCallback((modelProvider: ModelProviderId) => setState(s => ({ ...s, modelProvider })), []);
