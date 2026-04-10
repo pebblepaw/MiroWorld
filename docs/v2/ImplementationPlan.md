@@ -1,6 +1,6 @@
 # McKAInsey V2 — Implementation Plan: Cloud Hosting, Memory Backend & Bug Fixes
 
-> Date: 2025-07-09  
+> Date: 2026-04-10  
 > Status: **FINAL** — all decisions locked, ready for implementation  
 > Author: Agent handoff document  
 
@@ -797,10 +797,10 @@ Frontend: react-force-graph-2d receives deltas, animates new nodes appearing
 ### Phase 1: Stabilize & Fix (1–2 days)
 *Goal: Fix bugs, remove Graphiti, clean up memory backend.*
 
-- [ ] **7.1** Fix Screen 3 state persistence (move `simulationState` to AppContext)
-- [ ] **7.2** Remove Graphiti entirely: delete `graphiti_service.py`, strip from `memory_service.py`, remove `graphiti-core` and `zep-cloud` from `pyproject.toml`, remove FalkorDB from `docker-compose.yml` and `quick_start.sh`
-- [ ] **7.3** Implement proper SQLite FTS5 agent memory retrieval for chat
-- [ ] **10** Implement LightRAG real-time graph streaming (SSE chunked ingestion + frontend incremental rendering)
+- [x] **7.1** Fix Screen 3 state persistence (move `simulationState` to AppContext)
+- [x] **7.2** Remove Graphiti entirely: delete `graphiti_service.py`, strip from `memory_service.py`, remove `graphiti-core` and `zep-cloud` from `pyproject.toml`, remove FalkorDB from `docker-compose.yml` and `quick_start.sh`
+- [x] **7.3** Implement proper SQLite FTS5 agent memory retrieval for chat
+- [x] **10** Implement LightRAG real-time graph streaming (SSE chunked ingestion + frontend incremental rendering)
 - [ ] Verify `quick_start.sh --mode live` works end-to-end without FalkorDB
 - [ ] Run full E2E test: onboarding → knowledge (with streaming) → sampling → simulation → report → chat → analytics
 - [ ] Test with OpenRouter free models (`OpenRouter_API_Key` in `.env`) — verify simulation quality
@@ -808,17 +808,17 @@ Frontend: react-force-graph-2d receives deltas, animates new nodes appearing
 ### Phase 2: Open Source Prep (1–2 days)
 *Goal: Make the project ready for public GitHub release with both source code and Docker deployment paths.*
 
-- [ ] **SECURITY**: Rotate ALL API keys currently in `.env` (Gemini, OpenAI, OpenRouter, Zep, OneMap, DataGov). They have been in version control.
-- [ ] Create `.env.example` with all required variables, defaults, and explanations (no real keys)
-- [ ] Add `.env` to `.gitignore` if not already there
-- [ ] Write clear README (follow MiroFish style): project overview, screenshots, quick start (source code + Docker), LLM provider setup guides (Ollama, OpenRouter, Gemini, OpenAI)
-- [ ] Add AGPL-3.0 `LICENSE` file
-- [ ] **Source code path**: Remove all FalkorDB references from `quick_start.sh`, document Python 3.11 requirement
-- [ ] **Docker path**: Update `docker-compose.yml` — remove FalkorDB, add healthchecks, set `BOOT_MODE` env var, default LLM to OpenRouter/Gemini with doc for Ollama (`host.docker.internal`)
-- [ ] **Docker path**: Verify OASIS sidecar container works end-to-end
-- [ ] **Docker path**: Add production frontend build stage (nginx serving static files instead of Vite dev server)
+- [x] Create `.env.example` with all required variables, defaults, and explanations (no real keys)
+- [x] Add `.env` to `.gitignore` if not already there
+- [x] Write clear README (follow MiroFish style): project overview, screenshots, quick start (source code + Docker), LLM provider setup guides (Ollama, OpenRouter, Gemini, OpenAI)
+- [x] Add AGPL-3.0 `LICENSE` file
+- [x] **Source code path**: Remove all FalkorDB references from `quick_start.sh`, document Python 3.11 requirement
+- [x] **Docker path**: Update `docker-compose.yml` — remove FalkorDB, add healthchecks, set `BOOT_MODE` env var, default LLM to OpenRouter/Gemini with doc for Ollama (`host.docker.internal`)
+- [x] **Docker path**: Verify OASIS sidecar container works end-to-end
+- [x] **Docker path**: Add production frontend build stage (nginx serving static files instead of Vite dev server)
 - [ ] Remove any hardcoded paths, secrets, or personal credentials from all files
-- [ ] Add GitHub Actions CI for lint + test
+- [ ] Remove any deadcode, you can run these two tools: https://github.com/astral-sh/ruff and https://github.com/jendrikseipp/vulture
+- [x] Add GitHub Actions CI for lint + test
 - [ ] Test both deployment paths on a clean machine (or clean Docker environment)
 - [ ] Tag `v2.0.0` release, push to public GitHub
 
@@ -826,11 +826,11 @@ Frontend: react-force-graph-2d receives deltas, animates new nodes appearing
 *Goal: Static demo site on GitHub Pages with cached data, like MiroFish.*
 
 - [ ] Build a demo cache: run a full simulation with representative policy document, capture all output (agents, posts, checkpoints, report, analytics, knowledge graph)
-- [ ] Configure frontend to load cached demo data when `VITE_BOOT_MODE=demo-static` — no backend calls, all data from bundled JSON
+- [x] Configure frontend to load cached demo data when `VITE_BOOT_MODE=demo-static` — no backend calls, all data from bundled JSON
 - [ ] Create `gh-pages` branch with Vite production build + cached data
 - [ ] Configure GitHub Pages to serve from `gh-pages` branch
-- [ ] Add "Live Demo" badge/link to README
-- [ ] Verify demo works: all screens navigable, knowledge graph renders, simulation feed shows, report displays, analytics charts work
+- [x] Add "Live Demo" badge/link to README
+- [x] Verify demo works: all screens navigable, knowledge graph renders, simulation feed shows, report displays, analytics charts work
 
 ### Phase 4: Cloud Hosting MVP — AWS (3–5 days)
 *Goal: Deploy a working BYOK instance with free + paid tiers.*

@@ -255,6 +255,8 @@ describe("ReportChat", () => {
   });
 
   it("sends group chat messages to the live backend endpoint and renders live responses", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
@@ -292,11 +294,13 @@ describe("ReportChat", () => {
     await waitFor(() => {
       const chatCall = vi
         .mocked(global.fetch)
-        .mock.calls.find(([url]) => String(url).includes("/chat/group"));
+        .mock.calls.find(([url, init]) => String(url).includes("/chat/group") && !String(url).includes("/chat/group/agents") && Boolean(init?.body));
       expect(chatCall).toBeTruthy();
     });
 
-    const chatCall = vi.mocked(global.fetch).mock.calls.find(([url]) => String(url).includes("/chat/group"));
+    const chatCall = vi
+      .mocked(global.fetch)
+      .mock.calls.find(([url, init]) => String(url).includes("/chat/group") && !String(url).includes("/chat/group/agents") && Boolean(init?.body));
     expect(chatCall).toBeDefined();
     expect(JSON.parse(String(chatCall?.[1]?.body))).toEqual({
       segment: "dissenter",
@@ -313,11 +317,14 @@ describe("ReportChat", () => {
     await waitFor(() => {
       const supportCall = vi
         .mocked(global.fetch)
-        .mock.calls.filter(([url]) => String(url).includes("/chat/group"))
+        .mock.calls.filter(([url, init]) => String(url).includes("/chat/group") && !String(url).includes("/chat/group/agents") && Boolean(init?.body))
         .at(-1);
       expect(supportCall).toBeTruthy();
     });
-    const supportCall = vi.mocked(global.fetch).mock.calls.filter(([url]) => String(url).includes("/chat/group")).at(-1);
+    const supportCall = vi
+      .mocked(global.fetch)
+      .mock.calls.filter(([url, init]) => String(url).includes("/chat/group") && !String(url).includes("/chat/group/agents") && Boolean(init?.body))
+      .at(-1);
     expect(JSON.parse(String(supportCall?.[1]?.body)).segment).toBe("supporter");
 
     const reportAgentButton = (await screen.findAllByRole("button", { name: /alex tan/i })).find(
@@ -331,6 +338,8 @@ describe("ReportChat", () => {
   });
 
   it("uses the live 1:1 endpoint for direct agent chat", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
@@ -379,6 +388,8 @@ describe("ReportChat", () => {
   });
 
   it("renders V2 report sections, evidence quotes, and clickable agent drill-down", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
@@ -415,6 +426,8 @@ describe("ReportChat", () => {
   });
 
   it("formats metrics as initial to final values, keeps yes-no metrics numeric, and strips markdown markers from report copy", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {

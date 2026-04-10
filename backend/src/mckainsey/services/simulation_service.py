@@ -4,6 +4,7 @@ import json
 import logging
 import random
 import re
+import requests
 import subprocess
 import tempfile
 import time
@@ -411,14 +412,6 @@ class SimulationService:
         tail_checkpoint_estimate_seconds: int = 0,
         seed_discussion_threads: list[str] | None = None,
     ) -> dict[str, Any]:
-        runner = Path(self.settings.oasis_runner_script)
-        if not runner.is_absolute():
-            runner = BACKEND_ROOT / runner
-        if not runner.exists():
-            raise RuntimeError(f"OASIS runner script not found: {runner}")
-
-        python_bin = self._resolve_oasis_python_bin()
-
         provider_key = self.settings.resolved_gemini_key
         if not provider_key:
             raise RuntimeError("A provider API key is required for real OASIS runtime.")
@@ -436,6 +429,7 @@ class SimulationService:
         run_log_path = run_log_dir / f"{simulation_id}-{ts}.log"
         timeout_seconds = self._resolve_oasis_timeout_seconds(rounds=rounds, persona_count=len(personas))
         oasis_semaphore = self._resolve_oasis_semaphore()
+        sidecar_host = str(self.settings.oasis_sidecar_host or "").strip()
 
         payload = {
             "simulation_id": simulation_id,
@@ -453,6 +447,24 @@ class SimulationService:
             "oasis_semaphore": oasis_semaphore,
             "seed_discussion_threads": [item for item in (seed_discussion_threads or []) if str(item).strip()],
         }
+
+        if sidecar_host:
+            return self._run_oasis_via_sidecar(
+                payload,
+                simulation_id=simulation_id,
+                timeout_seconds=timeout_seconds,
+                events_path=events_path,
+                on_progress=on_progress,
+                run_log_path=run_log_path,
+            )
+
+        runner = Path(self.settings.oasis_runner_script)
+        if not runner.is_absolute():
+            runner = BACKEND_ROOT / runner
+        if not runner.exists():
+            raise RuntimeError(f"OASIS runner script not found: {runner}")
+
+        python_bin = self._resolve_oasis_python_bin()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = Path(temp_dir) / "oasis_input.json"
@@ -520,6 +532,143 @@ class SimulationService:
                 raise RuntimeError("OASIS runner completed but no output payload was produced.")
 
             return json.loads(output_path.read_text(encoding="utf-8"))
+
+    def _run_oasis_via_sidecar(
+        self,
+        payload: dict[str, Any],
+        *,
+        simulation_id: str,
+        timeout_seconds: int,
+        events_path: Path | None,
+        on_progress: Callable[[Path, int], None] | None,
+        run_log_path: Path,
+    ) -> dict[str, Any]:
+        base_url = self._oasis_sidecar_base_url()
+        heartbeat_every = 10
+
+        with run_log_path.open("w", encoding="utf-8") as log_file:
+            log_file.write(f"sidecar_base_url={base_url}\n")
+            log_file.write(f"simulation_id={simulation_id}\n")
+            log_file.write(f"provider={self.settings.llm_provider} model={self.settings.llm_model}\n")
+            log_file.write(f"timeout_seconds={timeout_seconds}\n")
+            log_file.write(f"started_at={datetime.now(UTC).isoformat()}\n")
+            log_file.flush()
+
+            try:
+                create_response = requests.post(
+                    f"{base_url}/jobs",
+                    json=payload,
+                    timeout=10,
+                )
+            except requests.RequestException as exc:
+                raise RuntimeError(
+                    "Real OASIS sidecar is unreachable. "
+                    f"base_url={base_url} error={exc}"
+                ) from exc
+
+            if create_response.status_code >= 400:
+                raise RuntimeError(
+                    "Real OASIS sidecar rejected the simulation request. "
+                    f"base_url={base_url} status={create_response.status_code} body={create_response.text[:1000]}"
+                )
+
+            try:
+                job_payload = create_response.json()
+            except ValueError as exc:
+                raise RuntimeError(
+                    "Real OASIS sidecar returned a non-JSON job response. "
+                    f"base_url={base_url} body={create_response.text[:1000]}"
+                ) from exc
+
+            job_id = str(job_payload.get("job_id") or "").strip()
+            if not job_id:
+                raise RuntimeError(
+                    "Real OASIS sidecar did not return a job id. "
+                    f"base_url={base_url} payload={job_payload}"
+                )
+
+            log_file.write(f"job_id={job_id}\n")
+            log_file.flush()
+
+            start = time.time()
+            while True:
+                elapsed = int(time.time() - start)
+
+                if elapsed > timeout_seconds:
+                    try:
+                        requests.delete(f"{base_url}/jobs/{job_id}", timeout=5)
+                    except requests.RequestException as exc:
+                        log_file.write(f"cancel_failed={exc}\n")
+                        log_file.flush()
+                    tail = _tail_file(run_log_path, lines=40)
+                    raise RuntimeError(
+                        "Real OASIS simulation timed out. "
+                        f"provider={self.settings.llm_provider} model={self.settings.llm_model} "
+                        f"timeout_seconds={timeout_seconds} run_log={run_log_path} tail={tail}"
+                    )
+
+                if elapsed % heartbeat_every == 0:
+                    log_file.write(f"heartbeat elapsed_seconds={elapsed}\n")
+                    log_file.flush()
+                if on_progress is not None and events_path is not None:
+                    on_progress(events_path, elapsed)
+
+                try:
+                    status_response = requests.get(
+                        f"{base_url}/jobs/{job_id}",
+                        timeout=5,
+                    )
+                except requests.RequestException as exc:
+                    raise RuntimeError(
+                        "Real OASIS sidecar status check failed. "
+                        f"base_url={base_url} job_id={job_id} error={exc}"
+                    ) from exc
+
+                if status_response.status_code >= 400:
+                    raise RuntimeError(
+                        "Real OASIS sidecar returned an error status while polling. "
+                        f"base_url={base_url} job_id={job_id} status={status_response.status_code} body={status_response.text[:1000]}"
+                    )
+
+                try:
+                    status_payload = status_response.json()
+                except ValueError as exc:
+                    raise RuntimeError(
+                        "Real OASIS sidecar returned non-JSON job status. "
+                        f"base_url={base_url} job_id={job_id} body={status_response.text[:1000]}"
+                    ) from exc
+
+                status = str(status_payload.get("status") or "").strip().lower()
+                if status == "completed":
+                    result = status_payload.get("result")
+                    if not isinstance(result, dict):
+                        raise RuntimeError(
+                            "Real OASIS sidecar completed without a result payload. "
+                            f"base_url={base_url} job_id={job_id} payload={status_payload}"
+                        )
+                    log_file.write(
+                        f"completed_at={datetime.now(UTC).isoformat()} elapsed_seconds={elapsed}\n"
+                    )
+                    log_file.flush()
+                    return result
+
+                if status == "failed":
+                    error = str(status_payload.get("error") or "unknown error").strip()
+                    log_file.write(f"failed_error={error}\n")
+                    log_file.flush()
+                    raise RuntimeError(
+                        "Real OASIS simulation failed via sidecar. "
+                        f"job_id={job_id} error={error} run_log={run_log_path}"
+                    )
+
+                time.sleep(1)
+
+    def _oasis_sidecar_base_url(self) -> str:
+        host = str(self.settings.oasis_sidecar_host or "").strip()
+        if not host:
+            raise RuntimeError("OASIS sidecar host is not configured.")
+        port = int(self.settings.oasis_sidecar_port)
+        return f"http://{host}:{port}"
 
     def _resolve_oasis_python_bin(self) -> Path:
         configured = Path(self.settings.oasis_python_bin)

@@ -15,10 +15,10 @@ from mckainsey.main import app
 from mckainsey.services.geo_service import PlanningAreaGeoService
 
 
-SIMULATION_ID = "demo-budget-2026"
+SIMULATION_ID = "demo-ai-strategy-2025"
 POLICY_SUMMARY = (
-    "Singapore FY2026 Budget scenario: targeted cost-of-living support, transport affordability, "
-    "retirement security, and household resilience measures."
+    "Singapore Budget 2025 AI strategy scenario: national AI missions, enterprise adoption support, "
+    "worker retraining, AI governance, and productivity gains shared across society."
 )
 DEFAULT_AGENT_COUNT = 50
 DEFAULT_ROUNDS = 10
@@ -74,7 +74,7 @@ def _run_or_load(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate cached Budget 2026 demo artifacts.")
+    parser = argparse.ArgumentParser(description="Generate cached Singapore Budget AI strategy demo artifacts.")
     parser.add_argument("--skip-knowledge", action="store_true", help="Skip Phase A knowledge processing step.")
     parser.add_argument(
         "--from-stage",
@@ -113,14 +113,14 @@ def main() -> None:
             return {
                 "status": "skipped",
                 "reason": "SKIP_KNOWLEDGE=true or --skip-knowledge",
-                "document": "Sample_Inputs/fy2026_budget_statement.md",
+                "document": "Sample_Inputs/singapore_budget_ai_strategic_advantage.md",
             }
         response = client.post(
             "/api/v1/phase-a/knowledge/process",
             json={
                 "simulation_id": SIMULATION_ID,
                 "use_default_demo_document": True,
-                "demographic_focus": "Singapore FY2026 budget impact by planning area and income cohorts",
+                "demographic_focus": "Singapore AI strategy impact across workers, SMEs, and affected sectors by planning area",
             },
         )
         return _require_ok("phase-a/knowledge/process", response)
@@ -203,7 +203,7 @@ def main() -> None:
                 json={
                     "simulation_id": SIMULATION_ID,
                     "agent_id": top_agent,
-                    "message": "What drove your final view on this FY2026 budget package?",
+                    "message": "What drove your final view on Singapore's AI strategy package?",
                 },
             )
             agent_chat_payload = _require_ok("phase-c/chat/agent", agent_chat)

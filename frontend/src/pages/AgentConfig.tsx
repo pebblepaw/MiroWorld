@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useApp } from '@/contexts/AppContext';
 import {
+  getBundledDemoOutput,
   isLiveBootMode,
   previewPopulation,
 } from '@/lib/console-api';
@@ -133,25 +134,22 @@ export default function AgentConfig() {
       const message = error instanceof Error ? error.message : 'Population sampling failed.';
       if (!isLiveBootMode()) {
         try {
-          const demoRes = await fetch('/demo-output.json');
-          if (demoRes.ok) {
-            const demo = await demoRes.json();
-            if (demo.population) {
-              const artifact = demo.population;
-              setPopulationArtifact(artifact);
-              setSampleSeed(artifact.sample_seed);
-              setAgentsGenerated(true);
-              setAgents(artifact.sampled_personas.map((row: any) => sampledPersonaToMockAgent(row)));
-              setSimulationComplete(false);
-              setSimPosts([]);
-              toast({
-                title: 'Demo Population Loaded',
-                description: 'Backend unavailable. Loaded cached demo agents.',
-              });
-              return;
-            }
+          const demo = await getBundledDemoOutput();
+          const artifact = demo.population as any;
+          if (artifact?.sampled_personas) {
+            setPopulationArtifact(artifact);
+            setSampleSeed(artifact.sample_seed);
+            setAgentsGenerated(true);
+            setAgents(artifact.sampled_personas.map((row: any) => sampledPersonaToMockAgent(row)));
+            setSimulationComplete(false);
+            setSimPosts([]);
+            toast({
+              title: 'Demo Population Loaded',
+              description: 'Backend unavailable. Loaded cached demo agents.',
+            });
+            return;
           }
-        } catch (demoError) {
+        } catch {
           // Demo fallback failed
         }
       }
@@ -237,7 +235,7 @@ export default function AgentConfig() {
       .sort((a, b) => b[1].length - a[1].length);
 
     // Keep top 12, group rest into "Other"
-    let finalGroups = sortedGroups.slice(0, 11);
+    const finalGroups = sortedGroups.slice(0, 11);
     const rest = sortedGroups.slice(11);
     if (rest.length > 0) {
       const otherAgents = rest.flatMap(g => g[1]);

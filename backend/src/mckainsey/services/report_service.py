@@ -332,7 +332,6 @@ class ReportService:
         interactions = self.store.get_interactions(simulation_id)
         if not agents:
             raise ValueError(f"Simulation not found: {simulation_id}")
-        knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
 
         config_service = ConfigService(self.settings)
         metrics_service = MetricsService(config_service)

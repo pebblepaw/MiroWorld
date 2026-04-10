@@ -112,10 +112,18 @@ def resolve_model_selection(
     base_url: str | None = None,
 ) -> ResolvedModelSelection:
     resolved_provider = normalize_provider(provider or settings.llm_provider)
-    resolved_model = (model_name or settings.default_model_for_provider(resolved_provider)).strip()
-    resolved_embed_model = (embed_model_name or settings.default_embed_model_for_provider(resolved_provider)).strip()
-    resolved_base_url = normalize_base_url(base_url or settings.default_base_url_for_provider(resolved_provider))
-    resolved_api_key = (api_key or settings.resolved_key_for_provider(resolved_provider) or None)
+    if provider is None:
+        resolved_model = (model_name or settings.llm_model or settings.default_model_for_provider(resolved_provider)).strip()
+        resolved_embed_model = (
+            embed_model_name or settings.llm_embed_model or settings.default_embed_model_for_provider(resolved_provider)
+        ).strip()
+        resolved_base_url = normalize_base_url(base_url or settings.llm_base_url or settings.default_base_url_for_provider(resolved_provider))
+        resolved_api_key = api_key or settings.llm_api_key or settings.resolved_key_for_provider(resolved_provider) or None
+    else:
+        resolved_model = (model_name or settings.default_model_for_provider(resolved_provider)).strip()
+        resolved_embed_model = (embed_model_name or settings.default_embed_model_for_provider(resolved_provider)).strip()
+        resolved_base_url = normalize_base_url(base_url or settings.default_base_url_for_provider(resolved_provider))
+        resolved_api_key = api_key or settings.resolved_key_for_provider(resolved_provider) or None
 
     if resolved_provider == "ollama" and not resolved_api_key:
         resolved_api_key = "ollama"
@@ -139,19 +147,27 @@ def _resolve_timeout_seconds(settings: Settings, *, provider: str) -> int:
 
 
 def selection_to_settings_update(selection: ResolvedModelSelection) -> dict[str, Any]:
-    return {
+    updates: dict[str, Any] = {
         "llm_provider": selection.provider,
         "llm_model": selection.model_name,
         "llm_embed_model": selection.embed_model_name,
+        "llm_api_key": selection.api_key,
         "llm_base_url": selection.base_url,
         "llm_timeout_seconds": selection.timeout_seconds,
         "gemini_model": selection.model_name,
         "gemini_embed_model": selection.embed_model_name,
         "gemini_openai_base_url": selection.base_url,
         "gemini_timeout_seconds": selection.timeout_seconds,
-        "gemini_api_key": selection.api_key,
-        "gemini_api": None,
     }
+    if selection.provider == "google":
+        updates["gemini_api_key"] = selection.api_key
+        updates["gemini_api"] = selection.api_key
+    elif selection.provider == "openai":
+        updates["openai_api_key"] = selection.api_key
+        updates["openai_api"] = selection.api_key
+    elif selection.provider == "openrouter":
+        updates["openrouter_api_key"] = selection.api_key
+    return updates
 
 
 def provider_catalog(settings: Settings) -> list[dict[str, Any]]:

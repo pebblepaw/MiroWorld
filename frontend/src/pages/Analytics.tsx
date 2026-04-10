@@ -1233,7 +1233,7 @@ function normalizeViewpointText(value: unknown): string {
   const text = normalizeTopPostText(value);
   if (!text) return "";
   if (/^analysis question\s*\d+/i.test(text)) {
-    return text.replace(/^analysis question\s*\d+\s*[:\-]?\s*/i, "").trim();
+    return text.replace(/^analysis question\s*\d+\s*[:-]?\s*/i, "").trim();
   }
   return text;
 }

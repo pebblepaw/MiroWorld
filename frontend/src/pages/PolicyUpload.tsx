@@ -12,6 +12,7 @@ import {
   createConsoleSession,
   generateQuestionMetadata,
   getAnalysisQuestions,
+  getBundledDemoOutput,
   isLiveBootMode,
   processKnowledgeDocuments,
   subscribeKnowledgeStream,
@@ -968,33 +969,30 @@ export default function PolicyUpload() {
       if (!isLiveBootMode()) {
         try {
           // Demo mode can still hydrate from the bundled demo artifact.
-          const demoRes = await fetch('/demo-output.json');
-          if (demoRes.ok) {
-            const demo = await demoRes.json();
-            const knowledgeData = demo.knowledge;
-            if (knowledgeData?.entity_nodes) {
-              const artifact = {
-                session_id: knowledgeData.simulation_id || 'demo-session',
-                document: knowledgeData.document || { document_id: 'demo', paragraph_count: 0 },
-                summary: knowledgeData.summary || '',
-                guiding_prompt: knowledgeData.guiding_prompt || null,
-                entity_nodes: knowledgeData.entity_nodes,
-                relationship_edges: knowledgeData.relationship_edges || [],
-                entity_type_counts: knowledgeData.entity_type_counts || {},
-                processing_logs: [],
-                demographic_focus_summary: knowledgeData.demographic_focus_summary || null,
-              } as KnowledgeArtifact;
-              setKnowledgeArtifact(artifact);
-              setKnowledgeGraphReady(true);
-              setSessionId(artifact.session_id);
-              setKnowledgeStreamProgress({
-                stage: 'knowledge_completed',
-                message: 'Loaded cached demo knowledge graph.',
-                percent: 100,
-              });
-              toast({ title: 'Demo mode', description: 'Loaded cached knowledge graph (backend unavailable)' });
-              return;
-            }
+          const demo = await getBundledDemoOutput();
+          const knowledgeData = demo.knowledge as Record<string, any> | undefined;
+          if (knowledgeData?.entity_nodes) {
+            const artifact = {
+              session_id: knowledgeData.simulation_id || 'demo-session',
+              document: knowledgeData.document || { document_id: 'demo', paragraph_count: 0 },
+              summary: knowledgeData.summary || '',
+              guiding_prompt: knowledgeData.guiding_prompt || null,
+              entity_nodes: knowledgeData.entity_nodes,
+              relationship_edges: knowledgeData.relationship_edges || [],
+              entity_type_counts: knowledgeData.entity_type_counts || {},
+              processing_logs: [],
+              demographic_focus_summary: knowledgeData.demographic_focus_summary || null,
+            } as KnowledgeArtifact;
+            setKnowledgeArtifact(artifact);
+            setKnowledgeGraphReady(true);
+            setSessionId(artifact.session_id);
+            setKnowledgeStreamProgress({
+              stage: 'knowledge_completed',
+              message: 'Loaded cached demo knowledge graph.',
+              percent: 100,
+            });
+            toast({ title: 'Demo mode', description: 'Loaded cached knowledge graph (backend unavailable)' });
+            return;
           }
         } catch { /* ignore demo fallback errors */ }
       }

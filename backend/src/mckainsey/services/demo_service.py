@@ -8,9 +8,7 @@ It ensures no Gemini API calls are made during demo operation.
 from __future__ import annotations
 
 import json
-import random
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 

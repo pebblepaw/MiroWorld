@@ -57,7 +57,7 @@ Example body:
 
 ```json
 {
-   "simulation_id": "demo-budget-2026",
+   "simulation_id": "demo-ai-strategy-2025",
    "use_default_demo_document": true,
    "demographic_focus": "low-income households and seniors in Woodlands"
 }

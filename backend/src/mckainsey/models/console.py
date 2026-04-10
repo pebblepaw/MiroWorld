@@ -309,7 +309,7 @@ class V2CountryResponse(BaseModel):
 
 
 class V2ProviderResponse(BaseModel):
-    name: Literal["gemini", "openai", "ollama"]
+    name: Literal["gemini", "openrouter", "openai", "ollama"]
     models: list[str] = Field(default_factory=list)
     requires_api_key: bool
 
@@ -318,7 +318,7 @@ class V2SessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     country: str
-    provider: Literal["gemini", "google", "openai", "ollama"]
+    provider: Literal["gemini", "google", "openrouter", "openai", "ollama"]
     model: str
     api_key: str | None = None
     use_case: str
@@ -335,7 +335,7 @@ class V2SessionConfigPatchRequest(BaseModel):
 
     country: str | None = None
     use_case: str | None = None
-    provider: Literal["gemini", "google", "openai", "ollama"] | None = None
+    provider: Literal["gemini", "google", "openrouter", "openai", "ollama"] | None = None
     model: str | None = None
     api_key: str | None = None
     guiding_prompt: str | None = None
@@ -346,7 +346,7 @@ class V2SessionConfigResponse(BaseModel):
     session_id: str
     country: str | None = None
     use_case: str | None = None
-    provider: Literal["gemini", "google", "openai", "ollama"] | None = None
+    provider: Literal["gemini", "google", "openrouter", "openai", "ollama"] | None = None
     model: str | None = None
     api_key_configured: bool = False
     guiding_prompt: str | None = None

@@ -16,7 +16,6 @@ from fastapi import HTTPException
 from fastapi import UploadFile
 
 from mckainsey.config import Settings
-from mckainsey.models.phase_a import PersonaFilterRequest
 from mckainsey.services.config_service import ConfigService
 from mckainsey.services.demo_service import DemoService
 from mckainsey.services.document_parser import extract_document_text
@@ -223,6 +222,7 @@ class ConsoleService:
     def v2_provider_catalog(self) -> list[dict[str, Any]]:
         provider_name_map = {
             "google": "gemini",
+            "openrouter": "openrouter",
             "openai": "openai",
             "ollama": "ollama",
         }

@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     gemini_timeout_seconds: int = 20
 
     lightrag_workdir: str = "data/lightrag"
-    demo_default_policy_markdown: str = "Sample_Inputs/fy2026_budget_statement.md"
+    demo_default_policy_markdown: str = "Sample_Inputs/singapore_budget_ai_strategic_advantage.md"
 
     simulation_db_path: str = "data/simulation.db"
     default_agent_count: int = 50
@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     oasis_default_timeout_per_agent_round_seconds: int = 3
     oasis_ollama_semaphore: int = 12
     oasis_default_semaphore: int = 64
+    oasis_sidecar_host: str | None = None
+    oasis_sidecar_port: int = 8001
     ollama_checkpoint_batch_size: int = 3
     default_checkpoint_batch_size: int = 25
     oasis_run_log_dir: str = "data/oasis/logs"
@@ -102,6 +104,7 @@ class Settings(BaseSettings):
         self.oasis_default_timeout_per_agent_round_seconds = max(1, int(self.oasis_default_timeout_per_agent_round_seconds))
         self.oasis_ollama_semaphore = max(1, int(self.oasis_ollama_semaphore))
         self.oasis_default_semaphore = max(1, int(self.oasis_default_semaphore))
+        self.oasis_sidecar_port = max(1, int(self.oasis_sidecar_port))
         self.ollama_checkpoint_batch_size = max(1, int(self.ollama_checkpoint_batch_size))
         self.default_checkpoint_batch_size = max(1, int(self.default_checkpoint_batch_size))
 

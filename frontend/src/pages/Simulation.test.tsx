@@ -495,6 +495,8 @@ describe("Simulation", () => {
   });
 
   it("uses the v2 simulate contract, defaults controversy boost off to 0, normalizes SSE metrics, and persists sim posts", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
     render(
       <AppProvider>
         <SeedStage3Context />
@@ -826,10 +828,11 @@ describe("Simulation", () => {
     expect(document.querySelector("div.flex.h-full.min-h-0.gap-6.overflow-hidden.p-6")).toBeTruthy();
     expect(document.querySelectorAll("div.overflow-y-auto.scrollbar-thin").length).toBeGreaterThanOrEqual(2);
 
-    expect(screen.getByText("Controversy Boost").closest("[title]")).toHaveAttribute(
-      "title",
-      "Models social media ragebait amplification by boosting high-engagement controversial content.",
-    );
+    expect(
+      screen.getByText(
+        "Amplifies divisive content in the social feed, simulating how real platforms boost engagement through controversial posts.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Approval Rate").closest("[title]")).toHaveAttribute(
       "title",
       "Reads the latest approval rate from the simulation metrics payload.",
@@ -918,6 +921,8 @@ describe("Simulation", () => {
   });
 
   it("maps long runtime tracebacks to a short simulation error message", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
     render(
       <AppProvider>
         <SeedStage3Context />

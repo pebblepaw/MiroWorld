@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/pyproject.toml backend/README.md ./
+COPY backend/Sample_Inputs ./Sample_Inputs
 COPY backend/src ./src
 COPY backend/scripts ./scripts
 COPY backend/data ./data

@@ -272,14 +272,8 @@ describe("AgentConfig", () => {
       </AppProvider>,
     );
 
-    await screen.findByLabelText("Age Range minimum");
+    await screen.findByRole("button", { name: /sample population/i });
     expect(screen.queryByText(/Current target: 0 agents/i)).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Age Range minimum"), { target: { value: "25" } });
-    fireEvent.change(screen.getByLabelText("Age Range maximum"), { target: { value: "45" } });
-    fireEvent.click(screen.getByRole("button", { name: "Central" }));
-    fireEvent.click(screen.getByRole("button", { name: "East" }));
-    fireEvent.change(screen.getByLabelText("Occupation"), { target: { value: "Teacher" } });
-    fireEvent.click(screen.getByRole("button", { name: "Female" }));
     fireEvent.change(screen.getByLabelText(/strategic parameters/i), {
       target: { value: "Bias toward younger teachers and parents in the north-east." },
     });
@@ -295,13 +289,10 @@ describe("AgentConfig", () => {
     expect(body.sample_mode).toBe("affected_groups");
     expect(body.sampling_instructions).toBe("Bias toward younger teachers and parents in the north-east.");
     expect(typeof body.seed).toBe("number");
-    expect(body.min_age).toBe(25);
-    expect(body.max_age).toBe(45);
-    expect(body.planning_areas).toEqual(["Central", "East"]);
-    expect(body.dynamic_filters.age).toEqual({ min: 25, max: 45 });
-    expect(body.dynamic_filters.planning_area).toEqual(["Central", "East"]);
-    expect(body.dynamic_filters.occupation).toBe("Teacher");
-    expect(body.dynamic_filters.gender).toBe("Female");
+    expect(body.min_age).toBeUndefined();
+    expect(body.max_age).toBeUndefined();
+    expect(body.planning_areas).toBeUndefined();
+    expect(body.dynamic_filters).toBeUndefined();
 
     expect(await screen.findByText("Candidate Shortlist")).toBeInTheDocument();
     expect(screen.getByText("824")).toBeInTheDocument();
@@ -332,7 +323,7 @@ describe("AgentConfig", () => {
       </AppProvider>,
     );
 
-    await screen.findByLabelText("Age Range minimum");
+    await screen.findByText("124");
     expect(screen.queryByText(/Current target: 124 agents/i)).not.toBeInTheDocument();
   });
 
@@ -416,12 +407,12 @@ describe("AgentConfig", () => {
       </AppProvider>,
     );
 
-    await screen.findByLabelText("Age Range minimum");
+    await screen.findByRole("button", { name: /sample population/i });
     fireEvent.click(screen.getByRole("button", { name: /sample population/i }));
     expect(await screen.findByTestId("country-map-usa")).toBeInTheDocument();
   });
 
-  it("clamps range inputs to the backend-provided bounds before sampling", async () => {
+  it("omits removed legacy range filters from the sampling payload", async () => {
     global.fetch = vi.fn().mockImplementation(
       createAgentFetch({
         sessionId: "session-screen2",
@@ -458,16 +449,15 @@ describe("AgentConfig", () => {
       </AppProvider>,
     );
 
-    await screen.findByLabelText("Age Range minimum");
-    fireEvent.change(screen.getByLabelText("Age Range minimum"), { target: { value: "10" } });
-    fireEvent.change(screen.getByLabelText("Age Range maximum"), { target: { value: "120" } });
+    await screen.findByRole("button", { name: /sample population/i });
     fireEvent.click(screen.getByRole("button", { name: /sample population/i }));
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
     const previewRequest = vi.mocked(global.fetch).mock.calls.find(([url]) => String(url).includes("/sampling/preview"));
     const body = JSON.parse(String(previewRequest?.[1]?.body));
-    expect(body.min_age).toBe(18);
-    expect(body.max_age).toBe(85);
+    expect(body.min_age).toBeUndefined();
+    expect(body.max_age).toBeUndefined();
+    expect(body.dynamic_filters).toBeUndefined();
   });
 
   it("switches to baseline mode and re-samples with a fresh seed using the same config", async () => {
@@ -665,7 +655,7 @@ describe("AgentConfig", () => {
       </AppProvider>,
     );
 
-    await screen.findByLabelText("Age Range minimum");
+    await screen.findByRole("button", { name: /sample population/i });
     fireEvent.click(screen.getByRole("button", { name: /sample population/i }));
 
     expect(await screen.findByText("live sampling failed")).toBeInTheDocument();

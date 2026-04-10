@@ -576,11 +576,11 @@ class PersonaRelevanceService:
 
     def _persona_short_doc(self, persona: dict[str, Any]) -> list[str]:
         pieces: list[str] = []
-        for field in SHORT_TEXT_FIELDS:
-            value = persona.get(field)
+        for field_name in SHORT_TEXT_FIELDS:
+            value = persona.get(field_name)
             if value is None:
                 continue
-            if field.endswith("_list"):
+            if field_name.endswith("_list"):
                 pieces.extend(self._parse_list_field(value))
             else:
                 pieces.append(str(value))

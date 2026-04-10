@@ -12,6 +12,7 @@ import {
   StructuredReportState,
   exportReportDocx,
   generateReport,
+  getBundledDemoOutput,
   getGroupChatAgents,
   getStructuredReport,
   sendAgentChatMessage,
@@ -220,14 +221,11 @@ export default function ReportChat() {
 
   const loadDemoReport = useCallback(async (): Promise<void> => {
     try {
-      const response = await fetch('/demo-output.json');
-      if (response.ok) {
-        const data = await response.json();
-        if (data?.report || data?.reportFull) {
-          const reportFromDemo = data.reportFull || data.report;
-          setReportState({ ...DEMO_REPORT, ...reportFromDemo, status: 'complete' });
-          return;
-        }
+      const data = await getBundledDemoOutput();
+      if (data?.report || data?.reportFull) {
+        const reportFromDemo = (data.reportFull || data.report) as Record<string, unknown>;
+        setReportState({ ...DEMO_REPORT, ...reportFromDemo, status: 'complete' });
+        return;
       }
     } catch {
       // Fall through to built-in demo report.

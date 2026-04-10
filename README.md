@@ -1,63 +1,161 @@
 # McKAInsey
 
-McKAInsey is an AI consulting simulator for policy and campaign analysis. The application pairs a synthetic persona dataset with a multi-step workflow for knowledge ingestion, sampling, simulation, report review, and analytics.
+[![Live Demo](https://img.shields.io/badge/live-demo-0a66c2?logo=github)](https://pebblepaw.github.io/Nemotron_AI_Consultant/)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
-The repository currently contains:
+McKAInsey is an AI consulting simulator for policy, campaign, and product analysis. It ingests source material into a knowledge graph, samples a synthetic population from the Nemotron Singapore personas dataset, runs a multi-round OASIS social simulation, then grounds report/chat/analytics on the resulting interactions and checkpoints.
 
-- a FastAPI backend under `backend/`
-- a React + Vite frontend under `frontend/`
-- a local launcher in `quick_start.sh`
-- a Docker Compose stack in `docker-compose.yml`
+The repository ships:
 
-## What Runs Locally
+- `backend/`: FastAPI API, simulation orchestration, SQLite-backed memory, LightRAG ingestion
+- `frontend/`: React + Vite UI for Screen 0 through Screen 5
+- `quick_start.sh`: local source-mode launcher
+- `docker-compose.yml`: containerized demo/live stack with the OASIS sidecar
 
-Two local entry points are supported at a high level:
+## Deployment Modes
 
-- Source mode: run the backend and frontend directly from the repository.
-- Docker mode: run the stack through Docker Compose.
+Two local paths are supported for the open-source release:
 
-The repo root `.env.example` documents the environment variables used by the launcher, backend, and frontend. Keep your real `.env` file untracked.
+- Source mode: run backend and frontend directly from this repository.
+- Docker mode: run the production frontend, backend API, and OASIS sidecar via Docker Compose.
 
-## Quick Start
+The root `.env.example` is the canonical environment template for both paths. `quick_start.sh` now auto-loads `.env` from the repo root, while Docker Compose reads the same file through `env_file`.
 
-1. Copy the example environment file.
+## Source Mode
+
+### Prerequisites
+
+- Python 3.11+ for the main backend virtualenv
+- Python 3.11 specifically available on `PATH` for the OASIS sidecar (`python3.11`)
+- Node.js 20+ and `npm`
+- Optional: Ollama if you want free local live runs without external API keys
+
+The main backend environment can be Python 3.11 or 3.12. The native OASIS runner still needs a separate Python 3.11 environment, and `quick_start.sh --mode live` will auto-create `backend/.venv311` if `python3.11` is installed.
+
+### Setup
 
 ```bash
 cp .env.example .env
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e ./backend[dev]
+cd frontend && npm install && cd ..
 ```
 
-2. Start the local app.
+### Launch
+
+Demo mode uses the bundled cached artifacts and is the fastest smoke test:
 
 ```bash
 ./quick_start.sh --mode demo
 ```
 
-3. Open the UI shown by the launcher.
+Live mode enables the native OASIS runtime:
 
-`--mode live` is available for the native OASIS runtime path when the required Python 3.11 sidecar and model provider credentials are configured.
+```bash
+./quick_start.sh --mode live
+```
+
+When live mode is enabled, the launcher will:
+
+- read provider settings from `.env`
+- validate or create `backend/.venv311`
+- install pinned OASIS runtime dependencies into that sidecar if needed
+- start the backend on `http://127.0.0.1:8000`
+- start the frontend on `http://127.0.0.1:5173`
 
 ## Docker Mode
 
-Docker Compose is included for the containerized stack. Use it when you want the app services to run in containers rather than directly on your machine.
+Docker Compose runs a production frontend build behind nginx, the FastAPI backend, and the Python 3.11 OASIS sidecar.
 
 ```bash
+cp .env.example .env
 docker compose up --build
 ```
 
-Refer to `docker-compose.yml` for the current service layout and exposed ports.
+Notes:
 
-## Environment
+- `BOOT_MODE=demo` is the default and requires no provider key.
+- For live Docker runs, the default `.env.example` is already oriented toward OpenRouter. Set `OPENROUTER_API_KEY` and switch `BOOT_MODE=live`.
+- If you want Docker to use a host Ollama daemon instead, set `LLM_PROVIDER="ollama"` and `LLM_BASE_URL="http://host.docker.internal:11434/v1/"` in `.env`.
+- The backend healthcheck also verifies that the OASIS sidecar is reachable.
 
-The root `.env.example` is the best starting point for local development.
+## LLM Provider Setup
 
-Common values include:
+### Ollama
 
-- launcher ports and host bindings
-- `VITE_API_BASE` and `VITE_BOOT_MODE`
-- LLM provider selection and base URLs
-- optional provider API keys
-- local data and cache paths
-- OASIS runtime paths and limits
+Use this for the cheapest source-mode live setup.
+
+1. Install Ollama and start the local daemon.
+2. Pull the required models:
+
+```bash
+ollama pull qwen3:4b-instruct-2507-q4_K_M
+ollama pull nomic-embed-text
+```
+
+3. Set the provider block in `.env`:
+
+```bash
+LLM_PROVIDER="ollama"
+LLM_MODEL="qwen3:4b-instruct-2507-q4_K_M"
+LLM_EMBED_MODEL="nomic-embed-text"
+LLM_BASE_URL="http://127.0.0.1:11434/v1/"
+```
+
+For Docker, replace the base URL with `http://host.docker.internal:11434/v1/`.
+
+### OpenRouter
+
+Use this for the simplest live Docker setup and a cheap hosted-compatible path.
+
+1. Create an OpenRouter account and generate an API key.
+2. Set:
+
+```bash
+LLM_PROVIDER="openrouter"
+LLM_MODEL="meta-llama/llama-3.1-8b-instruct:free"
+LLM_EMBED_MODEL="openai/text-embedding-3-small"
+LLM_BASE_URL="https://openrouter.ai/api/v1/"
+OPENROUTER_API_KEY="your-key"
+```
+
+### Gemini
+
+1. Create a Google AI Studio key.
+2. Set:
+
+```bash
+LLM_PROVIDER="google"
+LLM_MODEL="gemini-2.5-flash-lite"
+LLM_EMBED_MODEL="gemini-embedding-001"
+LLM_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/"
+LLM_API_KEY="your-key"
+```
+
+`GEMINI_API_KEY` is also supported for compatibility with older local setups.
+
+### OpenAI
+
+1. Create an OpenAI API key.
+2. Set:
+
+```bash
+LLM_PROVIDER="openai"
+LLM_MODEL="gpt-5-mini"
+LLM_EMBED_MODEL="text-embedding-3-small"
+LLM_BASE_URL="https://api.openai.com/v1/"
+OPENAI_API_KEY="your-key"
+```
+
+## Boot Modes
+
+- `demo`: local backend/frontend with cached demo data available as a fallback
+- `live`: native OASIS simulation with real provider calls
+- `demo-static`: frontend-only GitHub Pages build using bundled `frontend/public/demo-output.json`
+
+The GitHub Pages build uses `VITE_BOOT_MODE=demo-static` and `VITE_PUBLIC_BASE=/Nemotron_AI_Consultant/`.
 
 ## Development
 
@@ -66,16 +164,28 @@ Backend:
 ```bash
 cd backend
 python -m pip install -e .[dev]
-python -m pytest -q
+python -m ruff check src
+python -m pytest -q tests
 ```
 
 Frontend:
 
 ```bash
 cd frontend
-npm install
+npm ci
+npm run lint
 npm run test -- --run
 npm run build
+```
+
+Docker smoke test:
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:5173/
+docker compose down -v
 ```
 
 ## License

@@ -7,7 +7,16 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useApp } from "@/contexts/AppContext";
 import { toast } from "@/hooks/use-toast";
-import { buildSimulationStreamUrl, getSimulationMetrics, getSimulationState, isLiveBootMode, SimulationState, startSimulation } from "@/lib/console-api";
+import {
+  buildSimulationStreamUrl,
+  getBundledDemoSimulationPosts,
+  getSimulationMetrics,
+  getSimulationState,
+  isLiveBootMode,
+  isStaticDemoBootMode,
+  SimulationState,
+  startSimulation,
+} from "@/lib/console-api";
 
 type FeedComment = {
   id: string;
@@ -281,6 +290,31 @@ export default function Simulation() {
   }, [feedThreads.length, setFeedThreads, simPosts]);
 
   useEffect(() => {
+    if (!isStaticDemoBootMode() || !sessionId) {
+      return;
+    }
+    if (feedThreads.length > 0 || simPosts.length > 0) {
+      return;
+    }
+
+    let cancelled = false;
+    void getBundledDemoSimulationPosts()
+      .then((posts) => {
+        if (cancelled || posts.length === 0) {
+          return;
+        }
+        setSimPosts(posts);
+        setFeedThreads(posts.map((post) => simPostToFeedThread(post)));
+        hydratedFeedRef.current = true;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [feedThreads.length, sessionId, setFeedThreads, setSimPosts, simPosts.length]);
+
+  useEffect(() => {
     if (!sessionId) {
       hydratedStateSessionRef.current = null;
       return;
@@ -548,7 +582,14 @@ export default function Simulation() {
         controversy_boost: controversyBoost,
       });
       setSimulationState(state);
-      openStream(sessionId);
+      if (isLiveBootMode()) {
+        openStream(sessionId);
+      } else if (isStaticDemoBootMode()) {
+        const posts = await getBundledDemoSimulationPosts();
+        setSimPosts(posts);
+        setFeedThreads(posts.map((post) => simPostToFeedThread(post)));
+        setSimulationComplete(state.status === "completed");
+      }
     } catch (caughtError) {
       setError(resolveSimulationError(caughtError));
     } finally {
