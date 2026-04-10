@@ -159,6 +159,41 @@ def test_search_agent_context_is_scoped_to_agent_activity(tmp_path: Path) -> Non
     assert [item["checkpoint_kind"] for item in result["checkpoint_records"]] == ["final", "baseline"]
 
 
+def test_format_checkpoint_records_preserves_baseline_and_final_sections_under_limit(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    service = MemoryService(settings)
+
+    checkpoint_records = [
+        {
+            "agent_id": f"agent-final-{index}",
+            "checkpoint_kind": "final",
+            "stance_score": 0.7,
+            "stance_class": "support",
+            "confidence": 0.9,
+            "primary_driver": f"final-driver-{index}",
+            "metric_answers": {"approval": 6 + index},
+        }
+        for index in range(4)
+    ]
+    checkpoint_records.append(
+        {
+            "agent_id": "agent-baseline",
+            "checkpoint_kind": "baseline",
+            "stance_score": 0.2,
+            "stance_class": "dissent",
+            "confidence": 0.8,
+            "primary_driver": "baseline-driver",
+            "metric_answers": {"approval": 3},
+        }
+    )
+
+    formatted = service.format_checkpoint_records(checkpoint_records, limit=4)
+
+    assert "Final:" in formatted
+    assert "Baseline:" in formatted
+    assert "baseline-driver" in formatted
+
+
 def test_agent_chat_realtime_uses_sqlite_memory_in_live_mode(tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
     store = SimulationStore(settings.simulation_db_path)
@@ -195,6 +230,26 @@ def test_agent_chat_realtime_uses_sqlite_memory_in_live_mode(tmp_path: Path) -> 
     assert "Baseline:" in captured["prompt"]
     assert "Final:" in captured["prompt"]
     assert "transport bottlenecks" in captured["prompt"]
+
+
+def test_agent_chat_fallback_uses_checkpoint_evidence_when_llm_is_disabled(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    store = SimulationStore(settings.simulation_db_path)
+    session_id = _seed_memory_store(store)
+
+    service = MemoryService(settings)
+    service.llm.is_enabled = lambda: False  # type: ignore[method-assign]
+
+    payload = service.agent_chat_realtime(
+        session_id,
+        "agent-a",
+        "What matters most about transport?",
+        live_mode=True,
+    )
+
+    assert payload["memory_backend"] == "sqlite"
+    assert "transport bottlenecks" in payload["response"] or "affordability safeguards" in payload["response"]
+    assert "approval=" in payload["response"]
 
 
 def test_report_chat_payload_uses_neutral_memory_label_and_checkpoint_context(tmp_path: Path) -> None:

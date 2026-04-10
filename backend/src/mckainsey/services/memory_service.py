@@ -155,7 +155,14 @@ class MemoryService:
                 system_prompt="You are a simulated Singapore persona agent. Stay grounded in supplied memory.",
             )
         else:
-            response = self._local_fallback_agent_response(agent_id, agent, message, memories, memory_context["episodes"])
+            response = self._local_fallback_agent_response(
+                agent_id,
+                agent,
+                message,
+                memories,
+                memory_context["episodes"],
+                memory_context["checkpoint_records"],
+            )
 
         memory_used = bool(memories or memory_context["episodes"] or memory_context["checkpoint_records"])
         return {
@@ -174,17 +181,43 @@ class MemoryService:
 
     def format_checkpoint_records(self, checkpoint_records: list[dict[str, Any]], limit: int = 6) -> str:
         grouped: dict[str, list[dict[str, Any]]] = {}
-        for record in checkpoint_records[: max(1, int(limit))]:
+        for record in checkpoint_records:
             checkpoint_kind = str(record.get("checkpoint_kind") or "checkpoint").strip().lower() or "checkpoint"
             grouped.setdefault(checkpoint_kind, []).append(record)
 
         ordered_kinds = [kind for kind in ("baseline", "final") if kind in grouped]
         ordered_kinds.extend(kind for kind in grouped if kind not in {"baseline", "final"})
 
+        selected: dict[str, list[dict[str, Any]]] = {kind: [] for kind in ordered_kinds}
+        remaining = max(1, int(limit))
+
+        for checkpoint_kind in ordered_kinds:
+            if remaining <= 0:
+                break
+            records = grouped.get(checkpoint_kind, [])
+            if not records:
+                continue
+            selected[checkpoint_kind].append(records[0])
+            remaining -= 1
+
+        if remaining > 0:
+            for checkpoint_kind in ordered_kinds:
+                if remaining <= 0:
+                    break
+                records = grouped.get(checkpoint_kind, [])
+                for record in records[len(selected[checkpoint_kind]) :]:
+                    if remaining <= 0:
+                        break
+                    selected[checkpoint_kind].append(record)
+                    remaining -= 1
+
         sections: list[str] = []
         for checkpoint_kind in ordered_kinds:
+            records = selected.get(checkpoint_kind, [])
+            if not records:
+                continue
             sections.append(f"{checkpoint_kind.replace('_', ' ').title()}:")
-            for record in grouped[checkpoint_kind]:
+            for record in records:
                 sections.append(f"- {self._format_checkpoint_line(record)}")
         return "\n".join(sections)
 
@@ -557,6 +590,7 @@ class MemoryService:
         message: str,
         memories: list[dict[str, Any]],
         context_episodes: list[dict[str, Any]],
+        checkpoint_records: list[dict[str, Any]],
     ) -> str:
         latest_memory = ""
         if memories:
@@ -565,12 +599,45 @@ class MemoryService:
             latest_memory = str(context_episodes[0].get("content", "")).strip()
 
         planning_area = str(agent.get("persona", {}).get("planning_area", "my area"))
-        if latest_memory:
+        checkpoint_summary = self._fallback_checkpoint_summary(checkpoint_records)
+        if latest_memory or checkpoint_summary:
+            evidence_parts: list[str] = []
+            if latest_memory:
+                evidence_parts.append(f'my recent activity said "{latest_memory}"')
+            if checkpoint_summary:
+                evidence_parts.append(checkpoint_summary)
+            evidence_text = " and ".join(evidence_parts)
             return (
-                f"As {agent_id} from {planning_area}, my view reflects what I posted previously: "
-                f"\"{latest_memory}\". On your question \"{message}\", that remains my main concern."
+                f"As {agent_id} from {planning_area}, my view is grounded in {evidence_text}. "
+                f'On "{message}", that remains my main concern.'
             )
         return (
             f"As {agent_id} from {planning_area}, I do not have enough stored context yet. "
             f"On \"{message}\", I would focus on affordability and neighborhood-level trade-offs."
         )
+
+    def _fallback_checkpoint_summary(self, checkpoint_records: list[dict[str, Any]]) -> str:
+        if not checkpoint_records:
+            return ""
+
+        final_record = next(
+            (
+                record
+                for record in checkpoint_records
+                if str(record.get("checkpoint_kind") or "").strip().lower() in {"final", "post"}
+            ),
+            None,
+        )
+        baseline_record = next(
+            (
+                record
+                for record in checkpoint_records
+                if str(record.get("checkpoint_kind") or "").strip().lower() == "baseline"
+            ),
+            None,
+        )
+        chosen = final_record or baseline_record or checkpoint_records[0]
+        driver = self._truncate_text(str(chosen.get("primary_driver") or "unspecified"), 100)
+        stance = str(chosen.get("stance_class") or "neutral").strip().lower() or "neutral"
+        metrics = self._format_metric_answers(chosen.get("metric_answers"))
+        return f"my {chosen.get('checkpoint_kind', 'checkpoint')} checkpoint was {stance} with driver {driver} and metrics {metrics}"
