@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import Simulation from "@/pages/Simulation";
 import { AppProvider, useApp } from "@/contexts/AppContext";
+import type { SimulationState } from "@/lib/console-api";
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -187,6 +188,183 @@ function SeedPersistedSimulationPosts() {
   return null;
 }
 
+function SeedHydratedSimulationState() {
+  const {
+    setSessionId,
+    setKnowledgeArtifact,
+    setKnowledgeGraphReady,
+    setPopulationArtifact,
+    setAgentsGenerated,
+    setSimulationRounds,
+  } = useApp();
+
+  useEffect(() => {
+    setSessionId("session-screen3-hydrate");
+    setKnowledgeGraphReady(true);
+    setKnowledgeArtifact({
+      session_id: "session-screen3-hydrate",
+      document: {
+        document_id: "doc-hydrate",
+        file_name: "hydrate.pdf",
+        file_type: "application/pdf",
+        text_length: 900,
+        paragraph_count: 5,
+      },
+      summary: "Hydrated state should come from the backend.",
+      entity_nodes: [],
+      relationship_edges: [],
+      entity_type_counts: {},
+      processing_logs: [],
+    });
+    setPopulationArtifact({
+      session_id: "session-screen3-hydrate",
+      candidate_count: 80,
+      sample_count: 4,
+      sample_mode: "affected_groups",
+      sample_seed: 11,
+      parsed_sampling_instructions: {
+        hard_filters: {},
+        soft_boosts: {},
+        soft_penalties: {},
+        exclusions: {},
+        distribution_targets: {},
+        notes_for_ui: [],
+      },
+      coverage: { planning_areas: ["Woodlands"], age_buckets: { "20-29": 2 } },
+      sampled_personas: [],
+      agent_graph: { nodes: [], links: [] },
+      representativeness: { status: "balanced" },
+      selection_diagnostics: {},
+    });
+    setAgentsGenerated(true);
+    setSimulationRounds(6);
+  }, [setAgentsGenerated, setKnowledgeArtifact, setKnowledgeGraphReady, setPopulationArtifact, setSessionId, setSimulationRounds]);
+
+  return null;
+}
+
+function SeedPersistedSimulationState() {
+  const {
+    setSessionId,
+    setKnowledgeArtifact,
+    setKnowledgeGraphReady,
+    setPopulationArtifact,
+    setAgentsGenerated,
+    setSimulationRounds,
+    setSimulationState,
+    setSimPosts,
+  } = useApp();
+
+  useEffect(() => {
+    const state: SimulationState = {
+      session_id: "session-screen3-persisted-state",
+      status: "running",
+      event_count: 12,
+      last_round: 4,
+      platform: "reddit",
+      planned_rounds: 6,
+      current_round: 4,
+      elapsed_seconds: 123,
+      estimated_total_seconds: 210,
+      estimated_remaining_seconds: 87,
+      counters: { posts: 8, comments: 19, reactions: 11, active_authors: 5 },
+      checkpoint_status: {
+        baseline: { status: "completed", completed_agents: 3, total_agents: 3 },
+        final: { status: "pending", completed_agents: 0, total_agents: 3 },
+      },
+      top_threads: [{ title: "Persisted hottest thread", engagement: 9 }],
+      discussion_momentum: { approval_delta: 0.21, dominant_stance: "support" },
+      latest_metrics: {
+        approval_rate: { value: 82.3, label: "Approval Rate" },
+        net_sentiment: { value: 7.4, label: "Net Sentiment" },
+        round_progress_label: "Round 4 is in progress",
+      },
+      recent_events: [{ event_type: "round_batch_flushed", round_no: 4, batch_index: 1, batch_count: 2 }],
+    };
+
+    setSessionId("session-screen3-persisted-state");
+    setKnowledgeGraphReady(true);
+    setKnowledgeArtifact({
+      session_id: "session-screen3-persisted-state",
+      document: {
+        document_id: "doc-persisted-state",
+        file_name: "persisted-state.pdf",
+        file_type: "application/pdf",
+        text_length: 1500,
+        paragraph_count: 6,
+      },
+      summary: "Persisted simulation state should survive unmounts.",
+      entity_nodes: [],
+      relationship_edges: [],
+      entity_type_counts: {},
+      processing_logs: [],
+    });
+    setPopulationArtifact({
+      session_id: "session-screen3-persisted-state",
+      candidate_count: 100,
+      sample_count: 4,
+      sample_mode: "affected_groups",
+      sample_seed: 19,
+      parsed_sampling_instructions: {
+        hard_filters: {},
+        soft_boosts: {},
+        soft_penalties: {},
+        exclusions: {},
+        distribution_targets: {},
+        notes_for_ui: [],
+      },
+      coverage: { planning_areas: ["Woodlands"], age_buckets: { "20-29": 2 } },
+      sampled_personas: [],
+      agent_graph: { nodes: [], links: [] },
+      representativeness: { status: "balanced" },
+      selection_diagnostics: {},
+    });
+    setAgentsGenerated(true);
+    setSimulationRounds(6);
+    setSimulationState(state);
+    setSimPosts([
+      {
+        id: "persisted-state-post-1",
+        agentId: "agent-persisted-state-1",
+        agentName: "Persisted Author",
+        agentOccupation: "Teacher",
+        agentArea: "Woodlands",
+        title: "Persisted thread title",
+        content: "Persisted thread body",
+        upvotes: 9,
+        downvotes: 1,
+        commentCount: 1,
+        round: 4,
+        timestamp: "Round 4",
+        comments: [
+          {
+            id: "persisted-state-comment-1",
+            agentName: "Persisted Commenter",
+            agentOccupation: "Nurse",
+            content: "Persisted comment body",
+            upvotes: 3,
+          },
+        ],
+      },
+    ]);
+  }, [setAgentsGenerated, setKnowledgeArtifact, setKnowledgeGraphReady, setPopulationArtifact, setSessionId, setSimPosts, setSimulationRounds, setSimulationState]);
+
+  return null;
+}
+
+function Screen3ToggleHarness() {
+  const [visible, setVisible] = useState(true);
+
+  return (
+    <div>
+      <button type="button" onClick={() => setVisible((current) => !current)}>
+        Toggle Screen 3
+      </button>
+      {visible ? <Simulation /> : null}
+    </div>
+  );
+}
+
 describe("Simulation", () => {
   const originalFetch = global.fetch;
   const originalEventSource = global.EventSource;
@@ -194,11 +372,11 @@ describe("Simulation", () => {
   beforeEach(() => {
     MockEventSource.reset();
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const pendingState = {
         session_id: "session-screen3",
-        status: "running",
+        status: "pending",
         event_count: 0,
         last_round: 0,
         platform: "reddit",
@@ -216,7 +394,21 @@ describe("Simulation", () => {
         discussion_momentum: { approval_delta: 0, dominant_stance: "mixed" },
         latest_metrics: {},
         recent_events: [],
-      }),
+      };
+      const runningState = {
+        ...pendingState,
+        status: "running",
+      };
+      if (url.includes("/simulation/state")) {
+        return {
+          ok: true,
+          json: async () => pendingState,
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => runningState,
+      } as Response;
     }) as typeof fetch;
   });
 
@@ -236,14 +428,27 @@ describe("Simulation", () => {
       </AppProvider>,
     );
 
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: /start simulation/i }));
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
-    const request = vi.mocked(global.fetch).mock.calls[0];
-    expect(request[0]).toContain("/api/v2/console/session/session-screen3/simulate");
-    expect(JSON.parse(String(request[1]?.body)).rounds).toBe(5);
-    expect(JSON.parse(String(request[1]?.body)).controversy_boost).toBe(0);
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([request]) =>
+          String(request).includes("/api/v2/console/session/session-screen3/simulate"),
+        ),
+      ).toBe(true),
+    );
+    const [hydrateRequest] = vi.mocked(global.fetch).mock.calls.filter(([request]) =>
+      String(request).includes("/api/v2/console/session/session-screen3/simulation/state"),
+    );
+    const simulateRequest = vi.mocked(global.fetch).mock.calls.find(([request]) =>
+      String(request).includes("/api/v2/console/session/session-screen3/simulate"),
+    );
+    expect(hydrateRequest?.[0]).toContain("/api/v2/console/session/session-screen3/simulation/state");
+    expect(simulateRequest?.[0]).toContain("/api/v2/console/session/session-screen3/simulate");
+    expect(JSON.parse(String(simulateRequest[1]?.body)).rounds).toBe(5);
+    expect(JSON.parse(String(simulateRequest[1]?.body)).controversy_boost).toBe(0);
 
     const source = MockEventSource.instances[0];
     expect(source.url).toContain("/api/v2/console/session/session-screen3/simulation/stream");
@@ -307,6 +512,71 @@ describe("Simulation", () => {
     expect(screen.getByText("Persisted Commenter")).toBeInTheDocument();
   });
 
+  it("hydrates screen 3 state from the backend when the context state is missing", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        session_id: "session-screen3-hydrate",
+        status: "running",
+        event_count: 12,
+        last_round: 4,
+        platform: "reddit",
+        planned_rounds: 6,
+        current_round: 4,
+        elapsed_seconds: 123,
+        estimated_total_seconds: 210,
+        estimated_remaining_seconds: 87,
+        counters: { posts: 8, comments: 19, reactions: 11, active_authors: 5 },
+        checkpoint_status: {
+          baseline: { status: "completed", completed_agents: 3, total_agents: 3 },
+          final: { status: "pending", completed_agents: 0, total_agents: 3 },
+        },
+        top_threads: [{ title: "Hydrated hottest thread", engagement: 9 }],
+        discussion_momentum: { approval_delta: 0.21, dominant_stance: "support" },
+        latest_metrics: {
+          approval_rate: { value: 82.3, label: "Approval Rate" },
+          net_sentiment: { value: 7.4, label: "Net Sentiment" },
+          round_progress_label: "Round 4 is in progress",
+        },
+        recent_events: [{ event_type: "round_batch_flushed", round_no: 4, batch_index: 1, batch_count: 2 }],
+      }),
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedHydratedSimulationState />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Round 4 is in progress")).toBeInTheDocument();
+    expect(screen.getByText("Round 4 of 6")).toBeInTheDocument();
+    expect(screen.getByText("82.3%")).toBeInTheDocument();
+    expect(screen.getByText("Hydrated hottest thread")).toBeInTheDocument();
+  });
+
+  it("keeps Screen 3 simulation state after the page unmounts and remounts", async () => {
+    render(
+      <AppProvider>
+        <SeedPersistedSimulationState />
+        <Screen3ToggleHarness />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Round 4 of 6")).toBeInTheDocument();
+    expect(screen.getByText("82.3%")).toBeInTheDocument();
+    expect(screen.getByText("Persisted thread title")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /toggle screen 3/i }));
+    expect(screen.queryByText("Round 4 of 6")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /toggle screen 3/i }));
+    expect(await screen.findByText("Round 4 of 6")).toBeInTheDocument();
+    expect(screen.getByText("82.3%")).toBeInTheDocument();
+    expect(screen.getByText("Persisted thread title")).toBeInTheDocument();
+  });
+
   it("sends a 0.5 controversy boost when the binary toggle is enabled", async () => {
     render(
       <AppProvider>
@@ -315,12 +585,22 @@ describe("Simulation", () => {
       </AppProvider>,
     );
 
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("switch", { name: /controversy boost/i }));
     fireEvent.click(screen.getByRole("button", { name: /start simulation/i }));
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
-    const request = vi.mocked(global.fetch).mock.calls[0];
-    expect(JSON.parse(String(request[1]?.body)).controversy_boost).toBe(0.5);
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([request]) =>
+          String(request).includes("/api/v2/console/session/session-screen3/simulate"),
+        ),
+      ).toBe(true),
+    );
+    const request = vi.mocked(global.fetch).mock.calls.find(([request]) =>
+      String(request).includes("/api/v2/console/session/session-screen3/simulate"),
+    );
+    expect(request?.[0]).toContain("/api/v2/console/session/session-screen3/simulate");
+    expect(JSON.parse(String(request?.[1]?.body)).controversy_boost).toBe(0.5);
   });
 
   it("shows hover tooltips for controversy and metric cards while keeping separate scroll regions", async () => {

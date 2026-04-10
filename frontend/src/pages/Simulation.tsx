@@ -168,14 +168,15 @@ export default function Simulation() {
     simPosts,
     simulationRounds,
     simulationComplete,
+    simulationState,
     setSimulationRounds,
     setSimulationComplete,
+    setSimulationState,
     setSimPosts,
     completeStep,
     setCurrentStep,
   } = useApp();
 
-  const [simulationState, setSimulationState] = useState<SimulationState | null>(null);
   const [feedThreads, setFeedThreads] = useState<FeedThread[]>(() => simPosts.map((post) => simPostToFeedThread(post)));
   const [controversyBoostEnabled, setControversyBoostEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -272,9 +273,6 @@ export default function Simulation() {
     if (simulationState) {
       return;
     }
-    if (!simulationComplete && simPosts.length === 0) {
-      return;
-    }
     if (hydratedStateSessionRef.current === sessionId) {
       return;
     }
@@ -302,7 +300,7 @@ export default function Simulation() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, simPosts.length, simulationComplete, simulationState]);
+  }, [sessionId, simulationState]);
 
   useEffect(() => {
     if (!sessionId || !(running || loading)) {

@@ -1,6 +1,6 @@
-import React, { createContext, useCallback, useContext, useMemo, useState, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState, ReactNode, SetStateAction } from 'react';
 import { Agent, SimPost } from '@/data/mockData';
-import { KnowledgeArtifact, ModelProviderId, PopulationArtifact } from '@/lib/console-api';
+import { KnowledgeArtifact, ModelProviderId, PopulationArtifact, SimulationState } from '@/lib/console-api';
 
 export type AnalysisQuestion = {
   question: string;
@@ -51,6 +51,7 @@ interface AppState {
   agentsGenerated: boolean;
   simulationRounds: number;
   simulationComplete: boolean;
+  simulationState: SimulationState | null;
   simPosts: SimPost[];
   chatHistory: Record<string, ChatHistoryEntry[]>;
 }
@@ -88,6 +89,7 @@ interface AppContextType extends AppState {
   setAgentsGenerated: (gen: boolean) => void;
   setSimulationRounds: (rounds: number) => void;
   setSimulationComplete: (complete: boolean) => void;
+  setSimulationState: React.Dispatch<SetStateAction<SimulationState | null>>;
   setSimPosts: (posts: SimPost[]) => void;
   addChatMessage: (threadId: string, role: 'user' | 'agent', content: string, sourceAgentId?: string) => void;
 }
@@ -123,6 +125,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     agentsGenerated: false,
     simulationRounds: 3,
     simulationComplete: false,
+    simulationState: null,
     simPosts: [],
     chatHistory: {},
   });
@@ -168,6 +171,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setAgentsGenerated = useCallback((gen: boolean) => setState(s => ({ ...s, agentsGenerated: gen })), []);
   const setSimulationRounds = useCallback((rounds: number) => setState(s => ({ ...s, simulationRounds: rounds })), []);
   const setSimulationComplete = useCallback((complete: boolean) => setState(s => ({ ...s, simulationComplete: complete })), []);
+  const setSimulationState = useCallback((simulationState: SetStateAction<SimulationState | null>) => setState(s => ({
+    ...s,
+    simulationState: typeof simulationState === 'function'
+      ? simulationState(s.simulationState)
+      : simulationState,
+  })), []);
   const setSimPosts = useCallback((posts: SimPost[]) => setState(s => ({ ...s, simPosts: posts })), []);
   const addChatMessage = useCallback((threadId: string, role: 'user' | 'agent', content: string, sourceAgentId?: string) => {
     setState(s => ({
@@ -213,6 +222,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAgentsGenerated,
     setSimulationRounds,
     setSimulationComplete,
+    setSimulationState,
     setSimPosts,
     addChatMessage,
   }), [
@@ -247,6 +257,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAgentsGenerated,
     setSimulationRounds,
     setSimulationComplete,
+    setSimulationState,
     setSimPosts,
     addChatMessage,
   ]);
