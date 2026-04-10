@@ -21,6 +21,7 @@ from mckainsey.services.config_service import ConfigService
 from mckainsey.services.demo_service import DemoService
 from mckainsey.services.document_parser import extract_document_text
 from mckainsey.services.lightrag_service import LightRAGService, OCCUPATION_NAMES, PLANNING_AREA_NAMES
+from mckainsey.services.knowledge_stream_service import KnowledgeStreamService
 from mckainsey.services.memory_service import MemoryService
 from mckainsey.services.metrics_service import MetricsService
 from mckainsey.services.model_provider_service import (
@@ -59,6 +60,7 @@ class ConsoleService:
             download_workers=settings.nemotron_download_workers,
         )
         self.streams = SimulationStreamService(settings)
+        self.knowledge_streams = KnowledgeStreamService(settings)
         self.demo = DemoService(settings)
         self._ensure_session_config_table()
         self._ensure_session_token_usage_table()
@@ -818,6 +820,18 @@ class ConsoleService:
                 detail="Provide document_text/documents or set use_default_demo_document=true.",
             )
 
+        self.knowledge_streams.reset(session_id)
+        self.knowledge_streams.append_events(
+            session_id,
+            [
+                {
+                    "event_type": "knowledge_started",
+                    "session_id": session_id,
+                    "document_count": len(resolved_documents),
+                }
+            ],
+        )
+
         runtime_settings = self._runtime_settings_for_session(session_id)
         unavailable_model_hint = provider_model_unavailability_hint(
             runtime_settings.llm_provider,
@@ -833,19 +847,70 @@ class ConsoleService:
         lightrag = LightRAGService(runtime_settings)
         try:
             artifacts: list[dict[str, Any]] = []
-            for item in resolved_documents:
+            for index, item in enumerate(resolved_documents, start=1):
+                document_id = f"doc-{uuid.uuid4()}"
+                self.knowledge_streams.append_events(
+                    session_id,
+                    [
+                        {
+                            "event_type": "knowledge_document_started",
+                            "session_id": session_id,
+                            "document_id": document_id,
+                            "document_index": index,
+                            "document_count": len(resolved_documents),
+                            "source_path": item.get("source_path"),
+                        }
+                    ],
+                )
+
+                async def emit_knowledge_event(event_type: str, payload: dict[str, Any]) -> None:
+                    self.knowledge_streams.append_events(
+                        session_id,
+                        [
+                            {
+                                "event_type": event_type,
+                                "session_id": session_id,
+                                "document_index": index,
+                                "document_count": len(resolved_documents),
+                                **payload,
+                            }
+                        ],
+                    )
+
                 artifact = await lightrag.process_document(
                     simulation_id=session_id,
                     document_text=str(item.get("document_text") or ""),
                     source_path=str(item.get("source_path")) if item.get("source_path") else None,
+                    document_id=document_id,
                     guiding_prompt=resolved_guiding_prompt,
                     demographic_focus=demographic_focus,
                     live_mode=live_mode,
+                    event_callback=emit_knowledge_event,
                 )
                 artifacts.append(artifact)
         except HTTPException:
+            self.knowledge_streams.append_events(
+                session_id,
+                [
+                    {
+                        "event_type": "knowledge_failed",
+                        "session_id": session_id,
+                        "detail": "Knowledge extraction failed.",
+                    }
+                ],
+            )
             raise
         except Exception as exc:  # noqa: BLE001
+            self.knowledge_streams.append_events(
+                session_id,
+                [
+                    {
+                        "event_type": "knowledge_failed",
+                        "session_id": session_id,
+                        "detail": str(exc).strip() or exc.__class__.__name__,
+                    }
+                ],
+            )
             detail = self._format_runtime_failure_detail(
                 session_id,
                 exc,
@@ -861,6 +926,18 @@ class ConsoleService:
         )
         self.store.save_knowledge_artifact(session_id, artifact)
         self.store.upsert_console_session(session_id=session_id, mode=session.get("mode", "demo") if session else "demo", status="knowledge_ready")
+        self.knowledge_streams.append_events(
+            session_id,
+            [
+                {
+                    "event_type": "knowledge_completed",
+                    "session_id": session_id,
+                    "document_count": len(resolved_documents),
+                    "total_nodes": len(artifact.get("entity_nodes", [])),
+                    "total_edges": len(artifact.get("relationship_edges", [])),
+                }
+            ],
+        )
         return artifact
 
     async def process_uploaded_knowledge(

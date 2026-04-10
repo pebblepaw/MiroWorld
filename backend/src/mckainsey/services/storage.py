@@ -97,6 +97,20 @@ class SimulationStore:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS knowledge_stream_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_json TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS knowledge_state_snapshots (
+                    session_id TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS memory_sync_state (
                     simulation_id TEXT PRIMARY KEY,
                     last_interaction_id INTEGER NOT NULL DEFAULT 0,
@@ -482,6 +496,25 @@ class SimulationStore:
                 ],
             )
 
+    def append_knowledge_events(self, session_id: str, events: list[dict[str, Any]]) -> None:
+        if not events:
+            return
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO knowledge_stream_events(session_id, event_type, event_json)
+                VALUES(?, ?, ?)
+                """,
+                [
+                    (
+                        session_id,
+                        str(event.get("event_type", "unknown")),
+                        json.dumps(event, ensure_ascii=False),
+                    )
+                    for event in events
+                ],
+            )
+
     def list_simulation_events(self, session_id: str, limit: int | None = None) -> list[dict[str, Any]]:
         sql = "SELECT id, event_type, event_json FROM simulation_events WHERE session_id = ? ORDER BY id"
         params: tuple[Any, ...]
@@ -499,9 +532,29 @@ class SimulationStore:
             payloads.append(event)
         return payloads
 
+    def list_knowledge_events(self, session_id: str, limit: int | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT id, event_type, event_json FROM knowledge_stream_events WHERE session_id = ? ORDER BY id"
+        params: tuple[Any, ...] = (session_id,)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (session_id, limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        payloads: list[dict[str, Any]] = []
+        for row in rows:
+            event = json.loads(row["event_json"])
+            event["id"] = row["id"]
+            event["event_type"] = row["event_type"]
+            payloads.append(event)
+        return payloads
+
     def clear_simulation_events(self, session_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM simulation_events WHERE session_id = ?", (session_id,))
+
+    def clear_knowledge_events(self, session_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM knowledge_stream_events WHERE session_id = ?", (session_id,))
 
     def save_simulation_state_snapshot(self, session_id: str, state: dict[str, Any]) -> None:
         with self._connect() as conn:
@@ -516,6 +569,17 @@ class SimulationStore:
                 (session_id, json.dumps(state, ensure_ascii=False)),
             )
 
+    def save_knowledge_state_snapshot(self, session_id: str, state: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO knowledge_state_snapshots(session_id, state_json)
+                VALUES(?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET state_json = excluded.state_json
+                """,
+                (session_id, json.dumps(state, ensure_ascii=False)),
+            )
+
     def get_simulation_state_snapshot(self, session_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -526,9 +590,23 @@ class SimulationStore:
             return None
         return json.loads(row["state_json"])
 
+    def get_knowledge_state_snapshot(self, session_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT state_json FROM knowledge_state_snapshots WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["state_json"])
+
     def clear_simulation_state_snapshot(self, session_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM simulation_state_snapshots WHERE session_id = ?", (session_id,))
+
+    def clear_knowledge_state_snapshot(self, session_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM knowledge_state_snapshots WHERE session_id = ?", (session_id,))
 
     def clear_report_cache(self, simulation_id: str) -> None:
         with self._connect() as conn:

@@ -406,14 +406,16 @@ class LightRAGService:
         simulation_id: str,
         document_text: str,
         source_path: str | None,
+        document_id: str | None = None,
         guiding_prompt: str | None = None,
         demographic_focus: str | None = None,
         live_mode: bool = False,
+        event_callback=None,
     ) -> dict[str, Any]:
         await self.ensure_ready()
         assert self._rag is not None
 
-        document_id = f"doc-{uuid.uuid4()}"
+        document_id = document_id or f"doc-{uuid.uuid4()}"
         file_paths = [source_path] if source_path else None
 
         provider = str(self._settings.llm_provider or "").strip().lower()
@@ -441,8 +443,68 @@ class LightRAGService:
                 processing_logs.append(
                     f"Trimmed fallback extraction text from {len(document_text)} to {len(fallback_graph_text)} chars"
                 )
+        chunks = _chunk_document_text(ingestion_text)
+        processing_logs.append(f"Split ingestion into {len(chunks)} chunk(s).")
 
-        await self._rag.ainsert([ingestion_text], ids=[document_id], file_paths=file_paths)
+        merged_nodes: dict[str, dict[str, Any]] = {}
+        merged_edges: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+        for chunk_index, chunk_text in enumerate(chunks, start=1):
+            chunk_id = f"{document_id}-chunk-{chunk_index:03d}"
+            if event_callback is not None:
+                await event_callback(
+                    "knowledge_chunk_started",
+                    {
+                        "document_id": document_id,
+                        "chunk_index": chunk_index,
+                        "chunk_count": len(chunks),
+                    },
+                )
+
+            await self._rag.ainsert([chunk_text], ids=[chunk_id], file_paths=file_paths)
+            native_graph = await _load_document_native_graph(self._rag, chunk_id)
+            chunk_nodes: list[dict[str, Any]] = []
+            chunk_edges: list[dict[str, Any]] = []
+            if native_graph and (native_graph.nodes or native_graph.edges):
+                graph_payload = _adapt_native_lightrag_graph(native_graph)
+                chunk_nodes = graph_payload["entity_nodes"]
+                chunk_edges = graph_payload["relationship_edges"]
+
+            node_delta = _new_node_delta(merged_nodes, chunk_nodes)
+            edge_delta = _new_edge_delta(merged_edges, chunk_edges)
+
+            for node in chunk_nodes:
+                node_id = str(node.get("id") or "").strip()
+                if node_id:
+                    merged_nodes[node_id] = node
+            for edge in chunk_edges:
+                edge_key = _edge_identity(edge)
+                if edge_key is not None:
+                    merged_edges[edge_key] = edge
+
+            if event_callback is not None:
+                await event_callback(
+                    "knowledge_partial",
+                    {
+                        "document_id": document_id,
+                        "chunk_index": chunk_index,
+                        "chunk_count": len(chunks),
+                        "entity_nodes": node_delta,
+                        "relationship_edges": edge_delta,
+                        "total_nodes": len(merged_nodes),
+                        "total_edges": len(merged_edges),
+                    },
+                )
+                await event_callback(
+                    "knowledge_chunk_completed",
+                    {
+                        "document_id": document_id,
+                        "chunk_index": chunk_index,
+                        "chunk_count": len(chunks),
+                        "node_delta_count": len(node_delta),
+                        "edge_delta_count": len(edge_delta),
+                    },
+                )
 
         summary_prompt = (
             "Summarize this policy document in neutral third-person with key entities, "
@@ -471,11 +533,9 @@ class LightRAGService:
 
         graph_origin = "lightrag_native"
         processing_logs.insert(0, f"Inserted document {document_id} into LightRAG")
-        native_graph = await _load_document_native_graph(self._rag, document_id)
-        if native_graph and (native_graph.nodes or native_graph.edges):
-            graph_payload = _adapt_native_lightrag_graph(native_graph)
-            entity_nodes = graph_payload["entity_nodes"]
-            relationship_edges = graph_payload["relationship_edges"]
+        entity_nodes = list(merged_nodes.values())
+        relationship_edges = list(merged_edges.values())
+        if entity_nodes or relationship_edges:
             processing_logs.append(
                 f"Adapted LightRAG entity graph ({len(entity_nodes)} nodes, {len(relationship_edges)} edges)"
             )
@@ -1374,6 +1434,62 @@ def _finalize_graph_payload(
         )
 
     return nodes, edges
+
+
+def _chunk_document_text(document_text: str, target_words: int = 500) -> list[str]:
+    paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n+", document_text.strip()) if paragraph.strip()]
+    if not paragraphs:
+        stripped = document_text.strip()
+        return [stripped] if stripped else [document_text]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_words = 0
+    for paragraph in paragraphs:
+        paragraph_words = len(paragraph.split())
+        if current and current_words + paragraph_words > target_words:
+            chunks.append("\n\n".join(current))
+            current = [paragraph]
+            current_words = paragraph_words
+            continue
+        current.append(paragraph)
+        current_words += paragraph_words
+
+    if current:
+        chunks.append("\n\n".join(current))
+    return chunks
+
+
+def _edge_identity(edge: dict[str, Any]) -> tuple[str, str, str] | None:
+    source = str(edge.get("source") or "").strip()
+    target = str(edge.get("target") or "").strip()
+    relation = str(edge.get("label") or edge.get("type") or "").strip()
+    if not source or not target or not relation:
+        return None
+    return (source, target, relation)
+
+
+def _new_node_delta(existing: dict[str, dict[str, Any]], candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    delta: list[dict[str, Any]] = []
+    for node in candidates:
+        node_id = str(node.get("id") or "").strip()
+        if not node_id or node_id in existing:
+            continue
+        delta.append(node)
+    return delta
+
+
+def _new_edge_delta(
+    existing: dict[tuple[str, str, str], dict[str, Any]],
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    delta: list[dict[str, Any]] = []
+    for edge in candidates:
+        edge_key = _edge_identity(edge)
+        if edge_key is None or edge_key in existing:
+            continue
+        delta.append(edge)
+    return delta
 
 
 def _extract_keywords(text: str) -> list[str]:

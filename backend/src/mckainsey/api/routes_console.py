@@ -49,6 +49,7 @@ from mckainsey.models.console import (
 from mckainsey.services.config_service import ConfigService
 from mckainsey.services.console_service import ConsoleService
 from mckainsey.services.demo_service import DemoService
+from mckainsey.services.knowledge_stream_service import KnowledgeStreamService
 from mckainsey.services.scrape_service import ScrapeService
 from mckainsey.services.simulation_stream_service import SimulationStreamService
 
@@ -273,6 +274,27 @@ async def upload_knowledge(
         demographic_focus=demographic_focus,
     )
     return KnowledgeArtifactResponse(**payload)
+
+
+@router.get("/session/{session_id}/knowledge/stream")
+def knowledge_stream(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        knowledge = demo_service.get_knowledge_artifact(session_id) or {}
+
+        def demo_sse_iter():
+            yield (
+                "event: knowledge_completed\n"
+                f"data: {json.dumps({'session_id': session_id, 'document_count': 1, 'total_nodes': len(knowledge.get('entity_nodes', [])), 'total_edges': len(knowledge.get('relationship_edges', []))}, ensure_ascii=False)}\n\n"
+            )
+
+        return StreamingResponse(demo_sse_iter(), media_type="text/event-stream")
+
+    stream = KnowledgeStreamService(settings).sse_iter(session_id)
+    return StreamingResponse(stream, media_type="text/event-stream")
 
 
 @router.post("/session/{session_id}/scrape", response_model=ConsoleScrapeResponse)
