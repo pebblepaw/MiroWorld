@@ -186,6 +186,7 @@ export default function Simulation() {
   const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
   const streamRef = useRef<EventSource | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
+  const feedSessionRef = useRef<string | null>(sessionId);
   const hydratedFeedRef = useRef(false);
   const hydratedStateSessionRef = useRef<string | null>(null);
   const controversyBoost = controversyBoostEnabled ? 0.5 : 0;
@@ -247,19 +248,27 @@ export default function Simulation() {
   }, [feedThreads.length]);
 
   useEffect(() => {
-    if (feedThreads.length === 0) {
+    if (!sessionId || feedSessionRef.current !== sessionId || feedThreads.length === 0) {
       return;
     }
     setSimPosts(
       feedThreads.map((thread) => toSimPost(thread, agents)),
     );
-  }, [agents, feedThreads, setSimPosts]);
+  }, [agents, feedThreads, sessionId, setSimPosts]);
 
   useEffect(() => {
+    closeStream();
+    feedSessionRef.current = sessionId;
     hydratedFeedRef.current = false;
+    hydratedStateSessionRef.current = null;
     setExpandedReplies({});
-    setFeedThreads(simPosts.map((post) => simPostToFeedThread(post)));
-  }, [sessionId]);
+    setSelectedRound("all");
+    setSortBy("new");
+    setControversyBoostEnabled(false);
+    setLoading(false);
+    setError(null);
+    setFeedThreads([]);
+  }, [closeStream, sessionId]);
 
   useEffect(() => {
     if (hydratedFeedRef.current) {

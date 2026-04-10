@@ -139,12 +139,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (s.sessionId === sessionId) {
       return s;
     }
+    const switchingExistingSessions = s.sessionId !== null && sessionId !== null;
+    if (!switchingExistingSessions) {
+      return {
+        ...s,
+        sessionId,
+      };
+    }
     return {
       ...s,
       sessionId,
+      uploadedFiles: [],
+      analysisQuestions: [],
+      knowledgeGraphReady: false,
+      knowledgeArtifact: null,
+      knowledgeLoading: false,
+      knowledgeError: null,
+      agentCount: 0,
+      sampleMode: 'affected_groups',
+      samplingInstructions: '',
+      sampleSeed: null,
+      populationArtifact: null,
+      populationLoading: false,
+      populationError: null,
+      agents: [],
+      agentsGenerated: false,
+      simulationRounds: 3,
       simulationComplete: false,
       simulationState: null,
       simPosts: [],
+      chatHistory: {},
     };
   }), []);
   const setCountry = useCallback((country: string) => setState(s => ({ ...s, country })), []);

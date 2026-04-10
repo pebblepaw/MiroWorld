@@ -109,6 +109,26 @@ function SimulationPostsProbe() {
   );
 }
 
+function SessionArtifactsProbe() {
+  const {
+    agentCount,
+    analysisQuestions,
+    sampleMode,
+    sampleSeed,
+    samplingInstructions,
+  } = useApp();
+
+  return (
+    <div>
+      <div data-testid="agent-count">{agentCount}</div>
+      <div data-testid="analysis-question-count">{analysisQuestions.length}</div>
+      <div data-testid="sample-mode">{sampleMode}</div>
+      <div data-testid="sample-seed">{sampleSeed === null ? "null" : String(sampleSeed)}</div>
+      <div data-testid="sampling-instructions">{samplingInstructions}</div>
+    </div>
+  );
+}
+
 function SeedPersistedSimulationPosts() {
   const {
     setSessionId,
@@ -245,6 +265,11 @@ function SeedHydratedSimulationState() {
 
 function SeedPersistedSimulationState() {
   const {
+    setAgentCount,
+    setAnalysisQuestions,
+    setSampleMode,
+    setSampleSeed,
+    setSamplingInstructions,
     setSessionId,
     setKnowledgeArtifact,
     setKnowledgeGraphReady,
@@ -283,6 +308,18 @@ function SeedPersistedSimulationState() {
     };
 
     setSessionId("session-screen3-persisted-state");
+    setAgentCount(142);
+    setAnalysisQuestions([
+      {
+        question: "Should the subsidy stay broad?",
+        type: "yes-no",
+        metric_name: "broad_subsidy_support",
+        report_title: "Broad subsidy support",
+      },
+    ]);
+    setSampleMode("population_baseline");
+    setSampleSeed(42);
+    setSamplingInstructions("Prioritize older households and active commuters.");
     setKnowledgeGraphReady(true);
     setKnowledgeArtifact({
       session_id: "session-screen3-persisted-state",
@@ -347,7 +384,35 @@ function SeedPersistedSimulationState() {
         ],
       },
     ]);
-  }, [setAgentsGenerated, setKnowledgeArtifact, setKnowledgeGraphReady, setPopulationArtifact, setSessionId, setSimPosts, setSimulationRounds, setSimulationState]);
+  }, [
+    setAgentCount,
+    setAgentsGenerated,
+    setAnalysisQuestions,
+    setKnowledgeArtifact,
+    setKnowledgeGraphReady,
+    setPopulationArtifact,
+    setSampleMode,
+    setSampleSeed,
+    setSamplingInstructions,
+    setSessionId,
+    setSimPosts,
+    setSimulationRounds,
+    setSimulationState,
+  ]);
+
+  return null;
+}
+
+function SeedDraftSessionInputs() {
+  const { setAgentCount, setSampleMode, setSampleSeed, setSamplingInstructions, setSessionId } = useApp();
+
+  useEffect(() => {
+    setAgentCount(88);
+    setSampleMode("population_baseline");
+    setSampleSeed(17);
+    setSamplingInstructions("Keep the current draft inputs.");
+    setSessionId("session-screen1-created");
+  }, [setAgentCount, setSampleMode, setSampleSeed, setSamplingInstructions, setSessionId]);
 
   return null;
 }
@@ -672,8 +737,56 @@ describe("Simulation", () => {
     );
 
     expect(await screen.findByText("Round 1 of 8")).toBeInTheDocument();
-    expect(screen.queryByText("Round 4 of 6")).not.toBeInTheDocument();
-    expect(screen.queryByText("Persisted thread title")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Round 4 of 6")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Persisted thread title")).not.toBeInTheDocument());
+  });
+
+  it("clears stale session-scoped input when switching between existing sessions", async () => {
+    render(
+      <AppProvider>
+        <SeedPersistedSimulationState />
+        <SessionSwitchHarness />
+        <SessionArtifactsProbe />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Round 4 of 6")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-count")).toHaveTextContent("142");
+    expect(screen.getByTestId("analysis-question-count")).toHaveTextContent("1");
+    expect(screen.getByTestId("sample-mode")).toHaveTextContent("population_baseline");
+    expect(screen.getByTestId("sample-seed")).toHaveTextContent("42");
+    expect(screen.getByTestId("sampling-instructions")).toHaveTextContent("Prioritize older households and active commuters.");
+
+    fireEvent.click(screen.getByRole("button", { name: /switch session/i }));
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([request]) =>
+          String(request).includes("/api/v2/console/session/session-screen3-fresh/simulation/state"),
+        ),
+      ).toBe(true),
+    );
+
+    expect(screen.getByTestId("agent-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("analysis-question-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("sample-mode")).toHaveTextContent("affected_groups");
+    expect(screen.getByTestId("sample-seed")).toHaveTextContent("null");
+    expect(screen.getByTestId("sampling-instructions")).toHaveTextContent("");
+  });
+
+  it("preserves Screen 1 input when a session id is created from null", async () => {
+    render(
+      <AppProvider>
+        <SeedDraftSessionInputs />
+        <SessionArtifactsProbe />
+      </AppProvider>,
+    );
+
+    expect(screen.getByTestId("agent-count")).toHaveTextContent("88");
+    expect(screen.getByTestId("sample-mode")).toHaveTextContent("population_baseline");
+    expect(screen.getByTestId("sample-seed")).toHaveTextContent("17");
+    expect(screen.getByTestId("sampling-instructions")).toHaveTextContent("Keep the current draft inputs.");
   });
 
   it("sends a 0.5 controversy boost when the binary toggle is enabled", async () => {
