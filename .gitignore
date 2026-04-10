@@ -10,6 +10,8 @@ backend/tests/*
 /backend/tests/
 !backend/tests/
 !backend/tests/**
+backend/tests/**/__pycache__/
+backend/tests/**/*.pyc
 .worktrees/
 .pytest_cache/
 .ruff_cache/
