@@ -19,6 +19,8 @@ backend/data/lightrag/
 backend/backend/data/lightrag/
 data/
 !backend/data/
+!frontend/src/data/
+!frontend/src/data/**
 backend/data/*
 !backend/data/demo-output.json
 backend/benchmark_output.txt
