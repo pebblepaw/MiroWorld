@@ -1,7 +1,7 @@
 # McKAInsey V2 — Implementation Plan: Cloud Hosting, Memory Backend & Bug Fixes
 
-> Date: 2026-04-09  
-> Status: Draft for review — contains decision points marked with ❓  
+> Date: 2025-07-09  
+> Status: **FINAL** — all decisions locked, ready for implementation  
 > Author: Agent handoff document  
 
 ---
@@ -16,8 +16,10 @@
 6. [Code Versioning Strategy](#6-code-versioning-strategy)
 7. [Bug Fixes](#7-bug-fixes)
 8. [Local Deployment: Source Code vs Docker](#8-local-deployment-source-code-vs-docker)
-9. [Implementation Phases](#9-implementation-phases)
-10. [Open Questions for Owner](#10-open-questions-for-owner)
+9. [Free & Paid Tier Configuration](#9-free--paid-tier-configuration)
+10. [LightRAG Real-Time Graph Streaming](#10-lightrag-real-time-graph-streaming)
+11. [Implementation Phases](#11-implementation-phases)
+12. [Decisions Log](#12-decisions-log)
 
 ---
 
@@ -25,12 +27,16 @@
 
 This plan addresses four interconnected concerns:
 
-| Concern | Finding | Recommendation |
-|:--------|:--------|:---------------|
-| Is Graphiti working? | **No.** Graphiti is not writing memory during simulation, and lazy-sync during chat is fragile. | Replace with simpler SQLite-based retrieval or adopt Zep Cloud for hosted version |
-| Do we need Graphiti? | **Not for typical workloads** (50–200 agents, 5–10 rounds). SQLite handles it fine. For 1000+ agents with hundreds of rounds, a graph DB adds value. | Phase out Graphiti for now; design for optional graph backend later |
-| Cloud hosting | **Yes, BYOK makes this feasible and cheap.** | AWS ECS Fargate + RDS/S3, or simpler Railway/Fly.io path |
+| Concern | Finding | Decision |
+|:--------|:--------|:---------|
+| Is Graphiti working? | **No.** Graphiti is not writing memory during simulation, and lazy-sync during chat is fragile. | **Remove entirely.** Delete all Graphiti code, use SQLite FTS5 locally and PostgreSQL FTS for cloud. |
+| Do we need Graphiti? | **Not for typical workloads** (50–200 agents, 5–10 rounds). SQLite handles it fine. | **No.** Phase out completely. DuckDB stays for persona sampling only. |
+| Cloud hosting | **Yes, BYOK makes this feasible and cheap.** | **AWS ECS Fargate + RDS PostgreSQL + S3.** Uses existing $200 credits. |
 | Screen 3 state persistence bug | **Frontend-only bug.** `simulationState` is local component state, destroyed on navigation. | Move `simulationState` to AppContext |
+| Authentication | OAuth is simplest with no password management | **OAuth (Google/GitHub) + Magic link** |
+| Payment | Stripe has zero upfront cost | **Stripe** with free/paid tiers |
+| Open source strategy | Both is standard (GitLab, Supabase, n8n) | **Both** — open source (AGPL) + hosted cloud version |
+| LightRAG streaming | Current batch processing blocks UI | **Phase 1–2** — chunked ingestion with SSE graph streaming |
 
 ---
 
@@ -119,7 +125,7 @@ This is a strong differentiator for the hosted version. The onboarding flow woul
 
 **Caveat:** Free models have rate limits and may be slow. You should test simulation quality with free OpenRouter models before promising this path.
 
-❓ **Decision needed:** Do you want to pursue the hosted version now, or focus on stabilizing the open-source version first? The hosted version requires solving hosting, auth, multi-tenancy, and payment (even if free tier).
+**✅ Decision: Both** — open source (AGPL) first, then hosted cloud version. This is standard for open-source SaaS (GitLab, Supabase, n8n, MiroFish). AGPL license protects the hosted offering by requiring anyone hosting a modified version to open-source their changes.
 
 ---
 
@@ -138,13 +144,36 @@ Math: 1000 agents × 100 rounds × 3 interactions = 300,000 interactions. At ~20
 - Temporal relationship traversal ("how did Agent Y's opinions evolve?")
 - Cross-agent relationship mapping
 
-**Recommendation: Phase out Graphiti now, design for optional graph backend later.**
+**Decision: Remove Graphiti entirely. Use SQLite locally, PostgreSQL on cloud.**
 
-### 4.2 Proposed Memory Architecture
+### 4.2 Memory Architecture (Decided)
 
-#### Option A: SQLite-Only Memory (Recommended for Phase 1)
+| Environment | Storage | Search Method |
+|:------------|:--------|:--------------|
+| **Local (source code & Docker)** | SQLite with FTS5 | Full-text search + agent-scoped queries |
+| **Cloud (AWS hosted)** | PostgreSQL with `tsvector` FTS | Full-text search + row-level security per user |
 
-The simulation already writes everything to SQLite. The chat grounding just needs better retrieval from SQLite:
+#### Why Not Zep Cloud?
+
+MiroFish uses Zep Cloud for semantic memory, but adding Zep means:
+- Free users would need to sign up for yet another API key (Zep Cloud) — bad UX for non-technical users
+- Paid tier would need us to absorb Zep Cloud costs
+- PostgreSQL full-text search covers our needs without external dependencies
+
+**Decision: No Zep. PostgreSQL FTS for cloud, SQLite FTS5 for local. Simpler for everyone.**
+
+#### Why Not DuckDB for Memory?
+
+DuckDB is already used in our codebase for persona sampling (`persona_sampler.py` queries HuggingFace parquet datasets), and it's excellent at that — OLAP workloads with bulk column scans. However, for the memory/chat workload:
+
+- Memory operations are **OLTP** — insert 1 row at a time during simulation, read 1 agent's history during chat
+- DuckDB is optimized for scanning millions of rows in aggregate, not single-row lookups — **SQLite is faster** for this pattern
+- DuckDB's S3 extension reads Parquet files on S3 — it's not a hosted database and can't replace PostgreSQL for multi-tenant concurrent access
+- DuckDB stays where it is (persona sampling) but shouldn't expand to memory/chat
+
+#### Local Memory: SQLite FTS5
+
+The simulation already writes everything to SQLite. The chat grounding needs better retrieval:
 
 ```
 Simulation → SQLite (interactions, checkpoints)
@@ -160,43 +189,30 @@ Implementation:
 3. For group chat: query interactions by thread/topic relevance
 4. Construct memory prompt section with: agent's posts, comments received, checkpoint answers
 
-**Advantages:**
-- Zero additional infrastructure (no FalkorDB, no Docker)
-- Already have all the data in SQLite
-- Works identically local and hosted
-- Can handle 1000+ agents easily
+#### Cloud Memory: PostgreSQL FTS
 
-**What MiroFish's Zep does that we'd replicate in SQLite:**
-- ✅ Full-text search of agent activities — SQLite FTS5
-- ✅ Agent-scoped memory — WHERE agent_id = ?
-- ✅ Temporal ordering — ORDER BY timestamp
-- ✅ Episode grouping — GROUP BY round_num
-- ❌ Semantic similarity — not available in SQLite alone (but can use LLM reranking)
-- ❌ Entity/relationship extraction — not available (but not critical for chat grounding)
+Same queries, translated to PostgreSQL:
 
-#### Option B: SQLite + Zep Cloud (For Hosted Version)
+```sql
+-- PostgreSQL equivalent of SQLite FTS5
+ALTER TABLE interactions ADD COLUMN content_tsv tsvector
+  GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+CREATE INDEX idx_interactions_fts ON interactions USING GIN (content_tsv);
 
-For the cloud-hosted version, Zep Cloud could be re-introduced as an optional premium feature:
-
-```
-Simulation → SQLite + ZepGraphMemoryUpdater (background thread, à la MiroFish)
-                ↓
-Chat Query → Zep Cloud semantic search (primary) + SQLite (fallback)
+-- Search
+SELECT * FROM interactions
+WHERE content_tsv @@ plainto_tsquery('english', $1)
+  AND session_id = $2 AND agent_id = $3
+ORDER BY ts_rank(content_tsv, plainto_tsquery('english', $1)) DESC;
 ```
 
-This follows MiroFish's proven architecture exactly. Zep Cloud's free tier (see https://app.getzep.com/) may be sufficient for moderate usage.
+The backend should abstract this behind a `MemoryStore` interface so SQLite and PostgreSQL use the same API.
 
-#### Option C: Keep Graphiti but Fix It (Not Recommended)
+#### Migration Path
 
-Would require:
-1. Writing a real-time ingestion worker (like MiroFish's `ZepGraphMemoryUpdater`)
-2. Running FalkorDB as infrastructure
-3. Handling FalkorDB ops (backups, scaling, monitoring)
-4. Testing across all provider/model combinations
-
-This adds significant complexity for marginal benefit over SQLite FTS5.
-
-❓ **Decision needed:** Option A (SQLite-only, simplest) or Option A+B (SQLite for local, Zep Cloud for hosted)?
+The backend should support both via a `DATABASE_URL` env var:
+- `sqlite:///data/sessions.db` → SQLite (local)
+- `postgresql://user:pass@host/db` → PostgreSQL (cloud)
 
 ### 4.3 Agent Memory Prompt Design
 
@@ -240,7 +256,7 @@ Since McKAInsey is a BYOK (Bring Your Own Key) service, the hosting costs are pr
                     ┌─────────────────────────────────────────────┐
                     │              AWS Cloud (us-east-1)          │
                     │                                             │
-   User ──HTTPS──▶ │  CloudFront (CDN)                           │
+   User ──HTTPS──▶  │  CloudFront (CDN)                           │
                     │      │                                      │
                     │      ├── S3 (Static Frontend)               │
                     │      │     React build artifacts            │
@@ -299,7 +315,7 @@ If AWS feels too complex, two simpler alternatives:
 
 These are "push and it works" platforms. No ALB, no Route 53, no CloudFront configuration. They handle SSL, DNS, and containers for you.
 
-❓ **Decision needed:** AWS (more control, uses your credits) or Railway/Fly.io (simpler, cheaper at low scale)?
+**✅ Decision: AWS ECS Fargate** — uses existing $200 credits, runs existing Docker containers as-is, with PostgreSQL RDS for multi-tenancy. Railway/Fly.io are documented as fallback options but not the primary path.
 
 ### 5.6 Why NOT Vercel / GitHub Pages
 
@@ -319,13 +335,17 @@ For a BYOK hosted service, you need:
 
 Current state: The backend is single-tenant (one SQLite database for everything). For multi-tenant hosting:
 
-| Approach | Complexity | Isolation |
-|:---------|:-----------|:----------|
-| **Per-user SQLite DB** | Low | Good — separate files per user |
-| **PostgreSQL with row-level security** | Medium | Best — standard multi-tenant pattern |
-| **Separate container per user** | High | Perfect isolation but expensive |
+**Decision: PostgreSQL with row-level security from day 1.**
 
-**Recommendation:** Start with per-user SQLite databases on EFS. Migrate to PostgreSQL if you exceed ~100 concurrent users.
+| Component | Implementation |
+|:----------|:--------------|
+| User isolation | Row-level security policies on all tables: `WHERE user_id = current_setting('app.user_id')` |
+| Session isolation | All queries scoped to `user_id` + `session_id` |
+| API key security | BYOK keys encrypted with server-side `ENCRYPTION_KEY` env var, never logged |
+| Session cleanup | Cron job: delete sessions + data older than retention period (14 days free, unlimited paid) |
+| Rate limiting | Per-user request throttling via middleware |
+
+Estimated cost: AWS RDS PostgreSQL `db.t4g.micro` = ~$15/month.
 
 ---
 
@@ -346,10 +366,10 @@ What needs to change for cloud deployment:
 |:--------|:------|:-------|:---------------|
 | Frontend serving | Vite dev server | S3 + CloudFront (or container) | Build step produces static assets |
 | Backend | `uvicorn` direct | `uvicorn` in container (same) | No change needed |
-| Database | SQLite file | SQLite on EFS (or PostgreSQL) | `DATABASE_URL` env var |
+| Database | SQLite file | PostgreSQL (RDS) | `DATABASE_URL` env var |
 | File uploads | Local filesystem | EFS or S3 | `UPLOAD_STORAGE=local|s3` env var |
-| Auth | None (local user) | API key or OAuth | Add auth middleware, gated by `AUTH_ENABLED` env var |
-| Memory backend | SQLite FTS5 | SQLite FTS5 (or Zep Cloud) | `MEMORY_BACKEND=sqlite|zep` env var |
+| Auth | None (local user) | OAuth + Magic link | Add auth middleware, gated by `AUTH_ENABLED` env var |
+| Memory backend | SQLite FTS5 | PostgreSQL FTS | Same `DATABASE_URL` — abstracted behind `MemoryStore` interface |
 | OASIS runtime | Local Python 3.11 | Container sidecar | Already handled by Docker Compose |
 
 **One codebase, configuration-driven deployment.** The `docker-compose.yml` already demonstrates this pattern.
@@ -412,31 +432,27 @@ useEffect(() => {
 
 **Estimated effort:** 1–2 hours.
 
-### 7.2 Graphiti Cleanup (Priority: MEDIUM)
+### 7.2 Graphiti Removal (Priority: HIGH)
 
 **Problem:** Dead Graphiti code adds complexity, confuses new contributors, and masks the real memory retrieval path.
 
-**Fix (Phase 1 — Simplify):**
+**Decision: Remove Graphiti entirely.** No flag, no optional mode — clean deletion.
 
-1. Set `MEMORY_BACKEND=sqlite` as the default
-2. In `MemoryService.agent_chat_realtime()`, skip Graphiti entirely when backend is `sqlite`
-3. Implement proper SQLite-based agent context retrieval:
-   - Query `interactions` WHERE `agent_id = ?` ORDER BY `created_at` DESC LIMIT 50
-   - Query `simulation_checkpoints` WHERE `agent_id = ?`
-   - Format into structured memory prompt (see Section 4.3)
+**Files to modify/delete:**
 
-4. Keep Graphiti code behind `MEMORY_BACKEND=graphiti` flag for future use, but mark as experimental
+1. **Delete `backend/src/mckainsey/services/graphiti_service.py`** — entire file
+2. **Rewrite `backend/src/mckainsey/services/memory_service.py`**:
+   - Remove all `_search_graphiti_context()`, `_sync_to_graphiti()`, and Graphiti client initialization
+   - Remove `graphiti-core` imports
+   - Set `MEMORY_BACKEND` to always use `sqlite` (local) or `postgresql` (cloud), selected by `DATABASE_URL` env var
+   - Implement proper SQLite FTS5 / PostgreSQL FTS agent context retrieval (see Section 4.2)
+3. **Remove from `backend/pyproject.toml`**: Delete `"graphiti-core>=0.28.2"` dependency
+4. **Remove from `docker-compose.yml`**: Delete entire `falkordb` service block and `falkordb_data` volume
+5. **Remove from `quick_start.sh`**: Delete `ensure_falkordb_runtime()`, `falkordb_reachable()`, and all FalkorDB references
+6. **Remove from `.env`**: Delete any `FALKORDB_*` or `GRAPHITI_*` env vars
+7. **Also remove `"zep-cloud>=3.18.0"` from `pyproject.toml`** — no longer needed
 
-**Fix (Phase 2 — Optional, if you want Zep Cloud for hosted):**
-
-1. Add `MEMORY_BACKEND=zep` option
-2. Implement a `ZepMemoryWriter` that runs during simulation (like MiroFish's `ZepGraphMemoryUpdater`)
-3. Write every agent action to Zep Cloud in real-time during OASIS simulation
-4. For chat, use Zep Cloud search API
-
-**Estimated effort:**
-- Phase 1: 3–4 hours
-- Phase 2: 1–2 days
+**Estimated effort:** 3–4 hours (mostly in `memory_service.py` rewrite).
 
 ### 7.3 Chat Memory Quality (Priority: MEDIUM)
 
@@ -573,9 +589,9 @@ No Docker needed anywhere. This is the cleanest open-source experience.
 
 | Task | Detail | Effort |
 |:-----|:-------|:-------|
-| **Remove `falkordb` service** | Delete from `docker-compose.yml`. Remove `depends_on: falkordb` from backend. | 15 min |
-| **Fix Ollama connectivity** | Three options: (A) Add an `ollama` service to docker-compose that runs Ollama in a container, (B) use `network_mode: host` so containers can reach host Ollama, or (C) default Docker to OpenRouter/Gemini and tell users to set `LLM_BASE_URL=http://host.docker.internal:11434/v1/` if they want host Ollama. Option C is simplest. | 1 hr |
-| **Merge OASIS into backend container** | Currently `Dockerfile` is Python 3.12-only and `Dockerfile.oasis` is Python 3.11-only. Two options: (A) Keep the two-container split (current approach, but verify `oasis_server` module works), or (B) use a multi-stage Dockerfile that installs both Python 3.12 and 3.11 in one image. Option A is simpler if the sidecar already works. | 2–4 hr |
+| **Remove `falkordb` service** | Delete from `docker-compose.yml`. Remove `depends_on: falkordb` from backend. Remove `falkordb_data` volume. | 15 min |
+| **Fix Ollama connectivity** | **Decision: Option C.** Default Docker deployment to OpenRouter/Gemini (set in `.env.example`). Document that users who want host Ollama should set `LLM_BASE_URL=http://host.docker.internal:11434/v1/` in their `.env`. | 1 hr |
+| **Verify OASIS sidecar** | **Decision: Keep two-container split.** The OASIS sidecar (`Dockerfile.oasis`) already works. Verify `scripts.oasis_server` module runs correctly in the container and that the backend can reach it at `oasis-sidecar:8001`. | 1–2 hr |
 | **Add demo mode support** | Add `BOOT_MODE` env var to docker-compose. Pre-bake demo cache into the backend image (or mount a volume). Currently no way to run demo mode in Docker. | 2 hr |
 | **Create `.env.example`** | Same file as source code path — Docker reads it via `env_file: .env`. | (shared with above) |
 | **Add healthchecks** | Backend needs a `/health` endpoint check in docker-compose (frontend already uses Vite dev server which is fine). | 30 min |
@@ -669,124 +685,218 @@ Key changes from current: FalkorDB removed, healthcheck added, persistent volume
 | **Code changes needed** | Remove FalkorDB from quick_start, add docs | Fix docker-compose, add healthchecks, fix Ollama access |
 | **Estimated effort** | ~4 hours | ~6–8 hours |
 
-❓ **Decision needed (Q9):** Should both paths be ready for the initial open-source release, or ship source code first and add Docker support later? Docker adds ~6–8 hours of work but significantly lowers the barrier for non-developer users.
+**✅ Decision: Ship both.** Both source code and Docker paths will be ready for the initial open-source release. Docker is what turns "interesting GitHub repo" into "tool I actually tried".
 
 ---
 
-## 9. Implementation Phases
+## 9. Free & Paid Tier Configuration
 
-### Phase 1: Stabilize (1–2 days)
-*Goal: Fix bugs, simplify memory, ship a clean open-source version.*
+### 9.1 Tier Limits
+
+| Limit | Free Tier | Paid Tier |
+|:------|:----------|:----------|
+| Active sessions | 5 (new sessions override oldest) | Unlimited |
+| Agents per simulation | 100 | 1,000 |
+| Rounds per simulation | 10 | 50 |
+| Storage retention | 14 days | Unlimited |
+| LLM provider | BYOK (own API key) | BYOK (own API key) |
+| Memory backend | PostgreSQL FTS | PostgreSQL FTS |
+
+### 9.2 Frontend Enforcement
+
+The frontend sliders on Screen 2 (Agent Sampling) must respect tier limits:
+
+1. **Agent count slider**: Max capped at tier limit. If free user drags past 100, show toast: *"Free tier is limited to 100 agents. Upgrade for up to 1,000."*
+2. **Round count slider**: Max capped at tier limit. Same pattern.
+3. **Session management**: Add a **Past Sessions** screen (accessible from nav or Screen 0) showing:
+   - List of sessions with name, date, status (active/expired)
+   - If free user has 5 active sessions and starts a new one, show warning dialog: *"You have 5 active sessions. Starting a new one will replace your oldest session ({name}). Continue?"*
+   - Paid users see same screen but without the override warning
+
+### 9.3 Stripe Payment Integration
+
+**Why Stripe:** Zero upfront cost — Stripe only charges when someone pays you (2.9% + $0.30 per transaction). No monthly fees.
+
+**Implementation:**
+
+1. **Stripe Checkout**: Use Stripe's hosted checkout page (simplest integration). User clicks "Upgrade" → redirected to Stripe → pays → redirected back with `session_id`.
+2. **Webhook**: Stripe sends `checkout.session.completed` webhook to backend → backend sets `user.tier = 'paid'` in PostgreSQL.
+3. **Subscription model**: Monthly recurring ($X/month TBD). Stripe handles billing, invoices, cancellation.
+4. **Backend middleware**: Check `user.tier` on every API request. Inject tier limits into session config. Return `403` with upgrade prompt if free user exceeds limits.
+
+**Required env vars:**
+```
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRICE_ID=price_...        # The subscription price object
+```
+
+**Pricing TBD:** Owner needs to decide price point. Suggestion: $9–19/month for paid tier, since the main cost to you is PostgreSQL storage + compute, not LLM (BYOK).
+
+---
+
+## 10. LightRAG Real-Time Graph Streaming
+
+### 10.1 Current State
+
+LightRAG is used on Screen 1 (Policy Upload) to extract a knowledge graph from uploaded documents. Currently:
+- `LightRAGService.process_document()` ingests the entire document via `rag.ainsert()` (batch)
+- After ingestion, `_load_document_native_graph()` reads the full graph
+- Frontend receives the complete graph and renders it all at once via `react-force-graph-2d`
+
+### 10.2 Target: Stream Nodes As They're Discovered
+
+Like MiroFish's graph construction animation, nodes should appear incrementally as the document is processed:
+
+```
+Document → chunk into paragraphs
+    ↓
+For each chunk:
+    1. rag.ainsert(chunk)
+    2. Read new entities/relations from LightRAG KV stores
+    3. Compute delta (new nodes/edges since last chunk)
+    4. Send delta via SSE → frontend
+    ↓
+Frontend: react-force-graph-2d receives deltas, animates new nodes appearing
+```
+
+### 10.3 Implementation Plan
+
+**Backend changes:**
+
+1. **New SSE endpoint**: `GET /knowledge/stream/{session_id}` — mirrors existing `SimulationStreamService` pattern
+2. **Chunked ingestion**: Split document into paragraphs (~500 tokens each). For each chunk:
+   - Call `rag.ainsert(chunk)`
+   - Read `full_entities` and `full_relations` from LightRAG's KV stores
+   - Diff against previously known entities → emit new ones as SSE events
+3. **SSE event format**:
+   ```json
+   {"type": "node_added", "data": {"id": "...", "label": "Ministry of Finance", "type": "organization", "importance": 0.8}}
+   {"type": "edge_added", "data": {"source": "...", "target": "...", "label": "oversees"}}
+   {"type": "progress", "data": {"chunks_processed": 3, "total_chunks": 12}}
+   {"type": "complete", "data": {"total_nodes": 45, "total_edges": 67}}
+   ```
+
+**Frontend changes:**
+
+1. **Subscribe to SSE** instead of waiting for full response in `PolicyUpload.tsx`
+2. **Incrementally update** `react-force-graph-2d` `graphData` state — new nodes animate in with a pulse effect (CSS animation like MiroFish's `node-pulse`)
+3. **Progress indicator**: Show "Processing chunk 3/12..." overlay on the graph panel
+
+**Existing infrastructure to reuse:**
+- `SimulationStreamService` — SSE pattern for backend
+- `react-force-graph-2d` — already renders the knowledge graph with force simulation
+- `ForceGraph2D` component already supports dynamic `graphData` updates
+
+**Estimated effort:** 2–3 days.
+
+---
+
+## 11. Implementation Phases
+
+### Phase 1: Stabilize & Fix (1–2 days)
+*Goal: Fix bugs, remove Graphiti, clean up memory backend.*
 
 - [ ] **7.1** Fix Screen 3 state persistence (move `simulationState` to AppContext)
-- [ ] **7.2 Phase 1** Switch to SQLite-only memory backend, keep Graphiti as optional
-- [ ] **7.3** Implement proper SQLite-based agent memory retrieval for chat
-- [ ] Update `quick_start.sh` to not require FalkorDB by default
-- [ ] Run full E2E test: onboarding → knowledge → sampling → simulation → report → chat → analytics
-- [ ] Update documentation to reflect SQLite memory backend
+- [ ] **7.2** Remove Graphiti entirely: delete `graphiti_service.py`, strip from `memory_service.py`, remove `graphiti-core` and `zep-cloud` from `pyproject.toml`, remove FalkorDB from `docker-compose.yml` and `quick_start.sh`
+- [ ] **7.3** Implement proper SQLite FTS5 agent memory retrieval for chat
+- [ ] **10** Implement LightRAG real-time graph streaming (SSE chunked ingestion + frontend incremental rendering)
+- [ ] Verify `quick_start.sh --mode live` works end-to-end without FalkorDB
+- [ ] Run full E2E test: onboarding → knowledge (with streaming) → sampling → simulation → report → chat → analytics
+- [ ] Test with OpenRouter free models (`OpenRouter_API_Key` in `.env`) — verify simulation quality
 
 ### Phase 2: Open Source Prep (1–2 days)
-*Goal: Make the project ready for public GitHub release with both deployment paths.*
+*Goal: Make the project ready for public GitHub release with both source code and Docker deployment paths.*
 
-- [ ] Review and clean up `.env.example` with all required variables
-- [ ] Write clear README with setup instructions for: macOS, Linux, Docker
-- [ ] Add AGPL-3.0 LICENSE file
-- [ ] Add OpenRouter setup guide with screenshots
-- [ ] Remove any hardcoded paths, secrets, or personal credentials
-- [ ] **Source code path**: Remove FalkorDB dependency from `quick_start.sh`, document Python 3.11 requirement
-- [ ] **Docker path**: Update `docker-compose.yml` (remove FalkorDB, add healthchecks, fix Ollama access, add boot mode)
+- [ ] **SECURITY**: Rotate ALL API keys currently in `.env` (Gemini, OpenAI, OpenRouter, Zep, OneMap, DataGov). They have been in version control.
+- [ ] Create `.env.example` with all required variables, defaults, and explanations (no real keys)
+- [ ] Add `.env` to `.gitignore` if not already there
+- [ ] Write clear README (follow MiroFish style): project overview, screenshots, quick start (source code + Docker), LLM provider setup guides (Ollama, OpenRouter, Gemini, OpenAI)
+- [ ] Add AGPL-3.0 `LICENSE` file
+- [ ] **Source code path**: Remove all FalkorDB references from `quick_start.sh`, document Python 3.11 requirement
+- [ ] **Docker path**: Update `docker-compose.yml` — remove FalkorDB, add healthchecks, set `BOOT_MODE` env var, default LLM to OpenRouter/Gemini with doc for Ollama (`host.docker.internal`)
 - [ ] **Docker path**: Verify OASIS sidecar container works end-to-end
-- [ ] **Docker path**: Add production frontend build (nginx or caddy instead of Vite dev server)
+- [ ] **Docker path**: Add production frontend build stage (nginx serving static files instead of Vite dev server)
+- [ ] Remove any hardcoded paths, secrets, or personal credentials from all files
 - [ ] Add GitHub Actions CI for lint + test
-- [ ] Tag v2.0.0 release
+- [ ] Test both deployment paths on a clean machine (or clean Docker environment)
+- [ ] Tag `v2.0.0` release, push to public GitHub
 
-### Phase 3: Cloud Hosting MVP (3–5 days)
-*Goal: Deploy a working BYOK instance accessible via URL.*
+### Phase 3: GitHub Pages Demo (1 day)
+*Goal: Static demo site on GitHub Pages with cached data, like MiroFish.*
 
-- [ ] **Auth**: Add simple API-key-based auth middleware (`AUTH_ENABLED=true`)
-- [ ] **Multi-tenancy**: Scope all DB operations to `user_id`
-- [ ] **Storage**: Switch file uploads to S3 (env-configurable)
-- [ ] **Deployment**: Push to chosen hosting platform (AWS ECS or Railway)
-- [ ] **DNS/SSL**: Configure custom domain with HTTPS
-- [ ] **Monitoring**: Add basic health checks and error logging (CloudWatch or equivalent)
-- [ ] **Landing page**: Create onboarding page explaining BYOK + OpenRouter free tier
+- [ ] Build a demo cache: run a full simulation with representative policy document, capture all output (agents, posts, checkpoints, report, analytics, knowledge graph)
+- [ ] Configure frontend to load cached demo data when `VITE_BOOT_MODE=demo-static` — no backend calls, all data from bundled JSON
+- [ ] Create `gh-pages` branch with Vite production build + cached data
+- [ ] Configure GitHub Pages to serve from `gh-pages` branch
+- [ ] Add "Live Demo" badge/link to README
+- [ ] Verify demo works: all screens navigable, knowledge graph renders, simulation feed shows, report displays, analytics charts work
 
-### Phase 4: Enhancement (ongoing)
+### Phase 4: Cloud Hosting MVP — AWS (3–5 days)
+*Goal: Deploy a working BYOK instance with free + paid tiers.*
+
+**Infrastructure:**
+- [ ] Set up AWS account, configure `us-east-1` region
+- [ ] Create ECR repositories for backend + OASIS sidecar images
+- [ ] Set up RDS PostgreSQL (`db.t4g.micro`, ~$15/month)
+- [ ] Create S3 bucket for frontend static assets + uploaded documents
+- [ ] Set up CloudFront CDN pointing to S3 (frontend) + ALB (API)
+- [ ] Set up ECS Fargate cluster with backend + OASIS sidecar task definitions
+- [ ] Configure ALB with HTTPS (ACM certificate)
+- [ ] Set up Route 53 for custom domain
+- [ ] GitHub Actions CD pipeline: push to `main` → build Docker images → push to ECR → deploy to ECS
+
+**Backend changes for cloud:**
+- [ ] Add `DATABASE_URL` support: detect `postgresql://` → use asyncpg/psycopg, detect `sqlite://` → use current SQLite
+- [ ] Implement `MemoryStore` interface abstracting SQLite FTS5 and PostgreSQL FTS
+- [ ] Add database migrations (Alembic or simple SQL scripts) for PostgreSQL schema
+- [ ] **Auth**: OAuth (Google + GitHub) + Magic link via email. Use `AUTH_ENABLED=true` env var to gate. Library suggestion: `authlib` or direct OAuth2 flow.
+- [ ] **Multi-tenancy**: Add `user_id` column to all tables. Row-level security policies. Scope all queries.
+- [ ] **API key encryption**: Encrypt stored BYOK keys with `ENCRYPTION_KEY` env var (Fernet symmetric encryption)
+- [ ] **Upload storage**: `UPLOAD_STORAGE=s3` → store uploaded documents in S3 instead of local filesystem
+- [ ] **Health endpoint**: `GET /health` returning DB connectivity + service status (for ALB healthcheck)
+- [ ] **CORS**: Configure for hosted frontend domain
+- [ ] **Rate limiting**: Per-user request throttling middleware
+
+**Frontend changes for cloud:**
+- [ ] **Tier enforcement**: Cap agent/round sliders to tier limits. Show upgrade toast when free user exceeds limits.
+- [ ] **Session management screen**: List past sessions, show active count, warn on override for free tier (5 session limit)
+- [ ] **Auth UI**: Login screen with Google/GitHub OAuth buttons + magic link email input
+- [ ] **Upgrade flow**: "Upgrade to Pro" button → Stripe Checkout redirect → return to app with paid tier active
+
+**Stripe integration:**
+- [ ] Create Stripe account, configure product + price object (subscription, monthly billing)
+- [ ] Backend: `POST /billing/checkout` → create Stripe Checkout session, return URL
+- [ ] Backend: `POST /webhooks/stripe` → handle `checkout.session.completed`, `customer.subscription.deleted`
+- [ ] Store `user.tier` and `user.stripe_customer_id` in PostgreSQL
+- [ ] Frontend: redirect to Stripe Checkout on upgrade, handle return URL
+
+### Phase 5: Enhancement (ongoing)
 *Goal: Improve hosted experience based on user feedback.*
 
-- [ ] Rate limiting per user
-- [ ] Session auto-cleanup (delete sessions older than 30 days)
-- [ ] Optional Zep Cloud integration for premium memory
-- [ ] Usage analytics dashboard
+- [ ] Usage analytics dashboard (how many simulations run, popular LLM providers, etc.)
 - [ ] Multi-language support
+- [ ] Session sharing (share simulation results via public URL)
+- [ ] Webhook notifications (simulation complete, report ready)
+- [ ] Admin dashboard for monitoring users and usage
 
 ---
 
-## 10. Open Questions for Owner
+## 12. Decisions Log
 
-Please answer these so the next agent can execute without ambiguity:
+All decisions finalized — no open questions remain.
 
-### Architecture Decisions
-
-**Q1: Memory backend**  
-Option A: SQLite-only (simplest, works everywhere)  
-Option B: SQLite for local + Zep Cloud for hosted  
-Recommendation: Start with A, add B later if needed.  
-**Your choice:** ___
-
-**Q2: Hosting platform**  
-Option A: AWS ECS Fargate (~$35–50/month, uses your $200 credits, more control)  
-Option B: Railway (~$5–20/month, deploy in 10 minutes, simpler)  
-Option C: Fly.io (~$5–15/month, good container support, global)  
-Recommendation: B or C for MVP speed, migrate to A if you scale.  
-**Your choice:** ___
-
-**Q3: Open source first or hosted first?**  
-Option A: Stabilize → open source → then build hosted version  
-Option B: Build hosted version first, open source later  
-Recommendation: A — stabilize first, open source gives you community testing.  
-**Your choice:** ___
-
-### Product Decisions
-
-**Q4: Authentication for hosted version**  
-Option A: Email/password (traditional, you manage passwords)  
-Option B: OAuth only (Google/GitHub login, no password management)  
-Option C: Magic link (email-based, passwordless)  
-Recommendation: B (OAuth via GitHub/Google), simplest and most secure.  
-**Your choice:** ___
-
-**Q5: Free tier limits for hosted version**  
-What limits should free users have? Suggestions:  
-- Max sessions: 10 active  
-- Max agents per simulation: 100  
-- Max rounds: 10  
-- Storage retention: 30 days  
-**Your preferences:** ___
-
-**Q6: Do you want to test OpenRouter free models now?**  
-Before promising this path, we should verify simulation quality with free models. This requires running a full simulation with a free OpenRouter model and evaluating output quality.  
-**Your preference:** ___
-
-### Technical Decisions
-
-**Q7: Should we remove Graphiti code entirely or keep it behind a flag?**  
-Option A: Remove completely (cleaner codebase)  
-Option B: Keep behind `MEMORY_BACKEND=graphiti` flag (future flexibility)  
-Recommendation: B — low maintenance cost to keep it as an option.  
-**Your choice:** ___
-
-**Q8: Database for hosted multi-tenancy**  
-Option A: Per-user SQLite files on EFS (simple, works up to ~100 users)  
-Option B: PostgreSQL from day 1 (standard, scales better, costs $15/month for RDS)  
-Recommendation: A for MVP, migrate to B if/when needed.  
-**Your choice:** ___
-
-**Q9: Ship both source code and Docker for initial open-source release?**  
-Option A: Source code only first (faster to ship, ~4 hours of cleanup)  
-Option B: Both source code and Docker (adds ~6–8 hours, but lowers barrier for non-developers)  
-Recommendation: B — Docker is what turns "interesting GitHub repo" into "tool I actually tried". See Section 8 for full breakdown.  
-**Your choice:** ___
+| # | Topic | Decision | Rationale |
+|:--|:------|:---------|:----------|
+| Q1 | Memory backend | **SQLite FTS5 local + PostgreSQL FTS cloud. No Zep.** | Simplest stack, no external dependency. PostgreSQL FTS covers cloud memory needs without Zep's cost/complexity. |
+| Q2 | Hosting platform | **AWS ECS Fargate** | Uses existing $200 credits, more control, runs existing Docker containers as-is. |
+| Q3 | Open source vs hosted | **Both** — open source (AGPL) first, then hosted cloud | Standard approach (GitLab, Supabase, n8n). Community testing before cloud launch. |
+| Q4 | Authentication | **OAuth (Google/GitHub) + Magic link** | No password management, most secure, lowest friction. |
+| Q5 | Free tier limits | **5 sessions (override oldest), 100 agents, 10 rounds, 14 days retention** | See Section 9 for full tier config. Paid: 1,000 agents, 50 rounds, unlimited retention. |
+| Q6 | OpenRouter testing | **Yes, test now** | Key already in `.env`. Verify simulation quality with free models before promising path. |
+| Q7 | Graphiti code | **Remove entirely** | Graphiti is non-functional. Keeping dead code increases maintenance burden. See Section 7.2 for file list. |
+| Q8 | Database for multi-tenancy | **PostgreSQL from day 1** (RDS, ~$15/month) | Standard, scales better, enables RLS for multi-tenancy. No migration needed later. |
+| Q9 | Deployment packaging | **Ship both source code + Docker** | Docker lowers barrier for non-developers. See Section 8 for both paths. |
 
 ---
 
@@ -794,14 +904,18 @@ Recommendation: B — Docker is what turns "interesting GitHub repo" into "tool 
 
 ### Hosting Cost (Monthly, BYOK so no LLM costs)
 
-| Component | AWS ECS | Railway | Fly.io |
-|:----------|:--------|:--------|:-------|
+| Component | AWS ECS (chosen) | Railway | Fly.io |
+|:----------|:-----------------|:--------|:-------|
 | Compute (backend) | $15–30 | $5–10 | $5–10 |
 | Load balancer/routing | $16 | Included | Included |
-| Storage (EFS/Volume) | $1–5 | $1–5 | $1–5 |
+| PostgreSQL RDS (db.t3.micro) | $15 | $5–10 | $5–10 |
+| S3 / Storage | $1–5 | $1–5 | $1–5 |
 | CDN/Frontend | $1 | Included | N/A |
 | SSL/Domain | Free | Free | Free |
-| **Total** | **$33–52** | **$6–15** | **$6–15** |
+| Stripe fees | 2.9% + $0.30/txn | — | — |
+| **Total (infra)** | **$48–67** | **$11–25** | **$11–25** |
+
+> Note: $200 AWS credits cover ~3–4 months of operation.
 
 ### LLM Cost to Users (BYOK)
 
@@ -814,18 +928,22 @@ Recommendation: B — Docker is what turns "interesting GitHub repo" into "tool 
 
 ## Appendix B: File References
 
-Key files investigated for this plan:
+Key files for this plan:
 
 | File | Relevance |
 |:-----|:----------|
-| `backend/src/mckainsey/services/memory_service.py` | Graphiti/memory retrieval logic |
-| `backend/src/mckainsey/services/graphiti_service.py` | Graphiti client wrapper |
+| `backend/src/mckainsey/services/memory_service.py` | Graphiti/memory retrieval logic — **remove Graphiti paths** |
+| `backend/src/mckainsey/services/graphiti_service.py` | Graphiti client wrapper — **delete entirely** |
 | `backend/src/mckainsey/services/simulation_service.py` | Simulation execution (writes to SQLite only) |
 | `backend/src/mckainsey/services/console_service.py` | Chat endpoint orchestration |
-| `backend/src/mckainsey/services/simulation_stream_service.py` | Event persistence and state snapshots |
-| `backend/src/mckainsey/services/storage.py` | SQLite schema and queries |
+| `backend/src/mckainsey/services/simulation_stream_service.py` | Event persistence, state snapshots, SSE pattern reference |
+| `backend/src/mckainsey/services/storage.py` | SQLite schema and queries — **add MemoryStore interface** |
+| `backend/src/mckainsey/services/lightrag_service.py` | LightRAG document ingestion — **add chunked streaming** |
+| `backend/src/mckainsey/services/persona_sampler.py` | DuckDB persona sampling — **keep as-is** |
 | `frontend/src/pages/Simulation.tsx` | Screen 3 component with state persistence bug |
+| `frontend/src/pages/PolicyUpload.tsx` | Knowledge graph rendering — **add SSE subscription** |
 | `frontend/src/contexts/AppContext.tsx` | Global state management |
 | `frontend/src/App.tsx` | Router (switch/case unmount pattern) |
-| `docker-compose.yml` | Current containerized deployment |
-| `quick_start.sh` | Local startup script |
+| `docker-compose.yml` | Current containerized deployment — **remove FalkorDB** |
+| `quick_start.sh` | Local startup script — **remove FalkorDB, add Ollama docs** |
+| `.env` | **SECURITY: contains real API keys — rotate before open-sourcing** |

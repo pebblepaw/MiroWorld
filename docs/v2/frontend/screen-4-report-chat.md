@@ -1,12 +1,12 @@
 # Screen 4 — Report + Chat
 
-> Last updated: 2026-04-09
+> Last updated: 2026-04-10
 
 ## Overview
 
 Screen 4 is the unified report and chat surface. It is a single routed page containing three view modes:
 
-- **Report Only** — full structured report with metric deltas, analysis sections, evidence, and insight blocks
+- **Report Only** — full structured report with metric deltas, analysis sections, evidence, and preset sections
 - **Report + Chat** — split view: report on the left, chat panel on the right
 - **Chat Only** — full-width chat panel
 
@@ -89,6 +89,8 @@ Report generation happens in [`ReportService.build_v2_report()`](../../../backen
 8. **Generate preset sections** — LLM-authored sections from use-case prompts (e.g. "Recommendations", "Best-Fit Demographics")
 9. **Build executive summary** from the computed metric deltas
 
+`insight_blocks` remain part of the backend report payload and DOCX export pipeline, but the current Screen 4 React view does not render a dedicated on-screen insight-block section.
+
 ### Rendered Payload Shape
 
 ```json
@@ -135,6 +137,8 @@ Report generation happens in [`ReportService.build_v2_report()`](../../../backen
 - **Executive Summary** — plain-text narrative, no markdown rendering
 - **Metric Delta Cards** — shows label, initial → final with direction indicator. `0Text` or raw text-unit leakage is always a bug
 - **Analysis Sections** — header with `report_title`, question text, answer text, evidence rows. Evidence rows prefer `agent_name` over raw serial ids. Clicking evidence calls `openEvidenceDrilldown(agentId)` which switches to 1:1 chat with that agent
+- **Preset Sections** — rendered after the analysis sections
+- **Insight Blocks** — present in the backend payload and DOCX export, but not rendered as a dedicated section in the current Screen 4 React view
 - **Text cleanup** — report view does not render markdown, so `**` and backticks are stripped before display via `_clean_report_text()` in the backend
 
 ---
@@ -151,13 +155,28 @@ Three segment tabs:
 | Top Supporters | `'supporters'` | `'supporter'` | Agents most in favor |
 | 1:1 Chat | `'one-on-one'` | — | Direct chat with a selected agent |
 
-Clicking a tab updates `chatSegment` state. For dissenters/supporters, the panel shows a horizontal scrollable list of the top 5 agents for that segment. For 1:1, it shows an agent search input and selection UI.
+Clicking a tab updates `chatSegment` state. For dissenters/supporters, the panel shows a horizontal scrollable list of up to 5 agents for that segment. In live mode, that roster is fetched from the backend via `GET /api/v2/console/session/{id}/chat/group/agents`, so the visible chips match the same candidate pool the backend will use when the user sends a group-chat prompt. For 1:1, it shows an agent search input and selection UI.
 
 ### Group Chat: How It Finds Top Dissenters and Supporters
 
 This is the most complex data flow on Screen 4. The full pipeline:
 
-#### Step 1: Frontend sends the request
+#### Step 1: Frontend loads the live candidate roster
+
+When Screen 4 is in live mode and the user is on either the supporters or dissenters tab, `ReportChat.tsx` first calls:
+
+```typescript
+getGroupChatAgents(sessionId, {
+  segment: chatSegment === 'supporters' ? 'supporter' : 'dissenter',
+  metric_name: chatMetric ?? undefined,
+})
+```
+
+API: `GET /api/v2/console/session/{id}/chat/group/agents`
+
+This endpoint returns the roster used to render the supporter/dissenter chips, along with the backend score field. It defaults to `top_n=5`, matching the current live chat cap.
+
+#### Step 2: Frontend sends the group-chat message
 
 ```typescript
 sendGroupChatMessage(sessionId, {
@@ -169,13 +188,15 @@ sendGroupChatMessage(sessionId, {
 
 API: `POST /api/v2/console/session/{id}/chat/group` — defined in [`routes_console.py`](../../../backend/src/mckainsey/api/routes_console.py)
 
-#### Step 2: Backend scores agents via checkpoint data
+The `GET /chat/group/agents` and `POST /chat/group` paths both flow through the same backend selector, so the visible roster and the actual responders stay aligned.
+
+#### Step 3: Backend scores agents via checkpoint data
 
 In [`ConsoleService.group_chat()`](../../../backend/src/mckainsey/services/console_service.py#L1345):
 
 **If `metric_name` is null (aggregate) AND segment is supporter/dissenter:**
 
-Calls [`_agents_with_aggregate_extreme_scores(session_id, segment)`](../../../backend/src/mckainsey/services/console_service.py#L1892)
+Calls [`_agents_with_aggregate_extreme_scores(session_id, segment)`](../../../backend/src/mckainsey/services/console_service.py#L1951)
 
 This function uses **extreme scoring** — the rationale is that in aggregate mode, we want to find agents who feel _most strongly_ about _any_ metric, not agents whose average is middle-of-the-road:
 
@@ -185,7 +206,7 @@ This function uses **extreme scoring** — the rationale is that in aggregate mo
 4. **Supporter segment** → uses `max(all_scores)` — any agent with ANY strong approval on any metric
 5. Score field: `"aggregate_extreme"`
 
-The parsing runs through [`_extract_metric_score()`](../../../backend/src/mckainsey/services/console_service.py#L1811) which handles free-text LLM answers:
+The parsing runs through [`_extract_metric_score()`](../../../backend/src/mckainsey/services/console_service.py#L1870) which handles free-text LLM answers:
 - `"Yes"` → 10.0, `"No"` → 1.0
 - `"7/10. Great policy"` → 7.0
 - `"8.5"` → 8.5
@@ -199,7 +220,7 @@ This enriches each agent with their specific metric score from checkpoint data:
 - Score field: `"checkpoint_{metric_name}"` (e.g. `"checkpoint_approval_rate"`)
 - Falls back to legacy `"opinion_post"` if no checkpoints exist
 
-#### Step 3: Rank by influence and filter by stance
+#### Step 4: Rank by influence and filter by stance
 
 Calls [`MetricsService.select_group_chat_agents()`](../../../backend/src/mckainsey/services/metrics_service.py#L442):
 
@@ -216,7 +237,7 @@ Calls [`MetricsService.select_group_chat_agents()`](../../../backend/src/mckains
 
 3. **Sort by influence score** descending, return top N (default 5)
 
-#### Step 4: LLM generates responses for each selected agent
+#### Step 5: LLM generates responses for each selected agent
 
 For each selected agent, calls `MemoryService.agent_chat_realtime()` which:
 - In live mode: uses Graphiti-backed memory search grounded in the agent's simulation context
@@ -239,9 +260,11 @@ Responses are appended to the interaction transcript store and returned as:
 }
 ```
 
-#### Step 5: Frontend renders responses
+#### Step 6: Frontend renders responses
 
 Each response appears as a chat bubble with the agent's name (resolved from the agents list, not raw serial id), stance badge, and the response text. The typing indicator shows a pulsing text banner while waiting for responses.
+
+If the live candidate-roster request fails, the panel clears the chip list and shows the backend error message rather than silently inventing a local live roster.
 
 ### 1:1 Agent Chat
 
@@ -341,6 +364,7 @@ GET /api/v2/session/{id}/analysis-questions
 | `/api/v2/console/session/{id}/report` | GET | — | Fetch current report state |
 | `/api/v2/console/session/{id}/report/generate` | POST | — | Trigger report generation |
 | `/api/v2/console/session/{id}/report/export` | GET | — | Download DOCX binary |
+| `/api/v2/console/session/{id}/chat/group/agents` | GET | `segment`, `metric_name?`, `top_n?` | Fetch live supporter/dissenter roster for the chip row |
 | `/api/v2/console/session/{id}/chat/group` | POST | `{segment, message, metric_name?, top_n?}` | Send group chat message |
 | `/api/v2/console/session/{id}/chat/agent/{agent_id}` | POST | `{message}` | Send 1:1 agent chat |
 | `/api/v2/session/{id}/analysis-questions` | GET | — | Fetch session analysis questions |
@@ -353,10 +377,10 @@ GET /api/v2/session/{id}/analysis-questions
 |:----------|:-----|:----------|
 | ReportChat page | [`frontend/src/pages/ReportChat.tsx`](../../../frontend/src/pages/ReportChat.tsx) | State decl, MetricSelector, chat send |
 | MetricSelector component | [`frontend/src/components/MetricSelector.tsx`](../../../frontend/src/components/MetricSelector.tsx) | Filters open-ended, onChange callback |
-| Frontend API client | [`frontend/src/lib/console-api.ts`](../../../frontend/src/lib/console-api.ts) | `sendGroupChatMessage`, `exportReportDocx`, etc. |
-| Chat route definition | [`backend/src/mckainsey/api/routes_console.py`](../../../backend/src/mckainsey/api/routes_console.py) | POST endpoints |
-| Group chat logic | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `group_chat()` L1345, `_agents_with_aggregate_extreme_scores()` L1892 |
-| Score parsing | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_extract_metric_score()` L1811 |
+| Frontend API client | [`frontend/src/lib/console-api.ts`](../../../frontend/src/lib/console-api.ts) | `getGroupChatAgents`, `sendGroupChatMessage`, `exportReportDocx`, etc. |
+| Chat route definition | [`backend/src/mckainsey/api/routes_console.py`](../../../backend/src/mckainsey/api/routes_console.py) | group roster GET + chat POST endpoints |
+| Group chat logic | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `group_chat()` L1345, `_agents_with_aggregate_extreme_scores()` L1951 |
+| Score parsing | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_extract_metric_score()` L1870 |
 | Agent selection and influence | [`backend/src/mckainsey/services/metrics_service.py`](../../../backend/src/mckainsey/services/metrics_service.py) | `select_group_chat_agents()` L442 |
 | Report builder | [`backend/src/mckainsey/services/report_service.py`](../../../backend/src/mckainsey/services/report_service.py) | `build_v2_report()` L327 |
 | DOCX export | [`backend/src/mckainsey/services/report_service.py`](../../../backend/src/mckainsey/services/report_service.py) | `export_v2_report_docx()` L481 |

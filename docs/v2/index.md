@@ -1,6 +1,6 @@
 # McKAInsey V2 — Documentation Index
 
-> Last updated: 2026-04-09
+> Last updated: 2026-04-10
 
 Read this file first, then open only the documents relevant to the task at hand.
 
@@ -17,7 +17,7 @@ If your task touches analytics, metric scoring, checkpoint data, or stance class
 
 1. [backend/metrics-heuristics.md](backend/metrics-heuristics.md) — checkpoint data shape, score parsing, stance thresholds, aggregate vs per-metric scoring
 2. [frontend/screen-5-analytics.md](frontend/screen-5-analytics.md) — metric selector, sentiment dynamics, demographic map
-3. [frontend/screen-4-report-chat.md](frontend/screen-4-report-chat.md) — chat segment selection, extreme scoring for group chat
+3. [frontend/screen-4-report-chat.md](frontend/screen-4-report-chat.md) — chat segment selection, live candidate roster, and extreme scoring for group chat
 4. [architecture.md](architecture.md) section 5 for the checkpoint scoring pipeline
 
 ## Fast Handoff Path for Graphiti/Memory Work

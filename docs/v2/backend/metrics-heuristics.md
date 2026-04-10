@@ -1,6 +1,6 @@
 # Backend — Metrics & Heuristics
 
-> Last updated: 2026-04-09
+> Last updated: 2026-04-10
 
 ## Overview
 
@@ -26,21 +26,38 @@ Checkpoint records live in the `simulation_checkpoints` table with:
 
 ### `metric_answers` Format
 
+`metric_answers` is a dictionary keyed by `analysis_questions[].metric_name` from the session-scoped config. Example:
 
-## `metric_answers` Format
-tains `metric_answers` dict |
-legacy sessions may use `"pre"` / `"post"`) |
-om `analysis_q start but needs refinement.",
-  "conv  "conv  "conv  "conv  "c"engagement_scor  "conv  "conv  "conv  "conv  "l downstream   "conv  "conv  "conv  "conv  "c"engagement_scor  "conv  "conv  "conv  "conv  "l ck  "conv  "conv  "conv  "conv  "c"engagement_scor  "conv  "conv  "conv que  "conv  "conv  "conv  "conv  "c"engagement_scor  "conv  "conv  "conv  "conv  "l downstream   "conv  "conv  "conv  "conv  "c"engagement_scor  "conv  "conv  "turns empty list
+```json
+{
+  "approval_rate": 7.0,
+  "conversion_intent": "yes",
+  "engagement_score": "8/10 because the message is memorable",
+  "policy_viewpoints": "I support the overall direction but want more detail."
+}
+```
 
-## 2. Score Par## 2 — `_extract_metric_score()`
+Normalization is handled by `_normalize_metric_answers()` in `simulation_service.py`:
 
-Converts free-text metric answers into numeric 1–10 scale scores:
+- keys not present in the current checkpoint question set are dropped
+- `bool` values are normalized to `"yes"` / `"no"`
+- numeric values are stored as floats
+- non-empty strings are preserved as text
+- invalid or missing `metric_answers` payloads normalize to `{}`
+
+## 2. Score Parsing — `_extract_metric_score()`
+
+`ConsoleService._extract_metric_score()` converts metric answers into numeric 1–10 scores for analytics and stance classification:
 
 | Input Pattern | Output | Example |
 |:--------------|:-------|:--------|
-| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `" `"No"| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `" `"No"| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes|/1| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `"Yes| `"Yerect parse | `"8.5"` → 8.5 |
-| `| `| `| `| `| `| `| `| ``No| `| `| `| `| `| `| `| `| ext (no number) | `None` | `"I think it's good"` �| `| `| `| `| `| `| `| `| ``No| `| `| `|"` to extract the first decimal number from text.
+| exact `"yes"` | `10.0` | `"yes"` → `10.0` |
+| exact `"no"` | `1.0` | `"no"` → `1.0` |
+| leading numeric text | first parsed number | `"7/10. Strong start"` → `7.0` |
+| direct numeric text | parsed float | `"8.5"` → `8.5` |
+| free text without leading number | `None` | `"I think it's good"` → `None` |
+
+Open-ended answers may still exist in checkpoint payloads, but they are excluded from MetricSelector and skipped by numeric scoring unless they begin with a parseable number.
 
 ## 3. Stance Thresholds
 
@@ -58,10 +75,29 @@ All stance bucketing throughout the system uses these thresholds (defined in `Me
 
 When a specific `metric_name` is provided:
 
-- `_enrich_agents_met- `_enrich_agents_met- `_enrich_agents_met- `_rget_field)` looks up each agent's `metric_answers[metric_name]`, parses i- `_enrich_agents_mtarget_field]`
-- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- c scores** per agent - S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S-cip- S- S- S- S- S`_agents_w- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- Sric_- S- S- S- S- S- S- S- S- S- S- S- metrics (any agent with ANY - S- S- S- S- S- S- S- up- S- S- S- S- S- S- S-se- S- S- S- S- S- S- S- S-s all metrics (any agent with ANY strong approval)
-- Score field name: `aggregate_extreme`
-- Falls back to `opinio- Falls back to `opinio- Falls back to `opinio- Falls back to `opinio- Falls back to `opinio- Falls back to `opinio- Falls back to `opinio- Falls back to `opinio- Falls back current simulations. All analytics and chat scoring now uses checkpoint-based data instead. These fields remain only as a last-resort fallback when a session has no checkpoint records at all.
+- `_agents_with_checkpoint_metrics()` looks up each agent's `metric_answers[metric_name]`, parses it via `_extract_metric_score()`, and writes it to `checkpoint_{metric_name}`
+- used by per-metric analytics endpoints, per-metric demographic stances, and per-metric Screen 4 supporter/dissenter selection
+- if a session has no checkpoint data at all, the system can still fall back to legacy `opinion_pre` / `opinion_post`, but current V2 simulations are expected to be checkpoint-driven
+
+### Aggregate Analytics Scoring
+
+When `metric_name` is omitted for analytics endpoints:
+
+- `_agents_with_checkpoint_metrics()` delegates to `_enrich_agents_aggregate_scores()`
+- each agent receives the average of all parseable checkpoint metric answers
+- score field name: `aggregate_avg`
+- used by aggregate polarization, aggregate opinion flow, and aggregate `GET /analytics/agent-stances`
+
+### Aggregate Group Chat Scoring
+
+When `metric_name` is omitted for Screen 4 supporter/dissenter selection:
+
+- `_select_group_chat_agents()` uses `_agents_with_aggregate_extreme_scores()`
+- dissenters use the minimum parseable checkpoint score across all metrics
+- supporters use the maximum parseable checkpoint score across all metrics
+- score field name: `aggregate_extreme`
+
+This is intentionally different from aggregate analytics. Screen 4 is selecting strongly representative voices, not computing a population average.
 
 ## 6. Dynamic Metrics
 
@@ -84,24 +120,46 @@ Only quantitative questions generate numeric metrics:
 Report metric cards compare:
 
 - Initial checkpoint value (baseline)
-- Final ch- Final ch- Final ch- Final ch- Final ay- Final ch- Final ch- Final ch- Final ch- Final ay- Final ch- Final ch- Final ch- Final ch- Final ay- Final ch- Final ch- Final ch- Final ch- Final ay- Final ch- Final ch- Final ch- Final ch- Final ay- Final ch- Final ch- Final ch- Final ch- Final ay- Final ch- Final ch- Final ch- Final ch- Final ay- Final ch- Final ch- Final ch- Final ch- Final ay- Final ch- Final ch- Final ch- Finaitat- Final ch- Final chnps- Final ch- Finalded- Final ch- Final ch- Final ch- Final ch- Final ay- n &- Final ch- Final ch- Final ch- Final ch- Final ayrcentage
-- `engagement_score`: average `/10`
-- `credibil- `credibil- `credibil- `credibil- `credibil- `credibil- `credibil- `credibil- `crealized by `QuestionMetadataService` and join the same metric/report pipeline.
+- Final checkpoint value
+- Delta and direction (`up`, `down`, `flat`)
+
+Question metadata such as `metric_label`, `metric_unit`, and `report_title` is resolved from the session-scoped `analysis_questions` and fed into the same report pipeline.
 
 ## 8. Analytics Computations
 
-### Polarization
+### Polarization and Opinion Flow
 
-`MetricsService.compute_polarizati`MetricsService.compute_polarizati`Metriclar`MetricsService.compmin(`MetricsService.cosenter_pct)``MetricsService.compute_polarizati`Mon`MetricsService.compute_polarizati`MetricsService.compute_polarizati`Metriclar`MetricsService.compmin(`MetricsService.cosenter_pct)``MetricsService.compute_polarizati`Mon`MetricsService.compute_polarizati`MetricsService.compute_polarizati`Metriclar`MetricsService.compmin(`MetricsService.cosenter_pct)``MetricsService.compute_polarizati`Mon`MetricsService.compute_polarizati`MetricsService.compute_polarizati`Metriclar`MetricsService.compmin(`MetricsService.cosenter_pct)``MetricsService.compute_polarizati`Mon`MetricsService.compute_polarizati`MetricsService.compute_polarizati`Metriclar`Metricic`MetricsService.compute_polarizatctions, agents)`:
+- both endpoints consume checkpoint-derived scores, never sampled `agent.sentiment`
+- per-metric mode uses `checkpoint_{metric_name}`
+- aggregate mode uses the average checkpoint score per agent (`aggregate_avg`)
+- stance bucketing uses the shared thresholds from section 3
 
-- Ranks by post engagement, comment count, and replies received
-- Returns top influencers with: `name`, `agent_name`, `stance`, `influence_score`, `top_view`, `top_post`
-- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic — does not acce- Metric-agnostic —ment count
-- Replies received
+### Agent Stances
 
-Pre-filtered by stance using extreme scoring (section 4):
+`GET /api/v2/console/session/{id}/analytics/agent-stances` uses the same checkpoint scoring path as the other opinion analytics:
 
-- Dissenters: agents with minimum metric score below dissenter threshold
-- Supporters: agents with maximum metric score above supporter threshold
+- aggregate mode returns average checkpoint score per agent
+- per-metric mode returns `checkpoint_{metric_name}` per agent
+- if an agent lacks a parseable score for the requested field, `get_agent_stances()` emits `5.0` so the agent stays in the demographic map as neutral rather than disappearing from the cohort
 
-The current Screen 4 UX exposes supporters, dissenters, and 1:1 agent chat segments.
+### Group Chat Candidate Selection
+
+Both Screen 4 live endpoints share the same selection path:
+
+- `GET /api/v2/console/session/{id}/chat/group/agents`
+- `POST /api/v2/console/session/{id}/chat/group`
+
+They both call `_select_group_chat_agents()`:
+
+- default `top_n` is `5`
+- aggregate supporter/dissenter mode uses extreme scoring (`aggregate_extreme`)
+- per-metric mode uses `checkpoint_{metric_name}`
+- final ranking is influence-weighted via `MetricsService.select_group_chat_agents()`
+
+This is what keeps the visible supporter/dissenter chip row aligned with the agents who actually answer the group chat prompt.
+
+### Influence and Cascades
+
+- influence and cascade endpoints are metric-agnostic
+- influence ranks by post engagement, comment count, and replies received
+- cascade metrics operate on interaction-tree structure rather than checkpoint stance scores

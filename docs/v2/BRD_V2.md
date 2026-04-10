@@ -1,7 +1,7 @@
 # McKAInsey V2 — Business Requirements Document
 
 > Version: 2.2  
-> Date: 2026-04-09  
+> Date: 2026-04-10  
 > Status: Implemented and documentation-synchronized
 
 This document describes the current V2 product and engineering contract. It supersedes earlier V2 planning language that still referenced separate Screen 6 behavior, generic policy kickoff posts, retired Gemini defaults, or V1-style use-case metrics.
@@ -193,10 +193,11 @@ Current rendering rules:
 Chat metric selector:
 
 - a `MetricSelector` dropdown above the chat panel lets the user filter group chat by a specific analysis question
-- "All (Aggregate)" uses the average of all parseable metric scores to rank agents
+- "All (Aggregate)" uses checkpoint extreme scoring for group chat: minimum score across metrics for dissenters, maximum score across metrics for supporters
 - per-metric mode ranks agents by their score on the selected question only
 - open-ended questions are excluded from the dropdown
 - the selected metric is passed as `metric_name` in the group chat request body
+- in live mode, the supporters/dissenters chip row is fetched from `GET /chat/group/agents`, which uses the same backend selector as the actual group-chat request
 
 Current memory behavior:
 
@@ -217,6 +218,7 @@ Metric selector:
 
 - a `MetricSelector` dropdown below the page header lets the user filter analytics by a specific analysis question
 - polarization, opinion flow, and the demographic sentiment map all respond to the selected metric
+- the demographic sentiment map always calls `GET /analytics/agent-stances`; aggregate mode simply omits `metric_name`
 - KOL and viral posts remain metric-agnostic (influence is about engagement, not opinion)
 - open-ended questions are excluded from the dropdown
 
@@ -286,6 +288,7 @@ Custom Screen 1 questions are appended at the session level and participate in s
 - `GET /api/v2/console/session/{id}/report`
 - `POST /api/v2/console/session/{id}/report/generate`
 - `GET /api/v2/console/session/{id}/report/export`
+- `GET /api/v2/console/session/{id}/chat/group/agents?segment=&metric_name=&top_n=` — live supporter/dissenter roster
 - `POST /api/v2/console/session/{id}/chat/group`
 - `POST /api/v2/console/session/{id}/chat/agent/{agent_id}`
 

@@ -1,6 +1,6 @@
 # Screen 5 — Analytics
 
-> Last updated: 2026-04-09
+> Last updated: 2026-04-10
 
 ## Overview
 
@@ -89,7 +89,7 @@ Results are normalized through four helper functions:
 A second `useEffect` triggers whenever `selectedMetric` changes:
 
 ```typescript
-getAnalyticsAgentStances(sessionId, selectedMetric).then((data) => {
+getAnalyticsAgentStances(sessionId, selectedMetric ?? undefined).then((data) => {
   const overrides = new Map();
   for (const stance of data.stances) {
     overrides.set(stance.agent_id,
@@ -101,7 +101,7 @@ getAnalyticsAgentStances(sessionId, selectedMetric).then((data) => {
 });
 ```
 
-This Map is consumed by the Demographic Sentiment Map component. When rendering each agent cell, it checks `agentStanceOverrides.get(agent.id) ?? agent.sentiment` — the override replaces the default sentiment with the metric-specific stance.
+In live mode, this effect runs in both aggregate and per-metric views. Aggregate mode simply omits `metric_name`, and the backend responds with checkpoint-derived aggregate scores. The resulting Map is consumed by the Demographic Sentiment Map component. When rendering each agent cell, the override replaces the sampled sentiment with the checkpoint-based stance classification.
 
 ### Caching
 
@@ -109,7 +109,7 @@ Results are cached in `sessionStorage` with key `mckainsey-analytics-{sessionId}
 
 ### Error Handling
 
-- **Live mode**: if any endpoint fails, shows a warning banner listing the missing data types
+- **Live mode**: if any endpoint fails, shows a warning banner listing the missing data types. If the `agent-stances` request fails, the demographic map renders an explicit error block instead of silently reusing stale sampled live sentiment.
 - **Demo mode**: falls back to local constants on backend failure so the page remains usable
 
 ---
@@ -230,23 +230,20 @@ A grouped grid of agent cells, colored by stance (positive = green, neutral = am
 
 ### How Sentiment Overrides Work
 
-The demographic map data source depends on the metric selector state:
+The demographic map is always driven by the `agent-stances` endpoint in live mode. The metric selector changes which score field the backend computes:
 
-**When aggregate (null) or no metric selected:**
-- Uses default `agent.sentiment` from the simulation data
-- No API call to agent-stances
-
-**When a specific metric is selected:**
-1. `Analytics.tsx` calls `getAnalyticsAgentStances(sessionId, selectedMetric)` → `GET /api/v2/console/session/{id}/analytics/agent-stances?metric_name=...`
-2. Backend: [`ConsoleService.get_agent_stances()`](../../../backend/src/mckainsey/services/console_service.py#L1738) calls `_agents_with_checkpoint_metrics()` to enrich agents with metric-specific scores
+1. `Analytics.tsx` calls `getAnalyticsAgentStances(sessionId, selectedMetric ?? undefined)` → `GET /api/v2/console/session/{id}/analytics/agent-stances?metric_name=...`
+2. Backend: [`ConsoleService.get_agent_stances()`](../../../backend/src/mckainsey/services/console_service.py#L1799) calls `_agents_with_checkpoint_metrics()`:
+   - aggregate mode (`metric_name=null`) → checkpoint-based average score per agent
+   - per-metric mode → `checkpoint_{metric_name}` score per agent
 3. Returns per-agent: `{agent_id, score, planning_area, age_group, archetype}`
 4. Frontend builds an overrides Map:
    - `score >= 7` → `"positive"`
    - `score < 5` → `"negative"`
    - else → `"neutral"`
-5. When rendering agent cells: `overrides.get(agent.id) ?? agent.sentiment`
+5. When rendering agent cells, the map uses those overrides. In live mode, the base map starts neutral until stance data arrives; on request failure, the card shows an explicit error state.
 
-This means the demographic map colors change live when the user switches metrics in the selector.
+This is why the aggregate and per-metric Sentiment Map now draw from the same checkpoint-derived stance family as the other opinion analytics, instead of from stale sampled agent sentiment.
 
 ---
 
@@ -357,7 +354,7 @@ These blocks appear both in the Screen 4 report (as insight block sections) and 
 
 ## 8. Score Parsing Deep Dive
 
-All metric-aware analytics on Screen 5 depend on parsing free-text LLM checkpoint answers into numeric scores. This happens in [`_extract_metric_score()`](../../../backend/src/mckainsey/services/console_service.py#L1811):
+All metric-aware analytics on Screen 5 depend on parsing free-text LLM checkpoint answers into numeric scores. This happens in [`_extract_metric_score()`](../../../backend/src/mckainsey/services/console_service.py#L1870):
 
 | Agent's Raw `metric_answers` Value | Parsed Score | Explanation |
 |:-----------------------------------|:------------|:------------|
@@ -434,15 +431,15 @@ All endpoints are prefixed with the base URL and check for demo sessions first (
 | Analytics page | [`frontend/src/pages/Analytics.tsx`](../../../frontend/src/pages/Analytics.tsx) | State, Promise.allSettled, stance overrides |
 | MetricSelector component | [`frontend/src/components/MetricSelector.tsx`](../../../frontend/src/components/MetricSelector.tsx) | Filters open-ended, onChange → null or metric_name |
 | Frontend API client | [`frontend/src/lib/console-api.ts`](../../../frontend/src/lib/console-api.ts) | `getAnalyticsPolarization`, `getAnalyticsAgentStances`, etc. |
-| Analytics route definitions | [`backend/src/mckainsey/api/routes_analytics.py`](../../../backend/src/mckainsey/api/routes_analytics.py) | All 5 GET endpoints |
+| Analytics route definitions | [`backend/src/mckainsey/api/routes_console.py`](../../../backend/src/mckainsey/api/routes_console.py) | console analytics GET endpoints |
 | Polarization computation | [`backend/src/mckainsey/services/metrics_service.py`](../../../backend/src/mckainsey/services/metrics_service.py) | `compute_polarization()` L130, `_stance_from_score()` L41 |
 | Opinion flow computation | [`backend/src/mckainsey/services/metrics_service.py`](../../../backend/src/mckainsey/services/metrics_service.py) | `compute_opinion_flow()` L170 |
 | Insight block dispatcher | [`backend/src/mckainsey/services/metrics_service.py`](../../../backend/src/mckainsey/services/metrics_service.py) | `compute_insight_block()` L815 |
-| Polarization orchestration | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `get_analytics_polarization()` L1592 |
-| Opinion flow orchestration | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `get_analytics_opinion_flow()` L1637 |
-| Agent stances | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `get_agent_stances()` L1738 |
-| Score parsing | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_extract_metric_score()` L1811 |
-| Checkpoint loading | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_load_checkpoint_records()` L1837 |
-| Agent enrichment (per-metric) | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_enrich_agents_metric_score()` L1664 |
-| Agent enrichment (aggregate) | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_enrich_agents_aggregate_scores()` L1687 |
+| Polarization orchestration | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `get_analytics_polarization()` L1653 |
+| Opinion flow orchestration | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `get_analytics_opinion_flow()` L1698 |
+| Agent stances | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `get_agent_stances()` L1799 |
+| Score parsing | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_extract_metric_score()` L1870 |
+| Checkpoint loading | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_load_checkpoint_records()` L1896 |
+| Agent enrichment (per-metric) | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_enrich_agents_metric_score()` L1725 |
+| Agent enrichment (aggregate) | [`backend/src/mckainsey/services/console_service.py`](../../../backend/src/mckainsey/services/console_service.py) | `_enrich_agents_aggregate_scores()` L1748 |
 | Use-case YAML configs | [`config/prompts/`](../../../config/prompts/) | `insight_blocks`, `analysis_questions` per use case |
