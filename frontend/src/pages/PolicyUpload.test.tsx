@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { forwardRef, useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +8,54 @@ import { AppProvider, useApp } from "@/contexts/AppContext";
 const { forceGraphSpy } = vi.hoisted(() => ({
   forceGraphSpy: vi.fn(),
 }));
+
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  static onCreate: ((url: string) => void) | null = null;
+
+  url: string;
+  listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+  onerror: ((event: Event) => void) | null = null;
+  onopen: ((event: Event) => void) | null = null;
+  close = vi.fn();
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+    MockEventSource.onCreate?.(url);
+  }
+
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    const set = this.listeners.get(type) ?? new Set();
+    set.add(listener);
+    this.listeners.set(type, set);
+  }
+
+  removeEventListener(type: string, listener: (event: MessageEvent) => void) {
+    const set = this.listeners.get(type);
+    set?.delete(listener);
+  }
+
+  emit(type: string, payload: unknown) {
+    const event = { data: JSON.stringify(payload) } as MessageEvent;
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(event);
+    }
+  }
+
+  triggerOpen() {
+    this.onopen?.(new Event("open"));
+  }
+
+  triggerError() {
+    this.onerror?.(new Event("error"));
+  }
+
+  static reset() {
+    MockEventSource.instances = [];
+    MockEventSource.onCreate = null;
+  }
+}
 
 vi.mock("react-force-graph-2d", () => ({
   default: forwardRef((props: { graphData: { nodes: Array<{ name?: string }>; links: Array<unknown> } }, _ref) => {
@@ -26,9 +74,12 @@ vi.mock("react-force-graph-2d", () => ({
 
 describe("PolicyUpload", () => {
   const originalFetch = global.fetch;
+  const originalEventSource = global.EventSource;
 
   beforeEach(() => {
     forceGraphSpy.mockClear();
+    MockEventSource.reset();
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     global.fetch = vi.fn().mockImplementation(createPolicyFetch({
       processArtifact: baseKnowledgeArtifact(),
     })) as typeof fetch;
@@ -36,6 +87,7 @@ describe("PolicyUpload", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    global.EventSource = originalEventSource;
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
@@ -383,12 +435,141 @@ describe("PolicyUpload", () => {
     await screen.findByText("brief.txt");
 
     fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
-    expect(await screen.findByRole("progressbar", { name: /brief\.txt upload progress/i })).toBeInTheDocument();
+    expect(await screen.findByRole("progressbar", { name: /brief\.txt extraction progress/i })).toBeInTheDocument();
 
     resolveProcess?.({
       ok: true,
       json: async () => baseKnowledgeArtifact(),
     } as Response);
+  });
+
+  it("streams incremental graph updates and chunk progress before the final artifact resolves", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    const callOrder: string[] = [];
+    let resolveProcess: ((value: Response) => void) | null = null;
+    MockEventSource.onCreate = () => callOrder.push("stream");
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith("/api/v2/console/session")) {
+        callOrder.push("session");
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1",
+            mode: "live",
+            status: "created",
+            model_provider: "ollama",
+            model_name: "qwen3:4b-instruct-2507-q4_K_M",
+            embed_model_name: "nomic-embed-text",
+            base_url: "http://127.0.0.1:11434/v1/",
+            api_key_configured: true,
+            api_key_masked: "ol...ama",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/knowledge/process")) {
+        callOrder.push("process");
+        return new Promise<Response>((resolve) => {
+          resolveProcess = resolve;
+        });
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ detail: `Unhandled fetch: ${url}` }),
+      } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <PolicyUpload />
+      </AppProvider>,
+    );
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["streamed policy"], "brief.txt", { type: "text/plain" })],
+      },
+    });
+    await screen.findByText("brief.txt");
+
+    fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
+
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    await waitFor(() => expect(callOrder).toContain("process"));
+    expect(callOrder).toContain("session");
+    expect(MockEventSource.instances[0].url).toContain("/knowledge/stream");
+
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.emit("knowledge_started", {
+        message: "Streaming knowledge extraction",
+        progress: 8,
+      });
+      source.emit("knowledge_chunk_started", {
+        chunk_index: 1,
+        chunk_total: 2,
+        document_name: "brief.txt",
+      });
+      source.emit("knowledge_partial", {
+        nodes: [
+          {
+            id: "policy:streamed",
+            label: "Streamed Subsidy",
+            type: "policy",
+            summary: "Streaming partial graph.",
+            importance_score: 0.66,
+          },
+          {
+            id: "group:streamed",
+            label: "Streamed Group",
+            type: "group",
+            summary: "Streaming partial graph.",
+            importance_score: 0.42,
+          },
+        ],
+        edges: [
+          {
+            source: "policy:streamed",
+            target: "group:streamed",
+            type: "relates_to",
+            label: "relates to",
+            summary: "Partial relation.",
+          },
+        ],
+        processing_logs: ["Chunk 1 processed"],
+      });
+    });
+
+    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("2"));
+    expect(screen.getByRole("progressbar", { name: /knowledge extraction progress/i })).toBeInTheDocument();
+
+    resolveProcess?.({
+      ok: true,
+      json: async () => baseKnowledgeArtifact(),
+    } as Response);
+
+    act(() => {
+      source.emit("knowledge_chunk_completed", {
+        chunk_index: 1,
+        chunk_total: 2,
+        progress: 55,
+      });
+      source.emit("knowledge_completed", {
+        ...baseKnowledgeArtifact(),
+      });
+    });
+
+    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("7"));
+    expect(screen.getByRole("button", { name: /proceed/i })).toBeInTheDocument();
+    expect(source.close).toHaveBeenCalled();
   });
 
   it("sends uploaded files through the backend upload parser path instead of browser-decoded document text", async () => {

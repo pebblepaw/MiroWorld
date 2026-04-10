@@ -14,10 +14,14 @@ import {
   getAnalysisQuestions,
   isLiveBootMode,
   processKnowledgeDocuments,
+  subscribeKnowledgeStream,
+  type KnowledgeArtifact,
+  type KnowledgeEdge,
+  type KnowledgeNode,
+  type KnowledgeStreamEvent,
   updateV2SessionConfig,
   uploadKnowledgeFile,
   scrapeKnowledgeUrl,
-  KnowledgeArtifact,
 } from '@/lib/console-api';
 import { toast } from '@/hooks/use-toast';
 
@@ -62,6 +66,21 @@ type GraphLinkDatum = {
   label: string;
   type: string;
   summary?: string | null;
+};
+
+type KnowledgeStreamProgress = {
+  stage: string;
+  message: string;
+  percent?: number | null;
+  chunkIndex?: number | null;
+  chunkTotal?: number | null;
+  documentLabel?: string | null;
+};
+
+type KnowledgeArtifactPatch = Partial<KnowledgeArtifact> & {
+  entity_nodes?: KnowledgeNode[];
+  relationship_edges?: KnowledgeEdge[];
+  processing_logs?: string[];
 };
 
 function resolveKnowledgeExtractionError(
@@ -222,6 +241,261 @@ function mergeKnowledgeArtifacts(
   };
 }
 
+function createEmptyKnowledgeArtifact(sessionId: string): KnowledgeArtifact {
+  return {
+    session_id: sessionId,
+    document: {
+      document_id: `stream-${sessionId}`,
+      text_length: 0,
+      paragraph_count: 0,
+    },
+    summary: '',
+    guiding_prompt: null,
+    entity_nodes: [],
+    relationship_edges: [],
+    entity_type_counts: {},
+    processing_logs: [],
+    demographic_focus_summary: null,
+  };
+}
+
+function mergeUniqueRecords<T extends { id?: string | null }>(current: T[], incoming: T[]) {
+  const result = [...current];
+  const indexByKey = new Map(
+    current
+      .map((item, index) => [String(item.id ?? '').trim().toLowerCase(), index] as const)
+      .filter(([key]) => Boolean(key)),
+  );
+  for (const item of incoming) {
+    const key = String(item.id ?? '').trim().toLowerCase();
+    if (!key) {
+      continue;
+    }
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex === undefined) {
+      indexByKey.set(key, result.length);
+      result.push(item);
+      continue;
+    }
+    result[existingIndex] = {
+      ...result[existingIndex],
+      ...item,
+    };
+  }
+  return result;
+}
+
+function mergeUniqueEdges(current: KnowledgeEdge[], incoming: KnowledgeEdge[]) {
+  const result = [...current];
+  const indexByKey = new Map(
+    current.map((edge, index) => [
+      [
+        String(edge.source || '').trim().toLowerCase(),
+        String(edge.target || '').trim().toLowerCase(),
+        String(edge.type || '').trim().toLowerCase(),
+        String(edge.label || '').trim().toLowerCase(),
+      ].join('|'),
+      index,
+    ] as const),
+  );
+
+  for (const edge of incoming) {
+    const key = [
+      String(edge.source || '').trim().toLowerCase(),
+      String(edge.target || '').trim().toLowerCase(),
+      String(edge.type || '').trim().toLowerCase(),
+      String(edge.label || '').trim().toLowerCase(),
+    ].join('|');
+    if (!key) {
+      continue;
+    }
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex === undefined) {
+      indexByKey.set(key, result.length);
+      result.push(edge);
+      continue;
+    }
+    result[existingIndex] = {
+      ...result[existingIndex],
+      ...edge,
+    };
+  }
+
+  return result;
+}
+
+function mergeKnowledgeArtifactSnapshot(
+  currentArtifact: KnowledgeArtifact | null,
+  patch: KnowledgeArtifactPatch,
+  sessionId: string,
+): KnowledgeArtifact {
+  const base = currentArtifact ?? createEmptyKnowledgeArtifact(sessionId);
+  const nextDocument = {
+    ...base.document,
+    ...(patch.document ?? {}),
+  };
+  const nextNodes = mergeUniqueRecords(base.entity_nodes, patch.entity_nodes ?? []);
+  const nextEdges = mergeUniqueEdges(base.relationship_edges, patch.relationship_edges ?? []);
+  const nextLogs = [...base.processing_logs];
+  for (const logLine of patch.processing_logs ?? []) {
+    const line = String(logLine || '').trim();
+    if (line) {
+      nextLogs.push(line);
+    }
+  }
+
+  return {
+    ...base,
+    ...patch,
+    session_id: patch.session_id || base.session_id || sessionId,
+    document: nextDocument,
+    entity_nodes: nextNodes,
+    relationship_edges: nextEdges,
+    entity_type_counts: {
+      ...base.entity_type_counts,
+      ...(patch.entity_type_counts ?? {}),
+    },
+    processing_logs: nextLogs,
+    guiding_prompt: patch.guiding_prompt ?? base.guiding_prompt ?? null,
+    demographic_focus_summary: patch.demographic_focus_summary ?? base.demographic_focus_summary ?? null,
+  };
+}
+
+function isKnowledgeArtifactPatch(payload: Record<string, unknown>): payload is KnowledgeArtifactPatch {
+  return (
+    "entity_nodes" in payload
+    || "relationship_edges" in payload
+    || "processing_logs" in payload
+    || "summary" in payload
+    || "document" in payload
+    || "entity_type_counts" in payload
+    || "guiding_prompt" in payload
+    || "demographic_focus_summary" in payload
+    || "session_id" in payload
+  );
+}
+
+function unwrapKnowledgeArtifactPatch(payload: Record<string, unknown>): KnowledgeArtifactPatch | null {
+  const normalizePatch = (candidate: Record<string, unknown>): KnowledgeArtifactPatch => {
+    const normalized: Record<string, unknown> = { ...candidate };
+    if (!("entity_nodes" in normalized) && Array.isArray(normalized.nodes)) {
+      normalized.entity_nodes = normalized.nodes;
+    }
+    if (!("relationship_edges" in normalized) && Array.isArray(normalized.edges)) {
+      normalized.relationship_edges = normalized.edges;
+    }
+    if (!("processing_logs" in normalized) && Array.isArray(normalized.logs)) {
+      normalized.processing_logs = normalized.logs;
+    }
+    return normalized as KnowledgeArtifactPatch;
+  };
+
+  const nestedKeys = ["artifact", "knowledge", "knowledge_artifact", "partial", "data"];
+  for (const key of nestedKeys) {
+    const value = payload[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const nested = value as Record<string, unknown>;
+      if (isKnowledgeArtifactPatch(nested)) {
+        return normalizePatch(nested);
+      }
+      if ("nodes" in nested || "edges" in nested || "logs" in nested) {
+        return normalizePatch(nested);
+      }
+    }
+  }
+
+  if (isKnowledgeArtifactPatch(payload)) {
+    return normalizePatch(payload);
+  }
+
+  if ("nodes" in payload || "edges" in payload || "logs" in payload) {
+    return normalizePatch(payload);
+  }
+
+  return null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function resolveStreamProgress(eventName: string, payload: Record<string, unknown>): KnowledgeStreamProgress {
+  const percent =
+    numberValue(payload.progress)
+    ?? numberValue(payload.percent)
+    ?? numberValue(payload.completion_pct)
+    ?? numberValue(payload.completionPercent)
+    ?? null;
+  const chunkIndex =
+    numberValue(payload.chunk_index)
+    ?? numberValue(payload.chunkIndex)
+    ?? numberValue(payload.current_chunk)
+    ?? numberValue(payload.currentChunk)
+    ?? null;
+  const chunkTotal =
+    numberValue(payload.chunk_total)
+    ?? numberValue(payload.chunkTotal)
+    ?? numberValue(payload.total_chunks)
+    ?? numberValue(payload.totalChunks)
+    ?? null;
+  const documentLabel =
+    stringValue(payload.document_name)
+    ?? stringValue(payload.file_name)
+    ?? stringValue(payload.source_path)
+    ?? stringValue((payload.document as Record<string, unknown> | undefined)?.file_name)
+    ?? stringValue((payload.document as Record<string, unknown> | undefined)?.source_path)
+    ?? null;
+
+  const rawMessage =
+    stringValue(payload.message)
+    ?? stringValue(payload.detail)
+    ?? stringValue(payload.status)
+    ?? stringValue(payload.note)
+    ?? '';
+  const fallbackMessage = (() => {
+    switch (eventName) {
+      case 'knowledge_started':
+        return 'Starting knowledge extraction';
+      case 'knowledge_document_started':
+        return 'Starting document';
+      case 'knowledge_chunk_started':
+        return 'Processing chunk';
+      case 'knowledge_chunk_completed':
+        return 'Completed chunk';
+      case 'knowledge_partial':
+        return 'Graph updated';
+      case 'knowledge_completed':
+        return 'Knowledge extraction completed';
+      case 'knowledge_failed':
+        return 'Knowledge extraction failed';
+      default:
+        return 'Knowledge stream update';
+    }
+  })();
+
+  const chunkMessage =
+    chunkIndex !== null && chunkTotal !== null
+      ? `Chunk ${chunkIndex} / ${chunkTotal}`
+      : chunkIndex !== null
+        ? `Chunk ${chunkIndex}`
+        : documentLabel
+          ? `Document ${documentLabel}`
+          : fallbackMessage;
+
+  return {
+    stage: eventName,
+    message: rawMessage || chunkMessage || fallbackMessage,
+    percent,
+    chunkIndex,
+    chunkTotal,
+    documentLabel,
+  };
+}
+
 /* ─── Main Component ─── */
 
 export default function PolicyUpload() {
@@ -268,15 +542,35 @@ export default function PolicyUpload() {
   const [showTopEntities, setShowTopEntities] = useState(true);
   const [analysisQuestionsState, setAnalysisQuestionsState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [analysisQuestionsError, setAnalysisQuestionsError] = useState<string | null>(null);
+  const [knowledgeStreamProgress, setKnowledgeStreamProgress] = useState<KnowledgeStreamProgress | null>(null);
   const hydratedSessionRef = useRef<string | null>(null);
   const analysisQuestionsRef = useRef<AnalysisQuestion[]>(analysisQuestions);
   const lastPersistedQuestionsSnapshotRef = useRef<string>('');
+  const knowledgeArtifactRef = useRef<KnowledgeArtifact | null>(knowledgeArtifact);
+  const knowledgeStreamRef = useRef<ReturnType<typeof subscribeKnowledgeStream> | null>(null);
 
   const graphReady = knowledgeGraphReady && knowledgeArtifact !== null;
 
   useEffect(() => {
     analysisQuestionsRef.current = analysisQuestions;
   }, [analysisQuestions]);
+
+  useEffect(() => {
+    knowledgeArtifactRef.current = knowledgeArtifact;
+  }, [knowledgeArtifact]);
+
+  const closeKnowledgeStream = useCallback(() => {
+    knowledgeStreamRef.current?.close();
+    knowledgeStreamRef.current = null;
+  }, []);
+
+  useEffect(() => () => closeKnowledgeStream(), [closeKnowledgeStream]);
+
+  const commitKnowledgeArtifact = useCallback((nextArtifact: KnowledgeArtifact | null) => {
+    knowledgeArtifactRef.current = nextArtifact;
+    setKnowledgeArtifact(nextArtifact);
+    setKnowledgeGraphReady(Boolean(nextArtifact));
+  }, [setKnowledgeArtifact, setKnowledgeGraphReady]);
 
   const persistAnalysisQuestions = useCallback((nextQuestions: AnalysisQuestion[]) => {
     if (!sessionId) {
@@ -382,10 +676,15 @@ export default function PolicyUpload() {
   }, [availableBuckets, graphReady]);
 
   const resetKnowledgeState = useCallback(() => {
+    closeKnowledgeStream();
+    setKnowledgeStreamProgress(null);
+    knowledgeArtifactRef.current = null;
+    setFamilyFilter('all');
+    setActiveBuckets([]);
     setKnowledgeGraphReady(false);
     setKnowledgeArtifact(null);
     setKnowledgeError(null);
-  }, [setKnowledgeArtifact, setKnowledgeError, setKnowledgeGraphReady]);
+  }, [closeKnowledgeStream, setActiveBuckets, setFamilyFilter, setKnowledgeArtifact, setKnowledgeError, setKnowledgeGraphReady]);
 
   const replaceAnalysisQuestionAtIndex = useCallback((index: number, updater: (question: AnalysisQuestion) => AnalysisQuestion) => {
     const next = analysisQuestionsRef.current.map((question, currentIndex) => (
@@ -471,8 +770,11 @@ export default function PolicyUpload() {
     try {
       setKnowledgeLoading(true);
       setKnowledgeError(null);
+      setKnowledgeStreamProgress(null);
 
       const resolvedSessionId = await ensureSession();
+      resetKnowledgeState();
+      setKnowledgeLoading(true);
       const currentQuestions = analysisQuestionsRef.current;
       persistAnalysisQuestions(currentQuestions);
       const serverParsedFiles = uploadedFiles.filter(isServerParsedDocument);
@@ -512,34 +814,129 @@ export default function PolicyUpload() {
         }
       });
 
+      let streamFailureMessage: string | null = null;
+      const canStreamKnowledge = isLiveBootMode();
+      const streamSubscription = canStreamKnowledge
+        ? subscribeKnowledgeStream(resolvedSessionId, {
+            onEvent: ({ name, payload }: KnowledgeStreamEvent) => {
+              const nextProgress = resolveStreamProgress(name, payload);
+              setKnowledgeStreamProgress((current) => ({
+                stage: nextProgress.stage,
+                message: nextProgress.message,
+                percent: nextProgress.percent ?? current?.percent ?? null,
+                chunkIndex: nextProgress.chunkIndex ?? current?.chunkIndex ?? null,
+                chunkTotal: nextProgress.chunkTotal ?? current?.chunkTotal ?? null,
+                documentLabel: nextProgress.documentLabel ?? current?.documentLabel ?? null,
+              }));
+
+              const patch = unwrapKnowledgeArtifactPatch(payload);
+              if (name === 'knowledge_partial' && patch) {
+                commitKnowledgeArtifact(
+                  mergeKnowledgeArtifactSnapshot(knowledgeArtifactRef.current, patch, resolvedSessionId),
+                );
+                return;
+              }
+
+              if (name === 'knowledge_completed') {
+                const nextArtifact = patch
+                  ? mergeKnowledgeArtifactSnapshot(null, patch, resolvedSessionId)
+                  : knowledgeArtifactRef.current;
+                if (nextArtifact) {
+                  commitKnowledgeArtifact(nextArtifact);
+                }
+                setFamilyFilter('all');
+                setActiveBuckets([]);
+                setKnowledgeStreamProgress((current) => ({
+                  stage: 'knowledge_completed',
+                  message: 'Knowledge extraction completed.',
+                  percent: 100,
+                  chunkIndex: current?.chunkIndex ?? null,
+                  chunkTotal: current?.chunkTotal ?? null,
+                  documentLabel: current?.documentLabel ?? null,
+                }));
+                return;
+              }
+
+              if (name === 'knowledge_failed') {
+                streamFailureMessage =
+                  stringValue(payload.message)
+                  ?? stringValue(payload.detail)
+                  ?? nextProgress.message
+                  ?? 'Knowledge extraction failed.';
+                setKnowledgeError(streamFailureMessage);
+              }
+            },
+            onError: () => {
+              if (!streamFailureMessage) {
+                setKnowledgeStreamProgress((current) => ({
+                  stage: 'heartbeat',
+                  message: current?.message || 'Knowledge stream disconnected.',
+                  percent: current?.percent ?? null,
+                  chunkIndex: current?.chunkIndex ?? null,
+                  chunkTotal: current?.chunkTotal ?? null,
+                  documentLabel: current?.documentLabel ?? null,
+                }));
+              }
+            },
+          })
+        : null;
+
+      if (streamSubscription) {
+        knowledgeStreamRef.current = streamSubscription;
+      }
+
       const knowledgePromise = (async () => {
         const artifacts: KnowledgeArtifact[] = [];
+        const assertStreamHealthy = () => {
+          if (streamFailureMessage) {
+            throw new Error(streamFailureMessage);
+          }
+        };
 
         if (textFiles.length > 0) {
+          setKnowledgeStreamProgress({
+            stage: 'knowledge_started',
+            message: `Submitting ${textFiles.length} text document${textFiles.length === 1 ? '' : 's'}`,
+            percent: 5,
+          });
           const documents = await Promise.all(
             textFiles.map(async (file) => ({
               document_text: await readFileText(file),
               source_path: file.name,
             })),
           );
-          artifacts.push(
-            await processKnowledgeDocuments(resolvedSessionId, {
-              documents,
-              guiding_prompt: undefined,
-            }),
+          const artifact = await processKnowledgeDocuments(resolvedSessionId, {
+            documents,
+            guiding_prompt: undefined,
+          });
+          artifacts.push(artifact);
+          commitKnowledgeArtifact(
+            mergeKnowledgeArtifactSnapshot(knowledgeArtifactRef.current, artifact, resolvedSessionId),
           );
+          assertStreamHealthy();
         }
 
-        for (const file of serverParsedFiles) {
-          artifacts.push(
-            await uploadKnowledgeFile(
-              resolvedSessionId,
-              file,
-              undefined,
-            ),
+        for (let index = 0; index < serverParsedFiles.length; index += 1) {
+          const file = serverParsedFiles[index];
+          setKnowledgeStreamProgress({
+            stage: 'knowledge_document_started',
+            message: `Submitting ${file.name}`,
+            percent: textFiles.length > 0 || serverParsedFiles.length > 1 ? Math.max(10, Math.round(((index + 1) / serverParsedFiles.length) * 85)) : 25,
+            documentLabel: file.name,
+          });
+          const artifact = await uploadKnowledgeFile(
+            resolvedSessionId,
+            file,
+            undefined,
           );
+          artifacts.push(artifact);
+          commitKnowledgeArtifact(
+            mergeKnowledgeArtifactSnapshot(knowledgeArtifactRef.current, artifact, resolvedSessionId),
+          );
+          assertStreamHealthy();
         }
 
+        assertStreamHealthy();
         return mergeKnowledgeArtifacts(resolvedSessionId, artifacts, null);
       })();
 
@@ -547,9 +944,26 @@ export default function PolicyUpload() {
         knowledgePromise,
         Promise.allSettled(metadataGeneration),
       ]);
-      setKnowledgeArtifact(artifact);
-      setKnowledgeGraphReady(true);
+
+      if (streamFailureMessage) {
+        throw new Error(streamFailureMessage);
+      }
+
+      commitKnowledgeArtifact(
+        mergeKnowledgeArtifactSnapshot(null, artifact, resolvedSessionId),
+      );
+      setFamilyFilter('all');
+      setActiveBuckets([]);
+      setKnowledgeStreamProgress({
+        stage: 'knowledge_completed',
+        message: 'Knowledge extraction completed.',
+        percent: 100,
+        chunkIndex: null,
+        chunkTotal: null,
+        documentLabel: null,
+      });
     } catch (error) {
+      closeKnowledgeStream();
       if (!isLiveBootMode()) {
         try {
           // Demo mode can still hydrate from the bundled demo artifact.
@@ -572,6 +986,11 @@ export default function PolicyUpload() {
               setKnowledgeArtifact(artifact);
               setKnowledgeGraphReady(true);
               setSessionId(artifact.session_id);
+              setKnowledgeStreamProgress({
+                stage: 'knowledge_completed',
+                message: 'Loaded cached demo knowledge graph.',
+                percent: 100,
+              });
               toast({ title: 'Demo mode', description: 'Loaded cached knowledge graph (backend unavailable)' });
               return;
             }
@@ -585,6 +1004,7 @@ export default function PolicyUpload() {
       });
       setKnowledgeGraphReady(false);
       setKnowledgeArtifact(null);
+      setKnowledgeStreamProgress(null);
       setKnowledgeError(message);
       toast({
         title: 'Knowledge extraction failed',
@@ -592,9 +1012,11 @@ export default function PolicyUpload() {
         variant: 'destructive',
       });
     } finally {
+      closeKnowledgeStream();
       setKnowledgeLoading(false);
     }
   }, [
+    closeKnowledgeStream,
     uploadedFiles,
     sessionId,
     modelProvider,
@@ -608,7 +1030,9 @@ export default function PolicyUpload() {
     setKnowledgeArtifact,
     setKnowledgeGraphReady,
     ensureSession,
+    commitKnowledgeArtifact,
     replaceAnalysisQuestionAtIndex,
+    resetKnowledgeState,
     useCase,
   ]);
 
@@ -806,8 +1230,8 @@ export default function PolicyUpload() {
                   {knowledgeLoading && (
                     <div className="mt-2">
                       <Progress
-                        value={50}
-                        aria-label={`${file.name} upload progress`}
+                        value={resolveKnowledgeProgressValue(knowledgeStreamProgress)}
+                        aria-label={`${file.name} extraction progress`}
                         className="h-1.5 bg-white/5"
                       />
                     </div>
@@ -988,17 +1412,31 @@ export default function PolicyUpload() {
           {/* Fake Loading Log */}
           {knowledgeLoading && (
             <div className="mt-4 p-3 border border-border bg-black rounded font-mono text-[10px] text-muted-foreground w-full space-y-1">
-              <div className="animate-pulse-subtle flex justify-between">
-                <span>[{new Date().toLocaleTimeString('en-US', { hour12: false })}] Initializing graph builder...</span>
-                <span className="text-success">OK</span>
+              <div className="flex justify-between gap-3">
+                <span>
+                  [{new Date().toLocaleTimeString('en-US', { hour12: false })}] {knowledgeStreamProgress?.message || 'Initializing graph builder...'}
+                </span>
+                <span className="text-success uppercase">{knowledgeStreamProgress?.stage || 'running'}</span>
               </div>
-              <div className="animate-pulse-subtle flex justify-between" style={{ animationDelay: '0.4s' }}>
-                <span>[{new Date().toLocaleTimeString('en-US', { hour12: false })}] Parsing uploaded documents...</span>
-                <span className="text-success">OK</span>
-              </div>
-              <div className="animate-pulse-subtle flex justify-between" style={{ animationDelay: '0.8s' }}>
-                <span>[{new Date().toLocaleTimeString('en-US', { hour12: false })}] Chunking & computing embeddings...</span>
-              </div>
+              <Progress
+                value={resolveKnowledgeProgressValue(knowledgeStreamProgress)}
+                aria-label="Knowledge extraction progress"
+                className="h-1.5 bg-white/5"
+              />
+              {(knowledgeStreamProgress?.chunkIndex != null || knowledgeStreamProgress?.chunkTotal != null || Boolean(knowledgeStreamProgress?.documentLabel)) && (
+                <div className="flex justify-between gap-3 text-[9px] uppercase tracking-wider text-muted-foreground/80">
+                  <span>
+                    {knowledgeStreamProgress?.documentLabel ? `Document ${knowledgeStreamProgress.documentLabel}` : 'Streaming updates'}
+                  </span>
+                  <span>
+                    {knowledgeStreamProgress?.chunkIndex && knowledgeStreamProgress?.chunkTotal
+                      ? `Chunk ${knowledgeStreamProgress.chunkIndex} / ${knowledgeStreamProgress.chunkTotal}`
+                      : knowledgeStreamProgress?.chunkIndex
+                        ? `Chunk ${knowledgeStreamProgress.chunkIndex}`
+                        : 'Live'}
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1317,6 +1755,26 @@ function normalizeImportance(importanceScore?: number | null, weight?: number | 
 function radiusFromImportance(importanceScore?: number | null, weight?: number | null) {
   const importance = normalizeImportance(importanceScore, weight);
   return Math.ceil(MIN_NODE_RADIUS + ((MAX_NODE_RADIUS - MIN_NODE_RADIUS) * importance));
+}
+
+function resolveKnowledgeProgressValue(progress: KnowledgeStreamProgress | null): number {
+  if (!progress) {
+    return 0;
+  }
+
+  if (typeof progress.percent === 'number' && Number.isFinite(progress.percent)) {
+    return Math.max(0, Math.min(100, progress.percent));
+  }
+
+  if (typeof progress.chunkIndex === 'number' && typeof progress.chunkTotal === 'number' && progress.chunkTotal > 0) {
+    return Math.max(0, Math.min(100, Math.round((progress.chunkIndex / progress.chunkTotal) * 100)));
+  }
+
+  if (progress.stage === 'knowledge_completed') {
+    return 100;
+  }
+
+  return 50;
 }
 
 function radiusFromNormalizedValue(value?: number | null) {

@@ -148,6 +148,26 @@ export interface KnowledgeArtifact {
   demographic_focus_summary?: string | null;
 }
 
+export type KnowledgeStreamEventName =
+  | "knowledge_started"
+  | "knowledge_document_started"
+  | "knowledge_chunk_started"
+  | "knowledge_chunk_completed"
+  | "knowledge_partial"
+  | "knowledge_completed"
+  | "knowledge_failed"
+  | "heartbeat";
+
+export interface KnowledgeStreamEvent {
+  name: KnowledgeStreamEventName | string;
+  payload: Record<string, unknown>;
+  raw: MessageEvent<string>;
+}
+
+export interface KnowledgeStreamSubscription {
+  close: () => void;
+}
+
 export interface ConsoleKnowledgeDocumentInput {
   document_text: string;
   source_path?: string | null;
@@ -613,6 +633,69 @@ export async function processKnowledgeDocuments(
     body: JSON.stringify(payload),
   });
   return parseJson(response);
+}
+
+function parseKnowledgeStreamPayload(data: string): Record<string, unknown> {
+  const trimmed = String(data ?? "").trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return { value: parsed };
+  } catch {
+    return { message: trimmed };
+  }
+}
+
+export function subscribeKnowledgeStream(
+  sessionId: string,
+  handlers: {
+    onEvent?: (event: KnowledgeStreamEvent) => void;
+    onError?: (error: Error) => void;
+    onOpen?: () => void;
+  } = {},
+): KnowledgeStreamSubscription | null {
+  if (typeof EventSource === "undefined") {
+    return null;
+  }
+
+  const source = new EventSource(`${API_BASE}/api/v2/console/session/${sessionId}/knowledge/stream`);
+  const handleEvent = (name: KnowledgeStreamEventName | string) => (event: MessageEvent<string>) => {
+    handlers.onEvent?.({
+      name,
+      payload: parseKnowledgeStreamPayload(String(event.data ?? "")),
+      raw: event,
+    });
+  };
+
+  const eventNames: KnowledgeStreamEventName[] = [
+    "knowledge_started",
+    "knowledge_document_started",
+    "knowledge_chunk_started",
+    "knowledge_chunk_completed",
+    "knowledge_partial",
+    "knowledge_completed",
+    "knowledge_failed",
+    "heartbeat",
+  ];
+
+  eventNames.forEach((name) => {
+    source.addEventListener(name, handleEvent(name));
+  });
+  source.addEventListener("message", handleEvent("message"));
+  source.onopen = () => handlers.onOpen?.();
+  source.onerror = () => {
+    handlers.onError?.(new Error("Knowledge stream disconnected."));
+  };
+
+  return {
+    close: () => source.close(),
+  };
 }
 
 export async function scrapeKnowledgeUrl(sessionId: string, url: string): Promise<ConsoleScrapeResponse> {
