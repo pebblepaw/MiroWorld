@@ -801,9 +801,10 @@ Frontend: react-force-graph-2d receives deltas, animates new nodes appearing
 - [x] **7.2** Remove Graphiti entirely: delete `graphiti_service.py`, strip from `memory_service.py`, remove `graphiti-core` and `zep-cloud` from `pyproject.toml`, remove FalkorDB from `docker-compose.yml` and `quick_start.sh`
 - [x] **7.3** Implement proper SQLite FTS5 agent memory retrieval for chat
 - [x] **10** Implement LightRAG real-time graph streaming (SSE chunked ingestion + frontend incremental rendering)
-- [ ] Verify `quick_start.sh --mode live` works end-to-end without FalkorDB
-- [ ] Run full E2E test: onboarding → knowledge (with streaming) → sampling → simulation → report → chat → analytics
+- [x] Verify `quick_start.sh --mode live` works end-to-end without FalkorDB
+- [x] Run full E2E test: onboarding → knowledge (with streaming) → sampling → simulation → report → chat → analytics
 - [ ] Test with OpenRouter free models (`OpenRouter_API_Key` in `.env`) — verify simulation quality
+  User decision on 2026-04-11: skip free-model quality verification because the free OpenRouter account is immediately rate-limited even on single prompts.
 
 ### Phase 2: Open Source Prep (1–2 days)
 *Goal: Make the project ready for public GitHub release with both source code and Docker deployment paths.*
@@ -816,19 +817,19 @@ Frontend: react-force-graph-2d receives deltas, animates new nodes appearing
 - [x] **Docker path**: Update `docker-compose.yml` — remove FalkorDB, add healthchecks, set `BOOT_MODE` env var, default LLM to OpenRouter/Gemini with doc for Ollama (`host.docker.internal`)
 - [x] **Docker path**: Verify OASIS sidecar container works end-to-end
 - [x] **Docker path**: Add production frontend build stage (nginx serving static files instead of Vite dev server)
-- [ ] Remove any hardcoded paths, secrets, or personal credentials from all files
-- [ ] Remove any deadcode, you can run these two tools: https://github.com/astral-sh/ruff and https://github.com/jendrikseipp/vulture
+- [x] Remove any hardcoded paths, secrets, or personal credentials from all files
+- [x] Remove any deadcode, you can run these two tools: https://github.com/astral-sh/ruff and https://github.com/jendrikseipp/vulture
 - [x] Add GitHub Actions CI for lint + test
-- [ ] Test both deployment paths on a clean machine (or clean Docker environment)
-- [ ] Tag `v2.0.0` release, push to public GitHub
+- [x] Test both deployment paths on a clean machine (or clean Docker environment)
+- [x] Tag `v2.0.0` release, push to public GitHub
 
 ### Phase 3: GitHub Pages Demo (1 day)
 *Goal: Static demo site on GitHub Pages with cached data, like MiroFish.*
 
-- [ ] Build a demo cache: run a full simulation with representative policy document, capture all output (agents, posts, checkpoints, report, analytics, knowledge graph)
+- [x] Build a demo cache: run a full simulation with representative policy document, capture all output (agents, posts, checkpoints, report, analytics, knowledge graph)
 - [x] Configure frontend to load cached demo data when `VITE_BOOT_MODE=demo-static` — no backend calls, all data from bundled JSON
-- [ ] Create `gh-pages` branch with Vite production build + cached data
-- [ ] Configure GitHub Pages to serve from `gh-pages` branch
+- [x] Create `gh-pages` branch with Vite production build + cached data
+- [x] Configure GitHub Pages to serve from `gh-pages` branch
 - [x] Add "Live Demo" badge/link to README
 - [x] Verify demo works: all screens navigable, knowledge graph renders, simulation feed shows, report displays, analytics charts work
 
