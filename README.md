@@ -1,65 +1,83 @@
-## **AI Consultant with Synthetic Population Simulation (Singapore-Centric)**
+# McKAInsey
 
-Traditional methods of gauging public sentiment—surveys, focus groups, and town halls—are slow, expensive, and increasingly unreliable due to declining participation rates and response biases. In Singapore's fast-paced policy and business landscape, decision-makers need a way to stress-test their ideas against a realistic cross-section of the population *before* committing resources to a full public rollout.
+McKAInsey is an AI consulting simulator for policy and campaign analysis. The application pairs a synthetic persona dataset with a multi-step workflow for knowledge ingestion, sampling, simulation, report review, and analytics.
 
-This project addresses that gap by building **McKAInsey**, a cloud-native AI consulting platform that simulates how the Singaporean populace would respond to proposed government policies or corporate marketing campaigns. The system is grounded in the **NVIDIA Nemotron-Personas-Singapore** dataset—**888,000 unique synthetic personas** mapped across **38 demographic and contextual fields**, covering all 55 planning areas, multi-ethnic and multi-religious identities, income brackets, occupations, and digital literacy levels, all statistically calibrated to the 2024 Singapore Census.
+The repository currently contains:
 
-The platform deploys **multi-agent LLM simulations** where dozens of these personas are instantiated as autonomous AI agents. These agents don't just answer survey questions—they *react*, *debate each other in digital forums*, and *change their minds* based on peer influence, mirroring how real public opinion forms through social interaction. The result is a dynamic simulation that surfaces not just approval ratings, but the **specific friction points, demographic fault lines, and persuasion pathways** within a target population.
+- a FastAPI backend under `backend/`
+- a React + Vite frontend under `frontend/`
+- a local launcher in `quick_start.sh`
+- a Docker Compose stack in `docker-compose.yml`
 
-## Quick Start (Demo + Live on One Site)
+## What Runs Locally
 
-Use the launcher from repo root:
+Two local entry points are supported at a high level:
+
+- Source mode: run the backend and frontend directly from the repository.
+- Docker mode: run the stack through Docker Compose.
+
+The repo root `.env.example` documents the environment variables used by the launcher, backend, and frontend. Keep your real `.env` file untracked.
+
+## Quick Start
+
+1. Copy the example environment file.
+
+```bash
+cp .env.example .env
+```
+
+2. Start the local app.
 
 ```bash
 ./quick_start.sh --mode demo
 ```
 
-You can also call it explicitly with Bash:
+3. Open the UI shown by the launcher.
+
+`--mode live` is available for the native OASIS runtime path when the required Python 3.11 sidecar and model provider credentials are configured.
+
+## Docker Mode
+
+Docker Compose is included for the containerized stack. Use it when you want the app services to run in containers rather than directly on your machine.
 
 ```bash
-bash ./quick_start.sh --mode demo
+docker compose up --build
 ```
 
-`bash` is the shell interpreter that runs the script file. In this project, `./quick_start.sh ...` and `bash ./quick_start.sh ...` are equivalent.
+Refer to `docker-compose.yml` for the current service layout and exposed ports.
 
-### Mode Behavior
+## Environment
 
-- `--mode demo` (default): demo-cache-first startup.
-- `--mode live`: native OASIS live runtime startup.
+The root `.env.example` is the best starting point for local development.
 
-Both forms are supported:
+Common values include:
 
-- `--mode demo`
-- `--mode=demo`
+- launcher ports and host bindings
+- `VITE_API_BASE` and `VITE_BOOT_MODE`
+- LLM provider selection and base URLs
+- optional provider API keys
+- local data and cache paths
+- OASIS runtime paths and limits
 
-### Optional Flags
+## Development
 
-- `--refresh-demo`: regenerate demo cache before boot.
-
-### Live Mode OASIS Setup (Beginner-Friendly)
-
-Live mode uses a Python 3.11 sidecar for `camel-oasis`.
-
-1. Install Python 3.11 (once).
-2. Run:
+Backend:
 
 ```bash
-./quick_start.sh --mode live
+cd backend
+python -m pip install -e .[dev]
+python -m pytest -q
 ```
 
-The launcher now auto-creates `backend/.venv311` when missing, installs pinned OASIS runtime dependencies, and validates imports before booting.
-
-If your Python 3.11 is in a custom path, set:
+Frontend:
 
 ```bash
-OASIS_PY_BIN=/absolute/path/to/python3.11 ./quick_start.sh --mode live
+cd frontend
+npm install
+npm run test -- --run
+npm run build
 ```
 
-### Common Startup Issue (Ports In Use)
+## License
 
-If startup fails due ports already occupied:
-
-```bash
-lsof -tiTCP:8000 -sTCP:LISTEN | xargs kill
-lsof -tiTCP:5173 -sTCP:LISTEN | xargs kill
-```
+This project is licensed under the AGPL-3.0 license. See [LICENSE](LICENSE).
