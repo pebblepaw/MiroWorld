@@ -22,8 +22,6 @@ OLLAMA_PID=""
 OLLAMA_REACHABILITY_URL="${LLM_BASE_URL_DEFAULT%/}"
 OLLAMA_REACHABILITY_URL="${OLLAMA_REACHABILITY_URL%/v1}"
 OLLAMA_REACHABILITY_URL="$OLLAMA_REACHABILITY_URL/api/tags"
-FALKORDB_HOST_DEFAULT="${FALKORDB_HOST:-127.0.0.1}"
-FALKORDB_PORT_DEFAULT="${FALKORDB_PORT:-6379}"
 
 REFRESH_DEMO=false
 LIVE_OASIS=false
@@ -191,82 +189,6 @@ start_ollama_server_if_needed() {
   echo "[ollama] Server is still starting in the background."
 }
 
-falkordb_reachable() {
-  if command -v nc >/dev/null 2>&1; then
-    nc -z "$FALKORDB_HOST_DEFAULT" "$FALKORDB_PORT_DEFAULT" >/dev/null 2>&1
-    return $?
-  fi
-
-  FALKORDB_HOST_DEFAULT="$FALKORDB_HOST_DEFAULT" FALKORDB_PORT_DEFAULT="$FALKORDB_PORT_DEFAULT" "$PY_BIN" - <<'PY' >/dev/null 2>&1
-import os
-import socket
-
-host = os.environ.get("FALKORDB_HOST_DEFAULT", "127.0.0.1")
-port = int(os.environ.get("FALKORDB_PORT_DEFAULT", "6379"))
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.settimeout(1.0)
-try:
-    sock.connect((host, port))
-except OSError:
-    raise SystemExit(1)
-finally:
-    sock.close()
-PY
-}
-
-ensure_falkordb_runtime() {
-  if falkordb_reachable; then
-    echo "[graphiti] FalkorDB is reachable at $FALKORDB_HOST_DEFAULT:$FALKORDB_PORT_DEFAULT."
-    return 0
-  fi
-
-  if [[ "$FALKORDB_HOST_DEFAULT" != "127.0.0.1" && "$FALKORDB_HOST_DEFAULT" != "localhost" ]]; then
-    echo "Live mode requires FalkorDB, but $FALKORDB_HOST_DEFAULT:$FALKORDB_PORT_DEFAULT is not reachable."
-    echo "Start FalkorDB on that host or update FALKORDB_HOST/FALKORDB_PORT before retrying."
-    exit 1
-  fi
-
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "Live mode requires FalkorDB, but Docker is not installed."
-    echo "Install Docker and re-run ./quick_start.sh --mode live."
-    exit 1
-  fi
-
-  if ! docker info >/dev/null 2>&1; then
-    echo "Live mode requires FalkorDB, but Docker daemon is not running."
-    echo "Start Docker Desktop and re-run ./quick_start.sh --mode live."
-    exit 1
-  fi
-
-  local compose_cmd=()
-  if docker compose version >/dev/null 2>&1; then
-    compose_cmd=(docker compose)
-  elif command -v docker-compose >/dev/null 2>&1; then
-    compose_cmd=(docker-compose)
-  else
-    echo "Live mode requires FalkorDB, but Docker Compose is not available."
-    exit 1
-  fi
-
-  echo "[graphiti] Starting FalkorDB via Docker Compose..."
-  (
-    cd "$ROOT_DIR"
-    "${compose_cmd[@]}" up -d falkordb
-  )
-
-  for _ in {1..30}; do
-    if falkordb_reachable; then
-      echo "[graphiti] FalkorDB is ready at $FALKORDB_HOST_DEFAULT:$FALKORDB_PORT_DEFAULT."
-      return 0
-    fi
-    sleep 1
-  done
-
-  echo "FalkorDB did not become reachable at $FALKORDB_HOST_DEFAULT:$FALKORDB_PORT_DEFAULT."
-  echo "Check docker-compose logs for the falkordb service and retry."
-  exit 1
-}
-
 cleanup() {
   if [[ -n "${OLLAMA_PID:-}" ]] && kill -0 "$OLLAMA_PID" >/dev/null 2>&1; then
     kill "$OLLAMA_PID" >/dev/null 2>&1 || true
@@ -282,7 +204,6 @@ trap cleanup EXIT INT TERM
 
 if [[ "$LIVE_OASIS" == "true" ]]; then
   ensure_oasis_runtime
-  ensure_falkordb_runtime
 fi
 
 if [[ "$REFRESH_DEMO" == "true" ]]; then

@@ -25,29 +25,10 @@ services:
     env_file:
       - .env
     environment:
-      FALKORDB_HOST: falkordb
-      FALKORDB_PORT: "6379"
       OASIS_SIDECAR_HOST: oasis-sidecar
       OASIS_SIDECAR_PORT: "8001"
-    depends_on:
-      falkordb:
-        condition: service_healthy
     volumes:
       - ./backend:/app/backend
-    networks:
-      - mckainsey
-
-  falkordb:
-    image: falkordb/falkordb:latest
-    ports:
-      - "6379:6379"
-    volumes:
-      - falkordb_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
     networks:
       - mckainsey
 
@@ -65,6 +46,3 @@ services:
 networks:
   mckainsey:
     driver: bridge
-
-volumes:
-  falkordb_data:

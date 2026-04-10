@@ -426,7 +426,7 @@ async function fetchChatWithTimeout(
     if (isAbortError) {
       throw new Error(
         `Live chat timed out after ${Math.round(timeoutMs / 1000)} seconds while waiting for backend memory retrieval. `
-        + "Please retry and check backend Graphiti/FalkorDB health.",
+        + "Please retry and check backend service health.",
       );
     }
     throw error;
