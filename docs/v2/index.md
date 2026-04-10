@@ -20,13 +20,13 @@ If your task touches analytics, metric scoring, checkpoint data, or stance class
 3. [frontend/screen-4-report-chat.md](frontend/screen-4-report-chat.md) — chat segment selection, live candidate roster, and extreme scoring for group chat
 4. [architecture.md](architecture.md) section 5 for the checkpoint scoring pipeline
 
-## Fast Handoff Path for Graphiti/Memory Work
+## Fast Handoff Path for Chat/Memory Work
 
-If your task touches Screen 4 chat, live memory, or backend runtime failures:
+If your task touches Screen 4 chat, live memory retrieval, or backend runtime failures:
 
-1. [infrastructure/graphiti.md](infrastructure/graphiti.md)
-2. [backend/context-caching.md](backend/context-caching.md)
-3. [backend/config-system.md](backend/config-system.md)
+1. [backend/context-caching.md](backend/context-caching.md)
+2. [backend/config-system.md](backend/config-system.md)
+3. [architecture.md](architecture.md)
 4. [BRD_V2.md](BRD_V2.md) sections 3 and 4.5
 
 ## Core Documents
@@ -49,15 +49,15 @@ If your task touches Screen 4 chat, live memory, or backend runtime failures:
 
 ### Backend Specs
 
-- [backend/config-system.md](backend/config-system.md): canonical ids, session config persistence, and model/runtime resolution used by memory backends
-- [backend/context-caching.md](backend/context-caching.md): token cache behavior plus Graphiti ingestion/retrieval/fallback policy
+- [backend/config-system.md](backend/config-system.md): canonical ids, session config persistence, and model/runtime resolution used by chat and simulation services
+- [backend/context-caching.md](backend/context-caching.md): token cache behavior plus SQLite memory retrieval/query behavior
 - [backend/controversy-boost.md](backend/controversy-boost.md): OASIS feed ranking control and runtime contract
 - [backend/metrics-heuristics.md](backend/metrics-heuristics.md): quantitative metric generation and analytics derivation rules
 
 ### Infrastructure Specs
 
 - [infrastructure/docker.md](infrastructure/docker.md)
-- [infrastructure/graphiti.md](infrastructure/graphiti.md): Graphiti dependencies, activation triggers, ingestion loop, retrieval path, and failure behavior
+- [infrastructure/graphiti.md](infrastructure/graphiti.md): historical note on the removed Graphiti runtime
 
 ## Current V2 Artboard Map
 

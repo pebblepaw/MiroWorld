@@ -165,8 +165,6 @@ class DemoService:
         
         # Fall back to database
         return self.store.get_simulation_state_snapshot(session_id)
-        
-        return None
 
     def _cached_analytics_payload(self, key: str) -> dict[str, Any] | None:
         cache = self._load_demo_cache()

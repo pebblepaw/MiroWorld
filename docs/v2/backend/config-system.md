@@ -65,7 +65,7 @@ Related session runtime data in `console_sessions`:
 - `api_key`
 - `base_url`
 
-These `console_sessions` fields are what Graphiti memory search uses to build provider-aware LLM/embedder/reranker clients per session.
+These `console_sessions` fields are what the runtime uses to build provider-aware clients per session for knowledge extraction, simulation, and chat/report generation.
 
 ## `analysis_questions` Rules
 
@@ -88,21 +88,21 @@ The config system still exposes a compatibility fallback:
 
 This field remains for compatibility only and should not be treated as the user-facing analysis primitive.
 
-## Graphiti-Relevant Config Resolution
+## Runtime Config Resolution
 
-When memory search runs through Graphiti, backend runtime configuration is resolved in this order:
+When the backend resolves provider/model settings at runtime, it uses:
 
 1. session overrides from `console_sessions`
 2. provider defaults from `Settings`
 
 Resolved values include provider, chat model, embed model, API key, and base URL.
 
-This means config changes on Screen 0 or session model settings directly affect Graphiti query behavior in live chat.
+This means config changes on Screen 0 or session model settings directly affect live knowledge extraction, simulation, and chat behavior.
 
 ### Live activation coupling
 
 - `console_sessions.mode == live` is the gate used by `ConsoleService` when deciding whether chat calls run in live memory mode.
-- In live mode, group and 1:1 agent chat request Graphiti-backed memory search and do not use local fallback.
+- In live mode, group and 1:1 agent chat request SQLite-backed memory retrieval from persisted interactions, transcripts, and checkpoints.
 
 ## Question Metadata
 
@@ -123,5 +123,5 @@ Expected fields include:
 
 - if a use-case YAML has no explicit `analysis_questions`, compatibility fallbacks still exist for older `checkpoint_questions` layouts
 - report configuration is currently derived from `analysis_questions` plus `preset_sections`
-- Graphiti host/port are runtime env vars (`FALKORDB_HOST`, `FALKORDB_PORT`) and are not stored in `session_configs`
+- no external memory host/port is required for the current local runtime
 - `opinion_pre`/`opinion_post` on the `agents` table are always 10.0 in current simulations — analytics and chat scoring now use checkpoint-based `metric_answers` from `simulation_checkpoints` instead. See `backend/metrics-heuristics.md` for scoring details.

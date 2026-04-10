@@ -26,8 +26,7 @@ Browser
 Optional backing systems:
 
 - OASIS Python 3.11 runtime for live simulation
-- FalkorDB + Graphiti for temporal memory
-- Zep compatibility fallback when explicitly configured
+- SQLite FTS5 retrieval for report/group/agent chat grounding
 
 ## 2. Primary Data Flow
 
@@ -156,7 +155,7 @@ The legacy `opinion_pre`/`opinion_post` fields on the `agents` table are always 
 - use-case aliases from V1 ids to canonical V2 ids
 - `guiding_prompt` as a backend compatibility field
 - `report/full` and `report/generate` aliases that now return the V2 report structure
-- Zep fallback inside `MemoryService`
+- `graphiti_context_used` as a legacy response field that now remains `false`
 - `opinion_pre`/`opinion_post` fallback when no checkpoint records exist
 
 These exist to keep older flows from breaking, not to define new product behavior.

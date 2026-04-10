@@ -10,7 +10,6 @@ Typical services:
 
 - frontend
 - backend
-- FalkorDB
 - OASIS runtime / sidecar
 
 ## Environment Notes
@@ -18,7 +17,7 @@ Typical services:
 Important runtime defaults:
 
 - Gemini default model should prefer current active models such as `gemini-2.5-flash-lite`
-- a ZEP key is not required for the standard V2 flow
+- OpenRouter and OpenAI are also supported through the same provider-aware config path
 - live OASIS runs require a valid Python 3.11 runtime with the required packages installed
 
 ## Local Runtime Reality

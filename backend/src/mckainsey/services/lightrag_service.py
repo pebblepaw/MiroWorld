@@ -1043,6 +1043,7 @@ def _normalize_native_relation_type(
     source_node: dict[str, Any],
     target_node: dict[str, Any],
 ) -> str:
+    _ = source_node
     text = " ".join(
         part for part in [raw_relation_text.lower(), description.lower(), str(target_node.get("label", "")).lower()] if part
     )

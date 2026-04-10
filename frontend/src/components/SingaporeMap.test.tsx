@@ -13,6 +13,7 @@ vi.mock("react-leaflet", () => ({
 
 describe("SingaporeMap", () => {
   const originalFetch = global.fetch;
+  const originalBaseUrl = import.meta.env.BASE_URL;
 
   it("fetches the Singapore planning-area geojson by default", async () => {
     global.fetch = vi.fn().mockResolvedValue({
@@ -24,7 +25,7 @@ describe("SingaporeMap", () => {
 
     expect(await screen.findByTestId("map-container")).toBeInTheDocument();
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith("/maps/singapore_planning_areas.geojson");
+      expect(global.fetch).toHaveBeenCalledWith(`${originalBaseUrl}maps/singapore_planning_areas.geojson`);
     });
   });
 
@@ -38,7 +39,7 @@ describe("SingaporeMap", () => {
 
     expect(await screen.findByTestId("map-container")).toBeInTheDocument();
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith("/maps/usa_states.geojson");
+      expect(global.fetch).toHaveBeenCalledWith(`${originalBaseUrl}maps/usa_states.geojson`);
     });
   });
 

@@ -53,33 +53,29 @@ Current rules:
 - Backend: FastAPI
 - Simulation: native OASIS runner in Python 3.11
 - Knowledge extraction: LightRAG-backed processing
-- Memory: Graphiti + FalkorDB for live chat memory; Zep/local compatibility paths exist for non-live flows
+- Memory: SQLite FTS5 over interactions, transcripts, and checkpoints for Screen 4 chat grounding
 - Storage:
   - SQLite for sessions, session config, checkpoints, and simulation state
   - local files for uploads, exports, and run logs
-  - FalkorDB for Graphiti when enabled
 
-### 3.2 Memory Runtime Contract (Graphiti)
+### 3.2 Memory Runtime Contract
 
-Graphiti is the live-memory backend for Screen 4 chat behavior in live sessions.
+SQLite-backed retrieval is the live-memory backend for Screen 4 chat behavior.
 
 Current dependency contract:
 
-- Python package `graphiti-core` must be importable
-- FalkorDB must be reachable at `FALKORDB_HOST:FALKORDB_PORT`
 - session provider/model credentials must resolve from `console_sessions` or provider defaults
 
 Current activation contract:
 
-- session mode `live` activates strict live-memory behavior
-- live group and 1:1 agent chat route through Graphiti-backed memory search
-- in live mode, Graphiti failures are surfaced as runtime errors (no silent local fallback)
+- live group and 1:1 agent chat route through SQLite FTS retrieval plus recent checkpoint/interactions context
+- report chat uses the same underlying local memory/query context
 
 Current ingestion contract:
 
-- Graphiti ingestion is incremental and on-demand during memory search
-- source rows are simulation interactions plus checkpoint records from SQLite
-- sync cursor is tracked in `memory_sync_state`
+- simulation interactions and checkpoints are persisted directly into SQLite
+- FTS tables are maintained by triggers and queried at chat time
+- no external graph database is required
 
 ### 3.3 Session Model
 
@@ -201,9 +197,9 @@ Chat metric selector:
 
 Current memory behavior:
 
-- live group chat and live 1:1 agent chat use Graphiti-backed retrieval
-- live memory path performs incremental Graphiti sync on query
-- report-chat memory path still uses compatibility retrieval semantics (non-live fallback behavior)
+- live group chat and live 1:1 agent chat use SQLite-backed retrieval from interactions, transcripts, and checkpoints
+- report chat uses the same local evidence store and provider-aware runtime config
+- no external graph database is required for current local or Docker flows
 
 ### 4.6 Screen 5 — Analytics
 
@@ -425,7 +421,7 @@ Legacy `opinion_pre` / `opinion_post` fields on the agents table are no longer u
 
 - Canonical V2 ids are used everywhere new state is written.
 - `guiding_prompt` is still accepted by some backend methods for compatibility but is no longer the user-facing analysis primitive.
-- Graphiti is the live memory backend, while Zep/local compatibility code remains for non-live and legacy flows.
+- SQLite is the live memory backend, and the legacy `graphiti_context_used` field remains only for response compatibility.
 - Old sessions created before the Screen 3 seeding fix may still contain generic kickoff content in their stored interactions; new runs should not.
 
 ## 9. Validation Standard
@@ -458,4 +454,4 @@ Changes to V2 should be considered complete only when:
 ### Infrastructure
 
 - [docker.md](infrastructure/docker.md)
-- [graphiti.md](infrastructure/graphiti.md)
+- [graphiti.md](infrastructure/graphiti.md) (historical note only)

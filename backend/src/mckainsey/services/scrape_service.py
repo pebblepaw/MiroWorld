@@ -19,7 +19,7 @@ class _TextCollector(HTMLParser):
         self._chunks: list[str] = []
         self._skip_depth = 0
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: D401
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:  # noqa: D401
         if tag in {"script", "style", "noscript"}:
             self._skip_depth += 1
 

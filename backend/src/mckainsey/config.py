@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     simulation_stream_heartbeat_seconds: int = 5
     simulation_stream_replay_limit: int = 500
 
-    def model_post_init(self, __context) -> None:  # type: ignore[override]
+    def model_post_init(self, _context) -> None:  # type: ignore[override]
         self.llm_provider = self._normalize_provider(self.llm_provider)
         self.llm_timeout_seconds = max(5, int(self.llm_timeout_seconds))
         self.ollama_llm_timeout_seconds = max(5, int(self.ollama_llm_timeout_seconds))

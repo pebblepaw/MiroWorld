@@ -2,7 +2,7 @@
 
 > Date: 2026-04-11  
 > Branch: `feat/phase1-3-impl`  
-> Worktree: `/Users/pebblepaw/Documents/CODING_PROJECTS/Nemotron_Consult/.worktrees/phase1-3-impl`  
+> Worktree: `.worktrees/phase1-3-impl`  
 > Canonical spec: `docs/v2/ImplementationPlan.md`
 
 ## 1) Rules For Continuation
@@ -169,16 +169,16 @@ Observed:
 1. Finish source-mode OpenRouter smoke end-to-end.
 
 ```bash
-cd /Users/pebblepaw/Documents/CODING_PROJECTS/Nemotron_Consult/.worktrees/phase1-3-impl
+cd <repo-root>/.worktrees/phase1-3-impl
 rm -f .env && \
-set -a && source /Users/pebblepaw/Documents/CODING_PROJECTS/Nemotron_Consult/.env && set +a && \
+set -a && source <repo-root>/.env && set +a && \
 export OPENROUTER_API_KEY="${OpenRouter_API_Key:-${OPENROUTER_API_KEY:-}}" && \
 export LLM_PROVIDER=openrouter && \
 export LLM_MODEL='meta-llama/llama-3.1-8b-instruct:free' && \
 export LLM_EMBED_MODEL='openai/text-embedding-3-small' && \
 export LLM_BASE_URL='https://openrouter.ai/api/v1/' && \
-export PY_BIN='/Users/pebblepaw/Documents/CODING_PROJECTS/Nemotron_Consult/.venv/bin/python' && \
-export OASIS_PY_BIN='/Users/pebblepaw/Documents/CODING_PROJECTS/Nemotron_Consult/backend/.venv311/bin/python' && \
+export PY_BIN='<repo-root>/.venv/bin/python' && \
+export OASIS_PY_BIN='<repo-root>/backend/.venv311/bin/python' && \
 export BACKEND_PORT=8010 && \
 export FRONTEND_PORT=5180 && \
 ./quick_start.sh --mode live

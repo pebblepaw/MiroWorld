@@ -240,7 +240,7 @@ Calls [`MetricsService.select_group_chat_agents()`](../../../backend/src/mckains
 #### Step 5: LLM generates responses for each selected agent
 
 For each selected agent, calls `MemoryService.agent_chat_realtime()` which:
-- In live mode: uses Graphiti-backed memory search grounded in the agent's simulation context
+- In live mode: uses SQLite-backed memory retrieval grounded in the agent's simulation context
 - In demo mode: uses demo response generation
 
 Responses are appended to the interaction transcript store and returned as:
@@ -254,7 +254,7 @@ Responses are appended to the interaction transcript store and returned as:
       "response": "As a retiree from Tampines, I worry about...",
       "influence_score": 0.87,
       "memory_used": true,
-      "memory_backend": "graphiti"
+      "memory_backend": "sqlite"
     }
   ]
 }

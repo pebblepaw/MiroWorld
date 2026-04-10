@@ -8,15 +8,21 @@ interface SingaporeMapProps {
   country?: 'singapore' | 'usa';
 }
 
+const BASE_URL = import.meta.env.BASE_URL.endsWith('/')
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+
+const withBase = (path: string) => `${BASE_URL}${path.replace(/^\//, '')}`;
+
 const MAP_CONFIG = {
   singapore: {
-    url: '/maps/singapore_planning_areas.geojson',
+    url: withBase('maps/singapore_planning_areas.geojson'),
     center: [1.3521, 103.8198] as const,
     zoom: 10,
     label: 'Singapore',
   },
   usa: {
-    url: '/maps/usa_states.geojson',
+    url: withBase('maps/usa_states.geojson'),
     center: [39.8283, -98.5795] as const,
     zoom: 4,
     label: 'USA',
