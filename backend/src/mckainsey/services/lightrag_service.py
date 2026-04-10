@@ -458,6 +458,7 @@ class LightRAGService:
                         "document_id": document_id,
                         "chunk_index": chunk_index,
                         "chunk_count": len(chunks),
+                        "chunk_total": len(chunks),
                     },
                 )
 
@@ -489,6 +490,7 @@ class LightRAGService:
                         "document_id": document_id,
                         "chunk_index": chunk_index,
                         "chunk_count": len(chunks),
+                        "chunk_total": len(chunks),
                         "entity_nodes": node_delta,
                         "relationship_edges": edge_delta,
                         "total_nodes": len(merged_nodes),
@@ -501,6 +503,7 @@ class LightRAGService:
                         "document_id": document_id,
                         "chunk_index": chunk_index,
                         "chunk_count": len(chunks),
+                        "chunk_total": len(chunks),
                         "node_delta_count": len(node_delta),
                         "edge_delta_count": len(edge_delta),
                     },

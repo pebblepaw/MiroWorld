@@ -438,6 +438,7 @@ function resolveStreamProgress(eventName: string, payload: Record<string, unknow
     ?? null;
   const chunkTotal =
     numberValue(payload.chunk_total)
+    ?? numberValue(payload.chunk_count)
     ?? numberValue(payload.chunkTotal)
     ?? numberValue(payload.total_chunks)
     ?? numberValue(payload.totalChunks)

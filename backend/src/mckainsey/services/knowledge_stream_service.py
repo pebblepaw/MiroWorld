@@ -55,8 +55,7 @@ class KnowledgeStreamService:
 
     def sse_iter(self, session_id: str) -> Iterator[str]:
         events = self.store.list_knowledge_events(session_id)
-        replay = events[-self.settings.simulation_stream_replay_limit :]
-        for event in replay:
+        for event in events:
             yield self._format_sse(event.get("event_type", "event"), event)
         sent = len(events)
         idle_cycles = 0
@@ -124,11 +123,15 @@ class KnowledgeStreamService:
             elif event_type == "knowledge_chunk_started":
                 state["status"] = "running"
                 state["current_chunk"] = int(event.get("chunk_index", state["current_chunk"]) or state["current_chunk"])
-                state["total_chunks"] = int(event.get("chunk_count", state["total_chunks"]) or state["total_chunks"])
+                state["total_chunks"] = int(
+                    event.get("chunk_total", event.get("chunk_count", state["total_chunks"])) or state["total_chunks"]
+                )
             elif event_type == "knowledge_chunk_completed":
                 state["status"] = "running"
                 state["current_chunk"] = int(event.get("chunk_index", state["current_chunk"]) or state["current_chunk"])
-                state["total_chunks"] = int(event.get("chunk_count", state["total_chunks"]) or state["total_chunks"])
+                state["total_chunks"] = int(
+                    event.get("chunk_total", event.get("chunk_count", state["total_chunks"])) or state["total_chunks"]
+                )
                 state["chunks_processed"] = max(
                     state["chunks_processed"],
                     int(event.get("chunk_index", state["chunks_processed"]) or state["chunks_processed"]),
@@ -136,7 +139,9 @@ class KnowledgeStreamService:
             elif event_type == "knowledge_partial":
                 state["status"] = "running"
                 state["current_chunk"] = int(event.get("chunk_index", state["current_chunk"]) or state["current_chunk"])
-                state["total_chunks"] = int(event.get("chunk_count", state["total_chunks"]) or state["total_chunks"])
+                state["total_chunks"] = int(
+                    event.get("chunk_total", event.get("chunk_count", state["total_chunks"])) or state["total_chunks"]
+                )
                 state["chunks_processed"] = max(
                     state["chunks_processed"],
                     int(event.get("chunk_index", state["chunks_processed"]) or state["chunks_processed"]),

@@ -92,6 +92,26 @@ def test_knowledge_stream_service_replays_events_in_order(tmp_path: Path) -> Non
     assert state["total_edges"] == 1
 
 
+def test_knowledge_stream_service_tracks_failure_state(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    stream = KnowledgeStreamService(settings)
+    session_id = "session-failed"
+
+    stream.reset(session_id)
+    stream.append_events(
+        session_id,
+        [
+            {"event_type": "knowledge_started", "session_id": session_id, "document_count": 1},
+            {"event_type": "knowledge_failed", "session_id": session_id, "detail": "model unavailable"},
+        ],
+    )
+
+    state = stream.get_state(session_id)
+
+    assert state["status"] == "failed"
+    assert state["last_error"] == "model unavailable"
+
+
 def test_console_process_knowledge_publishes_stream_events(tmp_path: Path, monkeypatch) -> None:
     settings = _make_settings(tmp_path)
     service = ConsoleService(settings)

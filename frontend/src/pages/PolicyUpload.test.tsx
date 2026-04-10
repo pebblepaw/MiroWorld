@@ -515,11 +515,11 @@ describe("PolicyUpload", () => {
       });
       source.emit("knowledge_chunk_started", {
         chunk_index: 1,
-        chunk_total: 2,
+        chunk_count: 2,
         document_name: "brief.txt",
       });
       source.emit("knowledge_partial", {
-        nodes: [
+        entity_nodes: [
           {
             id: "policy:streamed",
             label: "Streamed Subsidy",
@@ -535,7 +535,7 @@ describe("PolicyUpload", () => {
             importance_score: 0.42,
           },
         ],
-        edges: [
+        relationship_edges: [
           {
             source: "policy:streamed",
             target: "group:streamed",
@@ -559,7 +559,7 @@ describe("PolicyUpload", () => {
     act(() => {
       source.emit("knowledge_chunk_completed", {
         chunk_index: 1,
-        chunk_total: 2,
+        chunk_count: 2,
         progress: 55,
       });
       source.emit("knowledge_completed", {
