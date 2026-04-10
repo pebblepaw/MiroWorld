@@ -1344,24 +1344,15 @@ class ConsoleService:
 
     def group_chat(self, session_id: str, segment: str, message: str, top_n: int = 5, metric_name: str | None = None) -> dict[str, Any]:
         runtime_settings = self._runtime_settings_for_session(session_id)
-        config_service = ConfigService(runtime_settings)
-        metrics = MetricsService(config_service)
         memory_service = MemoryService(runtime_settings)
-
-        segment_key = self._normalize_group_chat_segment(segment)
-        if not metric_name and segment_key in ("dissenter", "supporter"):
-            agents_enriched, score_field = self._agents_with_aggregate_extreme_scores(session_id, segment_key)
-        else:
-            agents_enriched, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
+        segment_key, selected, _agents_enriched, _score_field = self._select_group_chat_agents(
+            session_id,
+            segment=segment,
+            top_n=top_n,
+            metric_name=metric_name,
+        )
 
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            selected = metrics.select_group_chat_agents(
-                agents=agents_enriched,
-                interactions=self.store.get_interactions(session_id),
-                segment=segment_key,
-                top_n=max(1, int(top_n)),
-                score_field=score_field,
-            )
             if not selected:
                 hub = self.demo.get_interaction_hub(session_id)
                 influential_agents = [
@@ -1408,15 +1399,6 @@ class ConsoleService:
                 "responses": responses,
             }
 
-        agents = agents_enriched
-        interactions = self.store.get_interactions(session_id)
-        selected = metrics.select_group_chat_agents(
-            agents=agents,
-            interactions=interactions,
-            segment=segment_key,
-            top_n=max(1, int(top_n)),
-            score_field=score_field,
-        )
         if not selected:
             notice = {
                 "agent_id": "system",
@@ -1502,6 +1484,27 @@ class ConsoleService:
             "responses": responses,
         }
 
+    def get_group_chat_candidates(
+        self,
+        session_id: str,
+        segment: str,
+        top_n: int = 5,
+        metric_name: str | None = None,
+    ) -> dict[str, Any]:
+        segment_key, selected, _agents_enriched, score_field = self._select_group_chat_agents(
+            session_id,
+            segment=segment,
+            top_n=top_n,
+            metric_name=metric_name,
+        )
+        return {
+            "session_id": session_id,
+            "segment": segment_key,
+            "metric_name": metric_name,
+            "score_field": score_field,
+            "agents": selected,
+        }
+
     def _normalize_group_chat_segment(self, segment: str) -> str:
         segment_key = str(segment).strip().lower()
         alias_map = {
@@ -1509,6 +1512,64 @@ class ConsoleService:
             "dissenters": "dissenter",
         }
         return alias_map.get(segment_key, segment_key)
+
+    def _select_group_chat_agents(
+        self,
+        session_id: str,
+        *,
+        segment: str,
+        top_n: int = 5,
+        metric_name: str | None = None,
+    ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], str]:
+        runtime_settings = self._runtime_settings_for_session(session_id)
+        config_service = ConfigService(runtime_settings)
+        metrics = MetricsService(config_service)
+
+        segment_key = self._normalize_group_chat_segment(segment)
+        if not metric_name and segment_key in {"dissenter", "supporter"}:
+            agents_enriched, score_field = self._agents_with_aggregate_extreme_scores(session_id, segment_key)
+        else:
+            agents_enriched, score_field = self._agents_with_checkpoint_metrics(session_id, metric_name)
+
+        selected = metrics.select_group_chat_agents(
+            agents=agents_enriched,
+            interactions=self.store.get_interactions(session_id),
+            segment=segment_key,
+            top_n=max(1, int(top_n)),
+            score_field=score_field,
+        )
+        agent_lookup = {
+            str(agent.get("agent_id") or agent.get("id") or ""): agent
+            for agent in agents_enriched
+        }
+        selected_with_names: list[dict[str, Any]] = []
+        for row in selected:
+            agent_id = str(row.get("agent_id") or "")
+            if not agent_id:
+                continue
+            agent = agent_lookup.get(agent_id) or {}
+            selected_with_names.append(
+                {
+                    **row,
+                    "agent_name": self._group_chat_agent_name(agent, agent_id),
+                    "score": agent.get(score_field),
+                }
+            )
+        return segment_key, selected_with_names, agents_enriched, score_field
+
+    @staticmethod
+    def _group_chat_agent_name(agent: dict[str, Any], fallback: str) -> str:
+        for key in ("name", "agent_name", "display_name", "confirmed_name"):
+            value = str(agent.get(key) or "").strip()
+            if value:
+                return value
+        persona = agent.get("persona")
+        if isinstance(persona, dict):
+            for key in ("name", "display_name", "confirmed_name", "agent_name", "occupation"):
+                value = str(persona.get(key) or "").strip()
+                if value:
+                    return value
+        return fallback
 
     def _knowledge_context_excerpt(self, session_id: str) -> str:
         knowledge = self.store.get_knowledge_artifact(session_id) or {}
@@ -1740,13 +1801,11 @@ class ConsoleService:
         stances: list[dict[str, Any]] = []
         for agent in agents:
             aid = str(agent.get("agent_id") or agent.get("id") or "")
-            score = agent.get(score_field)
-            if score is None:
-                continue
+            score = agent.get(score_field, 5.0)
             try:
                 numeric = float(score)
             except (TypeError, ValueError):
-                continue
+                numeric = 5.0
             persona = agent.get("persona") or {}
             stances.append({
                 "agent_id": aid,
@@ -1929,8 +1988,6 @@ class ConsoleService:
             agent_scores = scores_by_agent.get(aid)
             if agent_scores:
                 agent[score_field] = pick(agent_scores)
-
-        return agents, score_field
 
         return agents, score_field
 

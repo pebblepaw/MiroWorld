@@ -1,6 +1,6 @@
 # McKAInsey V2 — Architecture
 
-> Living document for the current implemented V2 stack.
+> Living document for the current implemented V2 stack. Last updated 2026-04-09.
 
 ## 1. Runtime Topology
 
@@ -64,14 +64,19 @@ Optional backing systems:
 - all questions generate report sections
 - insight blocks and preset sections are derived from the active YAML
 - chat uses real simulation context plus memory/document context
+- a shared `MetricSelector` component filters by analysis question (per-metric or aggregate)
+- group chat participant selection uses checkpoint-based extreme scoring (min for dissenters, max for supporters)
 
 ### Stage 5: Analytics
 
-- analytics endpoints normalize the same simulation artifacts into:
-  - polarization
-  - opinion flow
-  - influence leaders
-  - cascades / viral posts
+- analytics endpoints normalize checkpoint and interaction data into:
+  - polarization (metric-aware)
+  - opinion flow (metric-aware)
+  - agent stances (metric-aware)
+  - influence leaders (metric-agnostic)
+  - cascades / viral posts (metric-agnostic)
+- the `MetricSelector` filters polarization, opinion flow, and demographic sentiment map
+- all scores are parsed from free-text `metric_answers` via `_extract_metric_score()`
 
 ## 3. State Ownership
 
@@ -126,16 +131,32 @@ The current Screen 4 payload contains:
 
 The frontend expects normalized payloads for:
 
-- polarization time series
-- opinion flow buckets and transitions
-- influence leaders with names and viewpoint summaries
-- cascades / viral posts with author names and nested comments
+- **polarization**: time series with `polarization_index`, `severity`, `by_group_means`, `group_sizes` per round
+- **opinion flow**: flow matrix with initial/final bucket counts and transition bands (supporter/neutral/dissenter)
+- **agent stances**: per-agent `{agent_id, score, planning_area, age_group, archetype}` array with `score_field` indicating data source (`checkpoint_{metric}` or `aggregate_avg`)
+- **influence**: top influencers with `name`, `influence_score`, `top_view`, `top_post`
+- **cascades**: viral posts with `author_name`, `stance`, `content`, `comments`, `engagement_score`, `tree_size`
 
-## 5. Compatibility Layers Still Present
+Stance thresholds: ≥ 7 supporter, 5–6 neutral, < 5 dissenter. See `backend/metrics-heuristics.md` for full scoring documentation.
+
+## 5. Checkpoint Scoring Pipeline
+
+The checkpoint scoring pipeline is central to analytics and chat:
+
+1. OASIS simulation writes `metric_answers` (free-text LLM responses) into `simulation_checkpoints`
+2. `_extract_metric_score()` parses text → numeric 1–10 scale (handles "7/10", "Yes"/"No", plain numbers)
+3. Per-metric mode: scores come from `metric_answers[metric_name]`
+4. Aggregate mode: scores are averaged across all parseable metrics per agent
+5. Group chat extreme mode: uses min (dissenters) or max (supporters) across all metrics
+
+The legacy `opinion_pre`/`opinion_post` fields on the `agents` table are always 10.0 and serve only as a last-resort fallback when no checkpoint data exists.
+
+## 6. Compatibility Layers Still Present
 
 - use-case aliases from V1 ids to canonical V2 ids
 - `guiding_prompt` as a backend compatibility field
 - `report/full` and `report/generate` aliases that now return the V2 report structure
 - Zep fallback inside `MemoryService`
+- `opinion_pre`/`opinion_post` fallback when no checkpoint records exist
 
 These exist to keep older flows from breaking, not to define new product behavior.

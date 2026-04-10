@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -396,7 +396,6 @@ describe("ReportChat", () => {
 
     expect((await screen.findAllByText("Policy Approval")).length).toBeGreaterThan(0);
     expect(screen.getByText("Approval Rate")).toBeInTheDocument();
-    expect(screen.getByText("Polarization Over Time")).toBeInTheDocument();
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
     expect(screen.queryByText("Supporting Views")).not.toBeInTheDocument();
     expect(screen.queryByText("Dissenting Views")).not.toBeInTheDocument();
@@ -676,5 +675,57 @@ describe("ReportChat", () => {
       variant: "destructive",
     });
     expect(screen.queryByText("Live one-on-one reply")).not.toBeInTheDocument();
+  });
+
+  it("uses the live backend participant roster for supporter and dissenter chips", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+        return { ok: true, json: async () => buildReportPayload() } as Response;
+      }
+      if (url.includes("/chat/group/agents") && url.includes("segment=dissenter")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen4",
+            segment: "dissenter",
+            agents: [
+              { agent_id: "agent-neg-2", agent_name: "Priya Nair", influence_score: 0.84 },
+            ],
+          }),
+        } as Response;
+      }
+      if (url.includes("/chat/group/agents") && url.includes("segment=supporter")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen4",
+            segment: "supporter",
+            agents: [
+              { agent_id: "agent-neg-1", agent_name: "Alex Tan", influence_score: 0.91 },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedReportContext />
+        <ReportChat />
+      </AppProvider>,
+    );
+
+    const dissenterRoster = await screen.findByLabelText("Active group participants");
+    expect(within(dissenterRoster).getByText("Priya Nair")).toBeInTheDocument();
+    expect(within(dissenterRoster).queryByText("Alex Tan")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /top supporters/i }));
+
+    const supporterRoster = await screen.findByLabelText("Active group participants");
+    expect(within(supporterRoster).getByText("Alex Tan")).toBeInTheDocument();
+    expect(within(supporterRoster).queryByText("Janet Lee")).not.toBeInTheDocument();
   });
 });

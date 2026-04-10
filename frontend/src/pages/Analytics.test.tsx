@@ -491,4 +491,70 @@ describe("Analytics", () => {
     expect(screen.queryByText("API Leader")).not.toBeInTheDocument();
     expect(screen.queryByText("API Viral Thread")).not.toBeInTheDocument();
   });
+
+  it("uses aggregate agent stances for the demographic map instead of stale sampled sentiment", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/analytics/polarization")) {
+        return {
+          ok: true,
+          json: async () => ({
+            points: [
+              { round: "Initial", polarization_index: 0.0, severity: "low" },
+              { round: "R1", polarization_index: 0.0, severity: "low" },
+            ],
+          }),
+        } as Response;
+      }
+      if (url.includes("/analytics/opinion-flow")) {
+        return {
+          ok: true,
+          json: async () => ({
+            initial: { supporter: 0, neutral: 3, dissenter: 0 },
+            final: { supporter: 2, neutral: 0, dissenter: 1 },
+            flows: [
+              { from: "neutral", to: "supporter", count: 2 },
+              { from: "neutral", to: "dissenter", count: 1 },
+            ],
+          }),
+        } as Response;
+      }
+      if (url.includes("/analytics/influence")) {
+        return { ok: true, json: async () => ({ top_influencers: [] }) } as Response;
+      }
+      if (url.includes("/analytics/cascades")) {
+        return { ok: true, json: async () => ({ viral_posts: [] }) } as Response;
+      }
+      if (url.includes("/analytics/agent-stances")) {
+        return {
+          ok: true,
+          json: async () => ({
+            stances: [
+              { agent_id: "agent-1", score: 9 },
+              { agent_id: "agent-2", score: 8 },
+              { agent_id: "agent-3", score: 3 },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedAnalyticsContextWithAgents />
+        <Analytics />
+      </AppProvider>,
+    );
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).includes("/analytics/agent-stances")),
+      ).toBe(true);
+    });
+
+    expect(await screen.findByTitle("Supporter One · positive")).toHaveStyle({ backgroundColor: "hsl(var(--data-green))" });
+    expect(screen.getByTitle("Neutral Two · positive")).toHaveStyle({ backgroundColor: "hsl(var(--data-green))" });
+    expect(screen.getByTitle("Dissenter Three · negative")).toHaveStyle({ backgroundColor: "hsl(var(--data-red))" });
+  });
 });

@@ -12,6 +12,7 @@ import {
   StructuredReportState,
   exportReportDocx,
   generateReport,
+  getGroupChatAgents,
   getStructuredReport,
   sendAgentChatMessage,
   sendGroupChatMessage,
@@ -26,6 +27,7 @@ type ViewMode = 'report' | 'split' | 'chat';
 type ChatSegment = 'dissenters' | 'supporters' | 'one-on-one';
 
 type ChatAgent = Pick<Agent, 'id' | 'name' | 'sentiment'> & Partial<Omit<Agent, 'id' | 'name' | 'sentiment'>>;
+type GroupChatCandidate = { agent_id: string; agent_name?: string; influence_score?: number; score?: number | null };
 
 const EMPTY_REPORT: StructuredReportState = {
   session_id: '',
@@ -159,6 +161,7 @@ export default function ReportChat() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatPending, setChatPending] = useState(false);
   const [chatMetric, setChatMetric] = useState<string | null>(null);
+  const [chatCandidates, setChatCandidates] = useState<GroupChatCandidate[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const topSupporters = useMemo(
@@ -388,6 +391,31 @@ export default function ReportChat() {
     setChatError(null);
   }, [chatSegment, selectedAgent?.id]);
 
+  useEffect(() => {
+    if (!liveMode || !sessionId || chatSegment === 'one-on-one') {
+      setChatCandidates([]);
+      return;
+    }
+
+    let active = true;
+    setChatError(null);
+    getGroupChatAgents(sessionId, {
+      segment: chatSegment === 'supporters' ? 'supporter' : 'dissenter',
+      ...(chatMetric ? { metric_name: chatMetric } : {}),
+    }).then((payload) => {
+      if (!active) return;
+      setChatCandidates(Array.isArray(payload.agents) ? payload.agents : []);
+    }).catch((error) => {
+      if (!active) return;
+      setChatCandidates([]);
+      setChatError(error instanceof Error ? error.message : 'Unable to load live chat participants.');
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [chatMetric, chatSegment, liveMode, sessionId]);
+
   const enqueueDemoGroupReplies = useCallback((threadId: string, responders: Agent[]) => {
     responders.slice(0, 5).forEach((agent, index) => {
       window.setTimeout(() => {
@@ -405,6 +433,23 @@ export default function ReportChat() {
       addChatMessage(threadId, 'agent', reply, selected.id);
     }, 520 + Math.random() * 500);
   }, [addChatMessage]);
+
+  const displayedGroupAgents = useMemo<ChatAgent[]>(() => {
+    if (!liveMode) {
+      return chatSegment === 'supporters' ? topSupporters : topDissenters;
+    }
+    return chatCandidates.map((candidate) => {
+      const existing = agentsById.get(candidate.agent_id);
+      if (existing) {
+        return existing;
+      }
+      return {
+        id: candidate.agent_id,
+        name: candidate.agent_name || candidate.agent_id,
+        sentiment: chatSegment === 'supporters' ? 'positive' : 'negative',
+      } satisfies ChatAgent;
+    });
+  }, [agentsById, chatCandidates, chatSegment, liveMode, topDissenters, topSupporters]);
 
   const sendMessage = useCallback(async () => {
     if (chatPending) return;
@@ -471,7 +516,7 @@ export default function ReportChat() {
     }
 
     const threadId = `group-${chatSegment}`;
-    const responders = chatSegment === 'supporters' ? topSupporters : topDissenters;
+    const responders = displayedGroupAgents;
 
     addChatMessage(threadId, 'user', trimmed);
     setMessage('');
@@ -528,6 +573,7 @@ export default function ReportChat() {
   }, [
     addChatMessage,
     chatPending,
+    displayedGroupAgents,
     chatSegment,
     enqueueDemoGroupReplies,
     enqueueDemoOneToOneReply,
@@ -535,8 +581,6 @@ export default function ReportChat() {
     selectedAgent,
     sessionId,
     liveMode,
-    topDissenters,
-    topSupporters,
   ]);
 
   const handleExport = useCallback(async () => {
@@ -891,8 +935,11 @@ export default function ReportChat() {
                 ))}
               </div>
               {(chatSegment === 'dissenters' || chatSegment === 'supporters') && (
-                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
-                  {(chatSegment === 'dissenters' ? topDissenters : topSupporters).map(agent => (
+                <div
+                  aria-label="Active group participants"
+                  className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin"
+                >
+                  {displayedGroupAgents.map(agent => (
                     <span
                       key={agent.id}
                       className="shrink-0 inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[10px] font-mono bg-white/5 border border-white/10 text-muted-foreground whitespace-nowrap"

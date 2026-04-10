@@ -364,6 +364,19 @@ export interface ConsoleGroupChatResponse {
   responses: ConsoleChatResponseMessage[];
 }
 
+export interface ConsoleGroupChatAgentsResponse {
+  session_id: string;
+  segment: string;
+  metric_name?: string | null;
+  score_field: string;
+  agents: Array<{
+    agent_id: string;
+    agent_name?: string;
+    influence_score: number;
+    score?: number | null;
+  }>;
+}
+
 export interface ConsoleAgentChatResponse {
   session_id: string;
   agent_id?: string;
@@ -729,7 +742,7 @@ export async function getAnalysisQuestions(
 
 export async function sendGroupChatMessage(
   sessionId: string,
-  payload: { segment: string; message: string; metric_name?: string },
+  payload: { segment: string; message: string; metric_name?: string; top_n?: number },
 ): Promise<ConsoleGroupChatResponse> {
   const response = await fetchChatWithTimeout(`${API_BASE}/api/v2/console/session/${sessionId}/chat/group`, {
     method: "POST",
@@ -741,6 +754,18 @@ export async function sendGroupChatMessage(
     return normalizeGroupChatPayload(await response.json());
   }
   return normalizeGroupChatPayload(await parseJson<Record<string, unknown>>(response));
+}
+
+export async function getGroupChatAgents(
+  sessionId: string,
+  payload: { segment: string; metric_name?: string; top_n?: number },
+): Promise<ConsoleGroupChatAgentsResponse> {
+  const url = new URL(`${API_BASE}/api/v2/console/session/${sessionId}/chat/group/agents`);
+  url.searchParams.set("segment", payload.segment);
+  if (payload.metric_name) url.searchParams.set("metric_name", payload.metric_name);
+  if (payload.top_n) url.searchParams.set("top_n", String(payload.top_n));
+  const response = await fetch(url.toString());
+  return parseJson(response);
 }
 
 export async function sendAgentChatMessage(

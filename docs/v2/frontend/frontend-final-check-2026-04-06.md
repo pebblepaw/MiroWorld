@@ -1,48 +1,39 @@
-# Frontend Status Check — Updated 2026-04-07
+# Frontend Status Check — Updated 2026-04-09
 
-This file is retained as a lightweight implementation-status note. The per-screen specs are authoritative; this file summarizes the current frontend state after the live linking and bug-fix passes.
+This file is retained as a lightweight implementation-status note. The per-screen specs are authoritative; this file summarizes the current frontend state after the live linking, bug-fix, and multi-metric passes.
 
 ## Current Status
 
 ### Screen 0
 
-- live country/provider/model hydration is implemented
-- canonical V2 use cases are used in the onboarding flow
-- current Gemini defaults prefer active models
+- Live country/provider/model hydration is implemented
+- Canonical V2 use cases are used in the onboarding flow
+- Current Gemini defaults prefer active models
 
 ### Screen 1
 
-- analysis questions are session-scoped
-- custom questions persist back to session config
-- metadata generation and extraction run in parallel
-- live extraction shows short runtime/provider errors
+- Analysis questions are session-scoped
+- Custom questions persist back to session config
+- Metadata generation and extraction run in parallel
+- Live extraction shows short runtime/provider errors
 
 ### Screen 2
 
-- dynamic filter rendering is wired to backend data
-- token estimate display is live
+- Dynamic filter rendering is wired to backend data
+- Token estimate display is live
 
 ### Screen 3
 
-- live simulation status, feed, and counters are wired
-- new runs seed from analysis questions, not a generic kickoff post
-- feed state survives backward navigation
-
-### Screen 4
-
-- V2 report payload is rendered directly
-- names are preferred over raw serial ids
-- chat uses the backend path in live mode
-- DOCX export is wired
-
-### Screen 5
-
-- analytics reads live endpoints in live mode
-- incomplete-data warning states are present
-- leader and viral-post cards normalize names and viewpoint summaries
+- Live simulation status, feed, and counters are wired
+- New runs seed from analysis questions, not a generic- New runs seed from analysis questions, not a generic- New runs seed from analysis questions, not a d directly
+- Names are preferred - Names are preferred - Names are preferred -ath- Names are preferred - Names are preferred - Names are preferred -ath- Names are preferred - Names are preferred - Names are preferred -ath- Names are preferred - Names are preferred - Names are preferred -ath-senter/1:1 segment tab- Namefunction- Names are preferred - Names are preferred - Names ng - Names are preferred - Names are preferred - Namesds liv- Names are preferred - Names are preferred * filters polarization, opinion flow, and demographic sentiment map
+- Polarization and opinion flow refetch - Polarization and opinion flow refetch - Polarizoint- Polarization and opinion flow refetch - Polarizatiomplete-data warning states are present
+- Leader and viral-post cards normalize names and viewpoint summaries
+- Influence and cascade sections are metric-agnostic and do not refetch on metric change
 
 ## Remaining Quality Watchouts
 
-- older sessions can still display pre-fix historical artifacts
-- analytics quality still depends heavily on simulation quality and checkpoint signal
-- any future screen-level behavior changes should update the corresponding screen spec immediately
+- Older sessions can still display pre-fix historical artifacts
+- Analytics quality still depends heavily on simulation quality and checkpoint signal
+- Any future screen-level behavior changes should update the corresponding screen spec immediately
+- `opinion_pre`/`opinion_post` on the agents table are always 10.0 in current simulations — analytics and chat scoring use checkpoint-based data instead

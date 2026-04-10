@@ -24,7 +24,7 @@ export function MetricSelector({ sessionId, value, onChange, className }: Metric
     getAnalysisQuestions(sessionId)
       .then((data) => {
         const qs = ((data.questions || []) as AnalysisQuestion[]).filter(
-          (q) => q.type !== "open-ended" && q.metric_name
+          (q) => (q.type === "scale" || q.type === "yes-no") && q.metric_name
         );
         setQuestions(qs);
       })
@@ -46,7 +46,7 @@ export function MetricSelector({ sessionId, value, onChange, className }: Metric
         <option value="__all__">All (Aggregate)</option>
         {questions.map((q) => (
           <option key={q.metric_name} value={q.metric_name}>
-            {q.metric_label} ({q.metric_unit || q.type})
+            {q.metric_label} ({q.type === "yes-no" ? "%" : q.metric_unit || "/10"})
           </option>
         ))}
       </select>

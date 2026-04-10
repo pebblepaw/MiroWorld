@@ -1,7 +1,7 @@
 # McKAInsey V2 — Business Requirements Document
 
-> Version: 2.1  
-> Date: 2026-04-08  
+> Version: 2.2  
+> Date: 2026-04-09  
 > Status: Implemented and documentation-synchronized
 
 This document describes the current V2 product and engineering contract. It supersedes earlier V2 planning language that still referenced separate Screen 6 behavior, generic policy kickoff posts, retired Gemini defaults, or V1-style use-case metrics.
@@ -169,7 +169,7 @@ Purpose:
 
 - display the structured V2 report
 - support report-only, split, and chat-only views inside the same page
-- support group chat and 1:1 agent chat
+- support group chat and 1:1 agent chat with per-metric filtering
 - export the report to DOCX
 
 Current report payload:
@@ -179,7 +179,7 @@ Current report payload:
 - `metric_deltas`
 - `quick_stats`
 - `sections`
-- `insight_blocks`
+- `insight_blocks` (legacy — still in payload but not prominently rendered)
 - `preset_sections`
 
 Current rendering rules:
@@ -189,6 +189,14 @@ Current rendering rules:
 - yes/no metrics are normalized to percentages
 - markdown formatting should be stripped before display
 - chat-only is a Screen 4 view state, not a separate routed Screen 6
+
+Chat metric selector:
+
+- a `MetricSelector` dropdown above the chat panel lets the user filter group chat by a specific analysis question
+- "All (Aggregate)" uses the average of all parseable metric scores to rank agents
+- per-metric mode ranks agents by their score on the selected question only
+- open-ended questions are excluded from the dropdown
+- the selected metric is passed as `metric_name` in the group chat request body
 
 Current memory behavior:
 
@@ -204,6 +212,19 @@ Purpose:
 - show opinion migration
 - show demographic sentiment slices
 - show key opinion leaders and viral discussions
+
+Metric selector:
+
+- a `MetricSelector` dropdown below the page header lets the user filter analytics by a specific analysis question
+- polarization, opinion flow, and the demographic sentiment map all respond to the selected metric
+- KOL and viral posts remain metric-agnostic (influence is about engagement, not opinion)
+- open-ended questions are excluded from the dropdown
+
+Demographic sentiment map:
+
+- when a metric is selected, the frontend calls `GET /analytics/agent-stances?metric_name=...`
+- the returned per-agent scores are mapped to sentiment overrides: `>= 7` positive, `< 5` negative, else neutral
+- these overrides replace the default agent sentiment for the demographic grid rendering
 
 Current behavior:
 
@@ -270,10 +291,11 @@ Custom Screen 1 questions are appended at the session level and participate in s
 
 ### 6.5 Analytics
 
-- `GET /api/v2/console/session/{id}/analytics/polarization`
-- `GET /api/v2/console/session/{id}/analytics/opinion-flow`
-- `GET /api/v2/console/session/{id}/analytics/influence`
-- `GET /api/v2/console/session/{id}/analytics/cascades`
+- `GET /api/v2/console/session/{id}/analytics/polarization?metric_name=` — optional per-metric filter
+- `GET /api/v2/console/session/{id}/analytics/opinion-flow?metric_name=` — optional per-metric filter
+- `GET /api/v2/console/session/{id}/analytics/influence` — metric-agnostic
+- `GET /api/v2/console/session/{id}/analytics/cascades` — metric-agnostic
+- `GET /api/v2/console/session/{id}/analytics/agent-stances?metric_name=` — per-agent scores for demographic map
 
 ## 7. Data Contracts
 
@@ -324,6 +346,75 @@ Current normalized question shape:
   "metric_unit": "%",
   "report_title": "Conversion Analysis",
   "tooltip": "Percentage of agents expressing purchase intent."
+}
+```
+
+### 7.3 Checkpoint Metric Answers
+
+Checkpoint records are stored in `simulation_checkpoints` with `checkpoint_kind` values of `"baseline"` or `"final"`. Each record contains a `stance_json` blob with a `metric_answers` dictionary keyed by `metric_name`.
+
+Values are free-text LLM responses, not clean numbers:
+
+```json
+{
+  "approval_rate": "7/10. I think the policy has merit but needs refinement.",
+  "policy_viewpoints": "I support the housing subsidy but oppose the transport levy...",
+  "approval_of_initiatives": "No"
+}
+```
+
+The backend `_extract_metric_score()` method parses these into numeric values:
+
+| Input pattern | Parsed value |
+|:-------------|:-------------|
+| `"7/10"`, `"7/10. I think..."` | `7.0` |
+| `"6.5"` | `6.5` |
+| `"Yes"` | `10.0` |
+| `"No"` | `1.0` |
+| Free text with no leading number | `None` (excluded from scoring) |
+
+### 7.4 Stance Thresholds
+
+All analytics and chat selection use consistent thresholds:
+
+| Score range | Stance |
+|:-----------|:-------|
+| `>= 7` | supporter |
+| `>= 5` and `< 7` | neutral |
+| `< 5` | dissenter |
+
+### 7.5 Aggregate vs Per-Metric Scoring
+
+When `metric_name` is omitted (aggregate mode):
+
+- **Opinion flow and polarization**: compute the average of all parseable metric scores per agent from checkpoint data
+- **Group chat agent selection**: use the minimum score (for dissenters) or maximum score (for supporters) across all metrics, so that an agent who dissents on *any* question is captured
+- **Demographic map stances**: use the checkpoint-based average
+
+When `metric_name` is provided:
+
+- All endpoints score agents using only the specified metric from checkpoint data
+
+Legacy `opinion_pre` / `opinion_post` fields on the agents table are no longer used by analytics or chat. They may still be stale from earlier implementations.
+
+### 7.6 Agent Stances Response
+
+`GET /analytics/agent-stances` returns:
+
+```json
+{
+  "session_id": "session-819ca44a",
+  "metric_name": "approval_rate",
+  "score_field": "checkpoint_approval_rate",
+  "stances": [
+    {
+      "agent_id": "agent-0001",
+      "score": 7.0,
+      "planning_area": "Hougang",
+      "age_group": "",
+      "archetype": ""
+    }
+  ]
 }
 ```
 

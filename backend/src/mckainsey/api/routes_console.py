@@ -24,6 +24,7 @@ from mckainsey.models.console import (
     ConsoleSessionResponse,
     V2AgentChatRequest,
     V2AgentChatResponse,
+    V2GroupChatAgentsResponse,
     V2GroupChatRequest,
     V2GroupChatResponse,
     InteractionHubResponse,
@@ -516,6 +517,26 @@ def v2_group_chat(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return V2GroupChatResponse(**payload)
+
+
+@router.get("/session/{session_id}/chat/group/agents", response_model=V2GroupChatAgentsResponse)
+def v2_group_chat_agents(
+    session_id: str,
+    segment: str = Query(...),
+    top_n: int = Query(default=5, ge=1, le=20),
+    metric_name: str | None = Query(None),
+    settings: Settings = Depends(get_settings),
+) -> V2GroupChatAgentsResponse:
+    try:
+        payload = ConsoleService(settings).get_group_chat_candidates(
+            session_id,
+            segment=segment,
+            top_n=top_n,
+            metric_name=metric_name,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return V2GroupChatAgentsResponse(**payload)
 
 
 @router.post("/session/{session_id}/chat/agent/{agent_id}", response_model=V2AgentChatResponse)

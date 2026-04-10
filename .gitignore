@@ -27,6 +27,7 @@ backend/log/
 .codex_tmp/*
 .gemini/*
 .playwright-cli/*
+backend/.playwright-cli/*
 stitch_frontend_reference.zip
 backend/.cache/*
 archive/*

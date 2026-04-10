@@ -300,7 +300,9 @@ export default function Analytics() {
   const [viralPostData, setViralPostData] = useState<ViralPost[]>(() => (liveMode ? [] : VIRAL_POSTS));
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
-  const [agentStanceOverrides, setAgentStanceOverrides] = useState<Map<string, string>>(new Map());
+  const [agentStanceOverrides, setAgentStanceOverrides] = useState<Map<string, Agent["sentiment"]>>(new Map());
+  const [agentStancesLoading, setAgentStancesLoading] = useState(false);
+  const [agentStancesError, setAgentStancesError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!liveMode || !sessionId) {
@@ -459,19 +461,55 @@ export default function Analytics() {
   }, [agentNamesById, sessionId, selectedMetric]);
 
   useEffect(() => {
-    if (!sessionId || !selectedMetric) {
+    if (!sessionId) {
       setAgentStanceOverrides(new Map());
+      setAgentStancesLoading(false);
+      setAgentStancesError(null);
       return;
     }
-    getAnalyticsAgentStances(sessionId, selectedMetric).then((data: any) => {
-      const overrides = new Map<string, string>();
+
+    let active = true;
+    setAgentStancesLoading(true);
+    setAgentStancesError(null);
+
+    const baseOverrides = new Map<string, Agent["sentiment"]>();
+    for (const agent of agents) {
+      baseOverrides.set(agent.id, liveMode ? "neutral" : agent.sentiment);
+    }
+    setAgentStanceOverrides(baseOverrides);
+
+    getAnalyticsAgentStances(sessionId, selectedMetric ?? undefined).then((data: any) => {
+      if (!active) return;
+      const overrides = new Map(baseOverrides);
       for (const item of (data.stances || [])) {
         const sentiment = item.score >= 7 ? "positive" : item.score < 5 ? "negative" : "neutral";
         overrides.set(item.agent_id, sentiment);
       }
       setAgentStanceOverrides(overrides);
-    }).catch(() => setAgentStanceOverrides(new Map()));
-  }, [sessionId, selectedMetric]);
+      setAgentStancesLoading(false);
+    }).catch((error) => {
+      if (!active) return;
+      setAgentStanceOverrides(baseOverrides);
+      setAgentStancesLoading(false);
+      setAgentStancesError(error instanceof Error ? error.message : "Unable to load demographic sentiment data.");
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [agents, liveMode, sessionId, selectedMetric]);
+
+  const effectiveAgentSentiment = useMemo(() => {
+    return (agent: Agent): Agent["sentiment"] => {
+      if (agentStanceOverrides.has(agent.id)) {
+        return agentStanceOverrides.get(agent.id) as Agent["sentiment"];
+      }
+      if (liveMode) {
+        return "neutral";
+      }
+      return agent.sentiment;
+    };
+  }, [agentStanceOverrides, liveMode]);
 
   const sourceAgents = useMemo<Agent[]>(() => {
     if (agents.length > 0) return agents;
@@ -495,11 +533,11 @@ export default function Analytics() {
       .sort((left, right) => right[1].length - left[1].length)
       .map(([name, agentsInGroup]) => {
         const supporters = agentsInGroup.filter((agent) => {
-          const eff = agentStanceOverrides.get(agent.id) ?? agent.sentiment;
+          const eff = effectiveAgentSentiment(agent);
           return eff === "positive";
         }).length;
         const dissenters = agentsInGroup.filter((agent) => {
-          const eff = agentStanceOverrides.get(agent.id) ?? agent.sentiment;
+          const eff = effectiveAgentSentiment(agent);
           return eff === "negative";
         }).length;
         const neutral = agentsInGroup.length - supporters - dissenters;
@@ -520,11 +558,11 @@ export default function Analytics() {
 
     const overflowAgents = overflow.flatMap((group) => group.agents);
     const supporters = overflowAgents.filter((agent) => {
-      const eff = agentStanceOverrides.get(agent.id) ?? agent.sentiment;
+      const eff = effectiveAgentSentiment(agent);
       return eff === "positive";
     }).length;
     const dissenters = overflowAgents.filter((agent) => {
-      const eff = agentStanceOverrides.get(agent.id) ?? agent.sentiment;
+      const eff = effectiveAgentSentiment(agent);
       return eff === "negative";
     }).length;
 
@@ -538,7 +576,7 @@ export default function Analytics() {
         dissenters,
       },
     ];
-  }, [dimension, sourceAgents, agentStanceOverrides]);
+  }, [dimension, effectiveAgentSentiment, sourceAgents]);
 
   const dimensionOptions = useMemo(() => {
     if (useCase === "public-policy-testing" || useCase === "policy-review") {
@@ -572,7 +610,7 @@ export default function Analytics() {
     ] as Array<{ key: DemographicDimension; label: string }>;
   }, [useCase]);
 
-  const demographicLoading = analyticsLoading && !!sessionId && agents.length === 0;
+  const demographicLoading = !!sessionId && (analyticsLoading || agentStancesLoading);
   const showDemographicEmpty = !demographicLoading && demographicGroups.length === 0;
 
   return (
@@ -640,7 +678,11 @@ export default function Analytics() {
             </div>
           </div>
 
-          {demographicLoading ? (
+          {agentStancesError ? (
+            <div className="flex min-h-[180px] items-center justify-center rounded border border-destructive/40 bg-destructive/10 px-5 text-center text-sm text-destructive">
+              {agentStancesError}
+            </div>
+          ) : demographicLoading ? (
             <div className="flex min-h-[180px] items-center justify-center rounded border border-white/10 bg-white/[0.02] text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
               Loading demographic data...
             </div>
@@ -672,7 +714,7 @@ export default function Analytics() {
 
                     <div className="flex max-w-[340px] flex-wrap gap-1">
                       {group.agents.map((agent) => {
-                        const eff = (agentStanceOverrides.get(agent.id) ?? agent.sentiment) as Agent["sentiment"];
+                        const eff = effectiveAgentSentiment(agent);
                         return (
                           <span
                             key={agent.id}

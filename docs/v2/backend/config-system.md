@@ -124,3 +124,4 @@ Expected fields include:
 - if a use-case YAML has no explicit `analysis_questions`, compatibility fallbacks still exist for older `checkpoint_questions` layouts
 - report configuration is currently derived from `analysis_questions` plus `preset_sections`
 - Graphiti host/port are runtime env vars (`FALKORDB_HOST`, `FALKORDB_PORT`) and are not stored in `session_configs`
+- `opinion_pre`/`opinion_post` on the `agents` table are always 10.0 in current simulations — analytics and chat scoring now use checkpoint-based `metric_answers` from `simulation_checkpoints` instead. See `backend/metrics-heuristics.md` for scoring details.

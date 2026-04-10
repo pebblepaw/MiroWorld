@@ -241,6 +241,14 @@ class V2GroupChatResponse(BaseModel):
     responses: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class V2GroupChatAgentsResponse(BaseModel):
+    session_id: str
+    segment: str
+    metric_name: str | None = None
+    score_field: str
+    agents: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class V2AgentChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
