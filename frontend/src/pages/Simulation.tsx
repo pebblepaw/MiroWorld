@@ -306,6 +306,13 @@ export default function Simulation() {
     }
     return { positive, neutral, negative };
   }, [feedThreads]);
+  const overallSentiment = useMemo(() => {
+    const { positive, neutral, negative } = sentimentBreakdown;
+    if (positive === 0 && neutral === 0 && negative === 0) return "neutral";
+    if (positive >= negative && positive >= neutral) return "positive";
+    if (negative > positive && negative >= neutral) return "negative";
+    return "neutral";
+  }, [sentimentBreakdown]);
 
   const runtimeEstimate = useMemo(
     () => estimateRuntimeBreakdown(populationArtifact?.sample_count ?? 0, simulationRounds, modelProvider),
@@ -1079,22 +1086,22 @@ export default function Simulation() {
                     </TooltipContent>
                   </Tooltip>
                 ))}
-                {/* Sentiment breakdown derived from feed threads */}
+                {/* Sentiment derived from feed threads */}
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <div className="flex flex-col gap-1 px-3 py-2 bg-muted/40 border border-border rounded-lg cursor-help col-span-2">
+                    <div className="flex flex-col gap-1 px-3 py-2 bg-muted/40 border border-border rounded-lg cursor-help">
                       <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Sentiment</span>
-                      <div className="flex items-center gap-3 text-sm font-mono font-bold">
-                        <span className="text-[hsl(var(--data-green))]">{sentimentBreakdown.positive} positive</span>
-                        <span className="text-muted-foreground/80">·</span>
-                        <span className="text-muted-foreground">{sentimentBreakdown.neutral} neutral</span>
-                        <span className="text-muted-foreground/80">·</span>
-                        <span className="text-[hsl(var(--data-red))]">{sentimentBreakdown.negative} negative</span>
-                      </div>
+                      <span className={`text-xl font-mono font-bold ${
+                        overallSentiment === "positive" ? "text-[hsl(var(--data-green))]"
+                          : overallSentiment === "negative" ? "text-[hsl(var(--data-red))]"
+                          : "text-muted-foreground"
+                      }`}>
+                        {overallSentiment}
+                      </span>
                     </div>
                   </TooltipTrigger>
                   <TooltipContent className="max-w-[220px] text-xs leading-relaxed bg-popover text-popover-foreground border-border">
-                    Counts posts by net likes: positive (likes &gt; dislikes), neutral (equal), negative (dislikes &gt; likes).
+                    Overall sentiment based on post reactions: {sentimentBreakdown.positive} positive, {sentimentBreakdown.neutral} neutral, {sentimentBreakdown.negative} negative.
                   </TooltipContent>
                 </Tooltip>
               </div>
