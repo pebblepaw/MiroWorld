@@ -4,8 +4,8 @@ import json
 import time
 from typing import Any, Iterator
 
-from mckainsey.config import Settings
-from mckainsey.services.storage import SimulationStore
+from miroworld.config import Settings
+from miroworld.services.storage import SimulationStore
 
 
 class KnowledgeStreamService:

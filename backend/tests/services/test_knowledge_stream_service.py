@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from mckainsey.config import Settings
-from mckainsey.services.console_service import ConsoleService
-from mckainsey.services.knowledge_stream_service import KnowledgeStreamService
-from mckainsey.services.lightrag_service import LightRAGService
+from miroworld.config import Settings
+from miroworld.services.console_service import ConsoleService
+from miroworld.services.knowledge_stream_service import KnowledgeStreamService
+from miroworld.services.lightrag_service import LightRAGService
 
 
 def _make_settings(tmp_path: Path) -> Settings:

@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from mckainsey.config import Settings, get_settings
-from mckainsey.models.phase_c import (
+from miroworld.config import Settings, get_settings
+from miroworld.models.phase_c import (
     AgentChatRequest,
     AgentChatResponse,
     AgentMemoryResponse,
     SyncMemoryRequest,
     SyncMemoryResponse,
 )
-from mckainsey.services.memory_service import MemoryService
+from miroworld.services.memory_service import MemoryService
 
 router = APIRouter(prefix="/api/v1/phase-c", tags=["phase-c"])
 

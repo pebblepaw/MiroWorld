@@ -4,9 +4,9 @@ from copy import deepcopy
 import re
 from typing import Any
 
-from mckainsey.config import Settings
-from mckainsey.services.llm_client import GeminiChatClient
-from mckainsey.services.storage import SimulationStore
+from miroworld.config import Settings
+from miroworld.services.llm_client import GeminiChatClient
+from miroworld.services.storage import SimulationStore
 
 
 class MemoryService:
@@ -136,7 +136,7 @@ class MemoryService:
         checkpoint_excerpt = self.format_checkpoint_records(memory_context["checkpoint_records"], limit=4)
         activity_excerpt = self._format_agent_activity_excerpt(memories, agent_id=agent_id, limit=8)
         prompt = (
-            f"You are persona agent {agent_id} from McKAInsey simulation {simulation_id}.\n"
+            f"You are persona agent {agent_id} from MiroWorld simulation {simulation_id}.\n"
             "## Your Profile\n"
             f"{agent['persona']}\n\n"
             "## Your Checkpoint Responses\n"

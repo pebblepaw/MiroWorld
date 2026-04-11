@@ -13,12 +13,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from mckainsey.config import Settings
-from mckainsey.models.phase_a import PersonaFilterRequest
-from mckainsey.models.phase_b import SimulationRunRequest
-from mckainsey.services.llm_client import GeminiChatClient
-from mckainsey.services.persona_sampler import PersonaSampler
-from mckainsey.services.storage import SimulationStore
+from miroworld.config import Settings
+from miroworld.models.phase_a import PersonaFilterRequest
+from miroworld.models.phase_b import SimulationRunRequest
+from miroworld.services.llm_client import GeminiChatClient
+from miroworld.services.persona_sampler import PersonaSampler
+from miroworld.services.storage import SimulationStore
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]

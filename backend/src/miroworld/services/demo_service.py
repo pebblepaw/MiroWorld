@@ -1,5 +1,5 @@
 """
-Demo Service for McKAInsey
+Demo Service for MiroWorld
 
 This service provides cached demo data for all screens when running in demo mode.
 It ensures no Gemini API calls are made during demo operation.
@@ -12,8 +12,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from mckainsey.config import Settings
-from mckainsey.services.storage import SimulationStore
+from miroworld.config import Settings
+from miroworld.services.storage import SimulationStore
 
 
 DEMO_SESSION_ID = "demo-session-fy2026-budget"

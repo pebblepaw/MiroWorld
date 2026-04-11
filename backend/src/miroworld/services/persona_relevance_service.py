@@ -9,8 +9,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from mckainsey.config import Settings
-from mckainsey.services.lightrag_service import (
+from miroworld.config import Settings
+from miroworld.services.lightrag_service import (
     AGE_COHORT_ALIASES,
     EDUCATION_LEVEL_ALIASES,
     HOBBY_SLUGS,
@@ -21,7 +21,7 @@ from mckainsey.services.lightrag_service import (
     SEX_ALIASES,
     SKILL_SLUGS,
 )
-from mckainsey.services.llm_client import GeminiChatClient, GeminiEmbeddingClient
+from miroworld.services.llm_client import GeminiChatClient, GeminiEmbeddingClient
 
 
 TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9\-_]+")

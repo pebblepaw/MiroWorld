@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from mckainsey.config import BACKEND_DIR, Settings
+from miroworld.config import BACKEND_DIR, Settings
 
 
 logger = logging.getLogger(__name__)

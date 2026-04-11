@@ -6,8 +6,8 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, 
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from mckainsey.config import Settings, get_settings
-from mckainsey.models.console import (
+from miroworld.config import Settings, get_settings
+from miroworld.models.console import (
     ConsoleAgentChatRequest,
     ConsoleAgentChatResponse,
     ConsoleDynamicFiltersResponse,
@@ -46,12 +46,12 @@ from mckainsey.models.console import (
     V2SessionCreateRequest,
     V2SessionCreateResponse,
 )
-from mckainsey.services.config_service import ConfigService
-from mckainsey.services.console_service import ConsoleService
-from mckainsey.services.demo_service import DemoService
-from mckainsey.services.knowledge_stream_service import KnowledgeStreamService
-from mckainsey.services.scrape_service import ScrapeService
-from mckainsey.services.simulation_stream_service import SimulationStreamService
+from miroworld.services.config_service import ConfigService
+from miroworld.services.console_service import ConsoleService
+from miroworld.services.demo_service import DemoService
+from miroworld.services.knowledge_stream_service import KnowledgeStreamService
+from miroworld.services.scrape_service import ScrapeService
+from miroworld.services.simulation_stream_service import SimulationStreamService
 
 
 router = APIRouter(prefix="/api/v2/console", tags=["console"])
@@ -60,7 +60,7 @@ compat_router = APIRouter(prefix="/api/v2", tags=["console-compat"])
 
 def _is_demo_session(session_id: str, settings: Settings) -> bool:
     """Check if session is in demo mode."""
-    from mckainsey.services.storage import SimulationStore
+    from miroworld.services.storage import SimulationStore
     store = SimulationStore(settings.simulation_db_path)
     session = store.get_console_session(session_id)
     return session is not None and session.get("mode") == "demo"
@@ -684,7 +684,7 @@ def generate_question_metadata(
     if not question:
         raise HTTPException(status_code=422, detail="'question' field is required.")
     try:
-        from mckainsey.services.question_metadata_service import QuestionMetadataService
+        from miroworld.services.question_metadata_service import QuestionMetadataService
         service = QuestionMetadataService(settings)
         metadata = service.generate_metric_metadata_sync(question)
         return metadata

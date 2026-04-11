@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Any, Callable
 
-from mckainsey.services.token_tracker import TokenTracker
+from miroworld.services.token_tracker import TokenTracker
 
 
 GenerateFn = Callable[[dict[str, Any]], dict[str, Any] | str]

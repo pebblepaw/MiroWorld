@@ -16,7 +16,7 @@ from lightrag.llm.openai import openai_complete_if_cache, openai_embed
 from lightrag.types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
 from lightrag.utils import EmbeddingFunc
 
-from mckainsey.config import Settings
+from miroworld.config import Settings
 
 
 def _constant_slugify(value: str) -> str:

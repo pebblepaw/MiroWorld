@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from mckainsey.config import Settings, get_settings
-from mckainsey.models.console import (
+from miroworld.config import Settings, get_settings
+from miroworld.models.console import (
     V2OpinionFlowResponse,
     V2PolarizationResponse,
 )
-from mckainsey.services.console_service import ConsoleService
-from mckainsey.services.demo_service import DemoService
-from mckainsey.services.storage import SimulationStore
+from miroworld.services.console_service import ConsoleService
+from miroworld.services.demo_service import DemoService
+from miroworld.services.storage import SimulationStore
 
 
 router = APIRouter(prefix="/api/v2/console", tags=["analytics"])

@@ -13,7 +13,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "McKAInsey API"
+    app_name: str = "MiroWorld API"
     nemotron_dataset: str = "nvidia/Nemotron-Personas-Singapore"
     nemotron_split: str = "train"
     nemotron_cache_dir: str = "data/nemotron"

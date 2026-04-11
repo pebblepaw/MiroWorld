@@ -15,15 +15,15 @@ from typing import Any
 from fastapi import HTTPException
 from fastapi import UploadFile
 
-from mckainsey.config import Settings
-from mckainsey.services.config_service import ConfigService
-from mckainsey.services.demo_service import DemoService
-from mckainsey.services.document_parser import extract_document_text
-from mckainsey.services.lightrag_service import LightRAGService, OCCUPATION_NAMES, PLANNING_AREA_NAMES
-from mckainsey.services.knowledge_stream_service import KnowledgeStreamService
-from mckainsey.services.memory_service import MemoryService
-from mckainsey.services.metrics_service import MetricsService
-from mckainsey.services.model_provider_service import (
+from miroworld.config import Settings
+from miroworld.services.config_service import ConfigService
+from miroworld.services.demo_service import DemoService
+from miroworld.services.document_parser import extract_document_text
+from miroworld.services.lightrag_service import LightRAGService, OCCUPATION_NAMES, PLANNING_AREA_NAMES
+from miroworld.services.knowledge_stream_service import KnowledgeStreamService
+from miroworld.services.memory_service import MemoryService
+from miroworld.services.metrics_service import MetricsService
+from miroworld.services.model_provider_service import (
     curate_provider_models,
     ensure_ollama_models_available,
     mask_api_key,
@@ -33,13 +33,13 @@ from mckainsey.services.model_provider_service import (
     resolve_model_selection,
     selection_to_settings_update,
 )
-from mckainsey.services.persona_relevance_service import PersonaRelevanceService
-from mckainsey.services.persona_sampler import PersonaSampler
-from mckainsey.services.report_service import ReportService
-from mckainsey.services.simulation_service import SimulationService
-from mckainsey.services.simulation_stream_service import SimulationStreamService
-from mckainsey.services.storage import SimulationStore
-from mckainsey.services.token_tracker import TokenTracker
+from miroworld.services.persona_relevance_service import PersonaRelevanceService
+from miroworld.services.persona_sampler import PersonaSampler
+from miroworld.services.report_service import ReportService
+from miroworld.services.simulation_service import SimulationService
+from miroworld.services.simulation_stream_service import SimulationStreamService
+from miroworld.services.storage import SimulationStore
+from miroworld.services.token_tracker import TokenTracker
 
 MAX_AFFECTED_GROUPS_CANDIDATES = 1000
 MAX_BASELINE_CANDIDATES = 1200
@@ -497,7 +497,7 @@ class ConsoleService:
         base_url: str | None = None,
     ) -> dict[str, Any]:
         normalized = normalize_provider(provider)
-        from mckainsey.services.model_provider_service import list_models_for_provider
+        from miroworld.services.model_provider_service import list_models_for_provider
 
         models = list_models_for_provider(
             self.settings,
@@ -1417,7 +1417,7 @@ class ConsoleService:
         use_case = str(session_cfg.get("use_case") or "").strip() or None
         report_payload = self.get_v2_report(session_id)
         docx_bytes = report_service.export_v2_report_docx(session_id, report=report_payload, use_case=use_case)
-        return (f"mckainsey-{session_id}-report.docx", docx_bytes)
+        return (f"miroworld-{session_id}-report.docx", docx_bytes)
 
     def group_chat(self, session_id: str, segment: str, message: str, top_n: int = 5, metric_name: str | None = None) -> dict[str, Any]:
         runtime_settings = self._runtime_settings_for_session(session_id)

@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends
 
-from mckainsey.config import Settings, get_settings
-from mckainsey.services.geo_service import PlanningAreaGeoService
-from mckainsey.services.report_service import ReportService
-from mckainsey.services.simulation_service import SimulationService
-from mckainsey.services.storage import SimulationStore
+from miroworld.config import Settings, get_settings
+from miroworld.services.geo_service import PlanningAreaGeoService
+from miroworld.services.report_service import ReportService
+from miroworld.services.simulation_service import SimulationService
+from miroworld.services.storage import SimulationStore
 
 router = APIRouter(prefix="/api/v1/phase-e", tags=["phase-e"])
 

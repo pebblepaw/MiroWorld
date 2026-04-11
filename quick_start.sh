@@ -141,13 +141,13 @@ ensure_oasis_runtime() {
     python3.11 -m venv "$BACKEND_DIR/.venv311"
   fi
 
-  if ! "$OASIS_PY_BIN" "$BACKEND_DIR/scripts/check_oasis_runtime.py" >/tmp/mckainsey_oasis_runtime_check.log 2>&1; then
+  if ! "$OASIS_PY_BIN" "$BACKEND_DIR/scripts/check_oasis_runtime.py" >/tmp/miroworld_oasis_runtime_check.log 2>&1; then
     echo "[oasis] Runtime validation failed. Installing pinned OASIS dependencies..."
     "$OASIS_PY_BIN" -m pip install -U pip
     "$OASIS_PY_BIN" -m pip install -r "$BACKEND_DIR/requirements-oasis-runtime.txt"
-    "$OASIS_PY_BIN" "$BACKEND_DIR/scripts/check_oasis_runtime.py" >/tmp/mckainsey_oasis_runtime_check.log 2>&1 || {
+    "$OASIS_PY_BIN" "$BACKEND_DIR/scripts/check_oasis_runtime.py" >/tmp/miroworld_oasis_runtime_check.log 2>&1 || {
       echo "OASIS runtime is still invalid after installing pinned dependencies."
-      cat /tmp/mckainsey_oasis_runtime_check.log
+      cat /tmp/miroworld_oasis_runtime_check.log
       exit 1
     }
   fi
@@ -253,7 +253,7 @@ fi
 echo "[backend] Starting API on http://$BACKEND_HOST:$BACKEND_PORT ..."
 (
   cd "$BACKEND_DIR"
-  env "${BACKEND_ENV[@]}" "$PY_BIN" -m uvicorn mckainsey.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" > "$BACKEND_LOG" 2>&1
+  env "${BACKEND_ENV[@]}" "$PY_BIN" -m uvicorn miroworld.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" > "$BACKEND_LOG" 2>&1
 ) &
 BACKEND_PID=$!
 
@@ -279,7 +279,7 @@ FRONTEND_PID=$!
 sleep 2
 
 echo ""
-echo "McKAInsey console is up:"
+echo "MiroWorld console is up:"
 echo "  Frontend: http://$FRONTEND_HOST:$FRONTEND_PORT"
 echo "  Backend:  http://$BACKEND_HOST:$BACKEND_PORT"
 echo "  Boot mode: $BOOT_MODE"

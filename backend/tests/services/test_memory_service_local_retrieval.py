@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mckainsey.config import Settings
-from mckainsey.services.memory_service import MemoryService
-from mckainsey.services.report_service import ReportService
-from mckainsey.services.storage import SimulationStore
+from miroworld.config import Settings
+from miroworld.services.memory_service import MemoryService
+from miroworld.services.report_service import ReportService
+from miroworld.services.storage import SimulationStore
 
 
 def _make_settings(tmp_path: Path) -> Settings:

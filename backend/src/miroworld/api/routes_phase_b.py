@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from mckainsey.config import Settings, get_settings
-from mckainsey.models.phase_b import (
+from miroworld.config import Settings, get_settings
+from miroworld.models.phase_b import (
     SimulationRunRequest,
     SimulationRunResponse,
     SimulationSnapshotResponse,
 )
-from mckainsey.services.simulation_service import SimulationService
+from miroworld.services.simulation_service import SimulationService
 
 router = APIRouter(prefix="/api/v1/phase-b", tags=["phase-b"])
 

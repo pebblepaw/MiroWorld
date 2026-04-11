@@ -4,8 +4,8 @@ from typing import Any
 
 from openai import OpenAI
 
-from mckainsey.config import Settings
-from mckainsey.services.model_provider_service import ResolvedModelSelection, resolve_model_selection
+from miroworld.config import Settings
+from miroworld.services.model_provider_service import ResolvedModelSelection, resolve_model_selection
 
 
 class GeminiChatClient:

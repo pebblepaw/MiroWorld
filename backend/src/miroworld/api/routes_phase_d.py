@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from mckainsey.config import Settings, get_settings
-from mckainsey.models.phase_d import ReportChatRequest, ReportChatResponse, ReportResponse
-from mckainsey.services.report_service import ReportService
+from miroworld.config import Settings, get_settings
+from miroworld.models.phase_d import ReportChatRequest, ReportChatResponse, ReportResponse
+from miroworld.services.report_service import ReportService
 
 router = APIRouter(prefix="/api/v1/phase-d", tags=["phase-d"])
 

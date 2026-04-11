@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from mckainsey.config import Settings
-from mckainsey.services.llm_client import GeminiChatClient
+from miroworld.config import Settings
+from miroworld.services.llm_client import GeminiChatClient
 
 
 _METADATA_PROMPT_TEMPLATE = """\

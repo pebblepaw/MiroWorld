@@ -1,15 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from mckainsey.api.routes_health import router as health_router
-from mckainsey.api.routes_analytics import router as analytics_router
-from mckainsey.api.routes_console import compat_router, router as console_router
-from mckainsey.api.routes_phase_a import router as phase_a_router
-from mckainsey.api.routes_phase_b import router as phase_b_router
-from mckainsey.api.routes_phase_c import router as phase_c_router
-from mckainsey.api.routes_phase_d import router as phase_d_router
-from mckainsey.api.routes_phase_e import router as phase_e_router
-from mckainsey.config import get_settings
+from miroworld.api.routes_health import router as health_router
+from miroworld.api.routes_analytics import router as analytics_router
+from miroworld.api.routes_console import compat_router, router as console_router
+from miroworld.api.routes_phase_a import router as phase_a_router
+from miroworld.api.routes_phase_b import router as phase_b_router
+from miroworld.api.routes_phase_c import router as phase_c_router
+from miroworld.api.routes_phase_d import router as phase_d_router
+from miroworld.api.routes_phase_e import router as phase_e_router
+from miroworld.config import get_settings
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)

@@ -10,8 +10,8 @@ import duckdb
 from datasets import load_dataset
 from huggingface_hub import snapshot_download
 
-from mckainsey.config import BACKEND_DIR
-from mckainsey.models.phase_a import PersonaFilterRequest
+from miroworld.config import BACKEND_DIR
+from miroworld.models.phase_a import PersonaFilterRequest
 
 
 REPO_ROOT = BACKEND_DIR.parent

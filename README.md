@@ -1,9 +1,9 @@
-# McKAInsey
+# MiroWorld
 
 [![Live Demo](https://img.shields.io/badge/live-demo-0a66c2?logo=github)](https://pebblepaw.github.io/Nemotron_AI_Consultant/)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
-McKAInsey is an AI consulting simulator for policy, campaign, and product analysis. It ingests source material into a knowledge graph, samples a synthetic population from the Nemotron Singapore personas dataset, runs a multi-round OASIS social simulation, then grounds report/chat/analytics on the resulting interactions and checkpoints.
+MiroWorld is an AI consulting simulator for policy, campaign, and product analysis. It ingests source material into a knowledge graph, samples a synthetic population from the Nemotron Singapore personas dataset, runs a multi-round OASIS social simulation, then grounds report/chat/analytics on the resulting interactions and checkpoints.
 
 The repository ships:
 

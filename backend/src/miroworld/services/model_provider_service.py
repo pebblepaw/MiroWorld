@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 
 from openai import OpenAI
 
-from mckainsey.config import Settings
+from miroworld.config import Settings
 
 
 SUPPORTED_PROVIDERS = ("google", "openrouter", "openai", "ollama")

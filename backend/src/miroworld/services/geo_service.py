@@ -6,7 +6,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from mckainsey.config import Settings
+from miroworld.config import Settings
 
 
 class PlanningAreaGeoService:

@@ -10,12 +10,12 @@ from typing import Any
 
 from docx import Document
 
-from mckainsey.config import Settings
-from mckainsey.services.config_service import ConfigService
-from mckainsey.services.llm_client import GeminiChatClient
-from mckainsey.services.memory_service import MemoryService
-from mckainsey.services.metrics_service import compute_polarization, compute_opinion_flow, build_influence_graph
-from mckainsey.services.storage import SimulationStore
+from miroworld.config import Settings
+from miroworld.services.config_service import ConfigService
+from miroworld.services.llm_client import GeminiChatClient
+from miroworld.services.memory_service import MemoryService
+from miroworld.services.metrics_service import compute_polarization, compute_opinion_flow, build_influence_graph
+from miroworld.services.storage import SimulationStore
 
 
 def _clean_report_text(value: Any) -> str:
@@ -108,7 +108,7 @@ class ReportService:
                 raw = self.llm.complete_required(
                     prompt,
                     system_prompt=(
-                        "You are McKAInsey ReportAgent. Return valid JSON only using the requested schema. "
+                        "You are MiroWorld ReportAgent. Return valid JSON only using the requested schema. "
                         "Every claim must be grounded in provided evidence."
                     ),
                 )
@@ -295,7 +295,7 @@ class ReportService:
             f"User asks: {message}\n"
             "Provide a direct, data-grounded answer with concrete cohort references."
         )
-        return self.llm.complete_required(prompt, system_prompt="You are McKAInsey ReportAgent.")
+        return self.llm.complete_required(prompt, system_prompt="You are MiroWorld ReportAgent.")
 
     def report_chat_payload(self, simulation_id: str, message: str) -> dict[str, Any]:
         report = self.build_report(simulation_id)
@@ -312,7 +312,7 @@ class ReportService:
             f"User asks: {message}\n"
             "Provide a direct, data-grounded answer with concrete cohort references."
         )
-        response = self.llm.complete_required(prompt, system_prompt="You are McKAInsey ReportAgent.")
+        response = self.llm.complete_required(prompt, system_prompt="You are MiroWorld ReportAgent.")
         return {
             "session_id": simulation_id,
             "simulation_id": simulation_id,
@@ -326,7 +326,7 @@ class ReportService:
         }
 
     def build_v2_report(self, simulation_id: str, use_case: str | None = None) -> dict[str, Any]:
-        from mckainsey.services.metrics_service import MetricsService
+        from miroworld.services.metrics_service import MetricsService
 
         agents = self.store.get_agents(simulation_id)
         interactions = self.store.get_interactions(simulation_id)
@@ -481,7 +481,7 @@ class ReportService:
     def export_v2_report_docx(self, simulation_id: str, report: dict[str, Any] | None = None, use_case: str | None = None) -> bytes:
         payload = report or self.build_v2_report(simulation_id, use_case=use_case)
         document = Document()
-        document.add_heading("McKAInsey Analysis Report", level=0)
+        document.add_heading("MiroWorld Analysis Report", level=0)
         document.add_paragraph(f"Session: {payload.get('session_id', simulation_id)}")
         document.add_paragraph(f"Generated: {payload.get('generated_at', '')}")
 
@@ -954,7 +954,7 @@ class ReportService:
             response = self.llm.complete_required(
                 prompt,
                 system_prompt=(
-                    "You are McKAInsey ReportAgent. Stay factual and evidence-grounded. "
+                    "You are MiroWorld ReportAgent. Stay factual and evidence-grounded. "
                     "Write as an analyst summarizing agent perspectives, never as a participant."
                 ),
             )
@@ -1042,7 +1042,7 @@ class ReportService:
             "Write a concise executive summary in 3-4 sentences."
         )
         try:
-            return self.llm.complete_required(prompt, system_prompt="You are McKAInsey ReportAgent.")
+            return self.llm.complete_required(prompt, system_prompt="You are MiroWorld ReportAgent.")
         except Exception:  # noqa: BLE001
             direction = "declined" if final_metric < initial_metric else "improved"
             return (
@@ -1208,7 +1208,7 @@ class ReportService:
             response = self.llm.complete_required(
                 prompt,
                 system_prompt=(
-                    "You are McKAInsey ReportAgent. Write in third-person analytical voice only; "
+                    "You are MiroWorld ReportAgent. Write in third-person analytical voice only; "
                     "do not present personal opinions."
                 ),
             )
@@ -1266,7 +1266,7 @@ class ReportService:
 
         raw = self.llm.complete_required(
             prompt=prompt,
-            system_prompt="You are McKAInsey ReportAgent. Return valid JSON only.",
+            system_prompt="You are MiroWorld ReportAgent. Return valid JSON only.",
         )
         parsed = self._parse_recommendations(raw)
         if parsed:

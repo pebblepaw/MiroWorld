@@ -2,15 +2,15 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from mckainsey.config import Settings, get_settings
-from mckainsey.models.phase_a import (
+from miroworld.config import Settings, get_settings
+from miroworld.models.phase_a import (
     KnowledgeProcessRequest,
     KnowledgeProcessResponse,
     PersonaFilterRequest,
     PersonaSampleResponse,
 )
-from mckainsey.services.lightrag_service import LightRAGService
-from mckainsey.services.persona_sampler import PersonaSampler
+from miroworld.services.lightrag_service import LightRAGService
+from miroworld.services.persona_sampler import PersonaSampler
 
 router = APIRouter(prefix="/api/v1/phase-a", tags=["phase-a"])
 

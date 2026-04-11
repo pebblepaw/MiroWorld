@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mckainsey-backend"
+name = "miroworld-backend"
 version = "0.1.0"
-description = "McKAInsey backend services"
+description = "MiroWorld backend services"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

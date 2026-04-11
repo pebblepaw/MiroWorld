@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from mckainsey.config import Settings
-from mckainsey.services.model_provider_service import resolve_model_selection, selection_to_settings_update
+from miroworld.config import Settings
+from miroworld.services.model_provider_service import resolve_model_selection, selection_to_settings_update
 
 
 def test_resolve_model_selection_uses_active_runtime_settings_when_no_overrides() -> None:
