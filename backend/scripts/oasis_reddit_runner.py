@@ -519,7 +519,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
     model = ModelFactory.create(
         model_platform=ModelPlatformType.OPENAI,
         model_type=payload.model_name,
-        model_config_dict={"max_tokens": 1024},
+        model_config_dict={"max_tokens": 4096},
     )
 
     available_actions = [

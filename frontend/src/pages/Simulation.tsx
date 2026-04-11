@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ArrowRight, Flame, Loader2, MessageSquare, Play, ThumbsDown, ThumbsUp, Clock, TrendingUp, Sparkles, Users, Zap } from "lucide-react";
 
 import { GlassCard } from "@/components/GlassCard";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -867,7 +868,7 @@ export default function Simulation() {
                       </div>
                       
                       <h4 className="text-sm font-semibold text-foreground mb-2 leading-tight">{thread.title}</h4>
-                      <p className="text-body text-muted-foreground leading-relaxed whitespace-pre-wrap">{thread.content}</p>
+                      <MarkdownContent className="text-body text-muted-foreground">{thread.content}</MarkdownContent>
                       
                       <div className="flex items-center gap-5 mt-4 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer">
@@ -894,21 +895,15 @@ export default function Simulation() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <span className={`font-medium text-[11px] ${tone.nameText}`}>{comment.actorName}</span>
-                                <span className="text-muted-foreground ml-2 whitespace-pre-wrap">{comment.content}</span>
-                                {(comment.likes > 0 || comment.dislikes > 0) && (
-                                  <span className="flex items-center gap-3 mt-1 text-[10px] font-mono text-muted-foreground">
-                                    {comment.likes > 0 && (
-                                      <span className="flex items-center gap-1 text-emerald-500/70">
-                                        <ThumbsUp className="w-2.5 h-2.5" />{comment.likes}
-                                      </span>
-                                    )}
-                                    {comment.dislikes > 0 && (
-                                      <span className="flex items-center gap-1 text-red-500/70">
-                                        <ThumbsDown className="w-2.5 h-2.5" />{comment.dislikes}
-                                      </span>
-                                    )}
+                                <MarkdownContent className="text-xs text-muted-foreground ml-2">{comment.content}</MarkdownContent>
+                                <span className="flex items-center gap-3 mt-1 text-[10px] font-mono text-muted-foreground">
+                                  <span className="flex items-center gap-1 text-emerald-500/70">
+                                    <ThumbsUp className="w-2.5 h-2.5" />{comment.likes}
                                   </span>
-                                )}
+                                  <span className="flex items-center gap-1 text-red-500/70">
+                                    <ThumbsDown className="w-2.5 h-2.5" />{comment.dislikes}
+                                  </span>
+                                </span>
                               </div>
                             </div>
                           ))}
@@ -1228,7 +1223,7 @@ function metricConfigForUseCase(useCase: string, allowFallback: boolean): Metric
   return [
     {
       label: "Approval Rate",
-      keys: ["approval_rate"],
+      keys: ["approval_rate", "stage3b_approval_rate"],
       fallback: fallback(68),
       kind: "percent",
       description: "Reads the latest approval rate from the simulation metrics payload.",
@@ -1250,6 +1245,10 @@ function readLatestMetric(simulationState: SimulationState | null, metricKeys: s
     if (!normalizedKey) continue;
     const direct = Number(metrics[normalizedKey]);
     if (Number.isFinite(direct)) {
+      // stage3b_approval_rate is a 0.0–1.0 fraction — scale to percentage
+      if (normalizedKey === "stage3b_approval_rate" && direct <= 1.0) {
+        return Math.round(direct * 100);
+      }
       return direct;
     }
     const checkpoint = Number(metrics[`checkpoint_${normalizedKey}`]);

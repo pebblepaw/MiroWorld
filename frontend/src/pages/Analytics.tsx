@@ -11,6 +11,7 @@ import {
 import { Activity, Flame, GitBranch, Megaphone, Users2 } from "lucide-react";
 
 import { useApp } from "@/contexts/AppContext";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { generateAgents, type Agent } from "@/data/mockData";
 import {
   getAnalyticsAgentStances,
@@ -1037,7 +1038,7 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
             </div>
 
             <h4 className="text-sm font-semibold leading-snug text-foreground">{post.title}</h4>
-            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{post.content}</p>
+            <MarkdownContent className="text-sm text-muted-foreground mt-2">{post.content}</MarkdownContent>
 
             <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-mono text-muted-foreground">
               <span className="text-[hsl(var(--data-green))]">▲ {post.likes}</span>
@@ -1057,13 +1058,11 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
                       {comment.stance}
                     </span>
                   </div>
-                  <p className="text-xs leading-relaxed text-muted-foreground">{comment.content}</p>
-                  {(comment.likes > 0 || comment.dislikes > 0) && (
-                    <div className="mt-1.5 flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
-                      <span className="text-[hsl(var(--data-green))]">▲ {comment.likes}</span>
-                      <span className="text-[hsl(var(--data-red))]">▼ {comment.dislikes}</span>
-                    </div>
-                  )}
+                  <MarkdownContent className="text-xs text-muted-foreground">{comment.content}</MarkdownContent>
+                  <div className="mt-1.5 flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
+                    <span className="text-[hsl(var(--data-green))]">▲ {comment.likes}</span>
+                    <span className="text-[hsl(var(--data-red))]">▼ {comment.dislikes}</span>
+                  </div>
                 </div>
               ))}
               {post.comments.length > 3 && (
@@ -1305,7 +1304,7 @@ function normalizeCascadesPayload(payload: Record<string, unknown>, agentNamesBy
                   agentNamesById,
                 ),
                 stance: normalizeStance(commentRow.stance),
-                content: formatPlainText(String(commentRow.content ?? commentRow.text ?? "")),
+                content: String(commentRow.content ?? commentRow.text ?? ""),
                 likes: Math.max(0, Number(commentRow.likes ?? commentRow.upvotes ?? 0)),
                 dislikes: Math.max(0, Number(commentRow.dislikes ?? commentRow.downvotes ?? 0)),
               } satisfies ViralComment;
@@ -1320,7 +1319,7 @@ function normalizeCascadesPayload(payload: Record<string, unknown>, agentNamesBy
         ),
         stance: normalizeStance(entry.stance),
         title: formatPlainText(String(entry.title ?? entry.headline ?? "Untitled thread")),
-        content: formatPlainText(String(entry.content ?? entry.body ?? "")),
+        content: String(entry.content ?? entry.body ?? ""),
         likes: Math.max(0, Number(entry.likes ?? entry.upvotes ?? 0)),
         dislikes: Math.max(0, Number(entry.dislikes ?? entry.downvotes ?? 0)),
         comments,

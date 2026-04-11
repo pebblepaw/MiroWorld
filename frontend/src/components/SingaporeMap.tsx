@@ -25,7 +25,7 @@ const MAP_CONFIG = {
   usa: {
     url: withBase('maps/usa_states.geojson'),
     center: [39.8283, -98.5795] as const,
-    zoom: 4,
+    zoom: 3,
     label: 'USA',
   },
 } as const;
@@ -35,7 +35,7 @@ export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapPr
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const mapConfig = MAP_CONFIG[country];
-
+  const mapHeight = country === 'usa' ? 'h-[260px]' : 'h-[160px]';
   useEffect(() => {
     fetch(mapConfig.url)
       .then((res) => res.json())
@@ -57,7 +57,7 @@ export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapPr
 
   if (!geoData) {
     return (
-      <div className="w-full h-[160px] flex items-center justify-center bg-muted/20 rounded-md">
+      <div className={`w-full ${mapHeight} flex items-center justify-center bg-muted/20 rounded-md`}>
         <span className="text-xs text-muted-foreground animate-pulse">Loading Map Data...</span>
       </div>
     );
@@ -110,7 +110,7 @@ export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapPr
   const tooltipAccent = isDark ? 'hsl(38, 92%, 50%)' : 'hsl(38, 80%, 40%)';
 
   return (
-    <div className="w-full h-[160px] rounded-md overflow-hidden bg-card relative isolate">
+    <div className={`w-full ${mapHeight} rounded-md overflow-hidden bg-card relative isolate`}>
       <MapContainer
         center={mapConfig.center}
         zoom={mapConfig.zoom}

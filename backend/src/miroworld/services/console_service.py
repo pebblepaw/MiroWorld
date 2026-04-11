@@ -1814,7 +1814,13 @@ class ConsoleService:
         pre_metric = metrics.compute_polarization(agents_pre, pre_field)
 
         interactions = self.store.get_interactions(session_id)
-        max_round = max((int(item.get("round_no", 0) or 0) for item in interactions), default=0)
+        # Prefer planned_rounds from the session state so we get the correct
+        # number of rounds even though all interaction records have round_no=1.
+        state = self.streams.get_state(session_id)
+        max_round = int((state or {}).get("planned_rounds", 0) or 0)
+        if max_round < 1:
+            # Fallback: derive from interaction records (may be inaccurate)
+            max_round = max((int(item.get("round_no", 0) or 0) for item in interactions), default=1)
         max_round = max(1, max_round)
 
         pre_index = float(pre_metric.get("polarization_index", 0.0))
