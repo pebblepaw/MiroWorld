@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Flame, Loader2, MessageSquare, Play, ThumbsDown, ThumbsUp, Clock, TrendingUp, Sparkles, Users, Zap } from "lucide-react";
+import { ArrowRight, Flame, Loader2, MessageSquare, Play, Clock, TrendingUp, Sparkles, Users, Zap } from "lucide-react";
 
 import { GlassCard } from "@/components/GlassCard";
 import { MarkdownContent } from "@/components/MarkdownContent";
@@ -868,21 +868,15 @@ export default function Simulation() {
                       </div>
                       
                       <h4 className="text-sm font-semibold text-foreground mb-2 leading-tight">{thread.title}</h4>
-                      <MarkdownContent className="text-body text-muted-foreground">{thread.content}</MarkdownContent>
+                      <MarkdownContent className="text-body text-muted-foreground" clampLines={6}>{thread.content}</MarkdownContent>
                       
-                      <div className="flex items-center gap-5 mt-4 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer">
-                          <ThumbsUp className="w-3.5 h-3.5" /> 
-                          <span className="font-mono font-medium">{thread.likes}</span>
-                        </span>
-                        <span className="flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer">
-                          <ThumbsDown className="w-3.5 h-3.5" /> 
-                          <span className="font-mono font-medium">{thread.dislikes}</span>
-                        </span>
-                        <span className="flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer">
+                      <div className="flex items-center gap-5 mt-4 text-xs font-mono text-muted-foreground">
+                        <span className="text-[hsl(var(--data-green))]">▲ {thread.likes}</span>
+                        <span className="text-[hsl(var(--data-red))]">▼ {thread.dislikes}</span>
+                        <span className="flex items-center gap-1.5 text-muted-foreground">
                           <MessageSquare className="w-3.5 h-3.5" /> 
                           <span className="font-mono font-medium">{thread.comments.length}</span>
-                          <span className="text-muted-foreground">comments</span>
+                          <span>comments</span>
                         </span>
                       </div>
                       
@@ -897,12 +891,8 @@ export default function Simulation() {
                                 <span className={`font-medium text-[11px] ${tone.nameText}`}>{comment.actorName}</span>
                                 <MarkdownContent className="text-xs text-muted-foreground ml-2">{comment.content}</MarkdownContent>
                                 <span className="flex items-center gap-3 mt-1 text-[10px] font-mono text-muted-foreground">
-                                  <span className="flex items-center gap-1 text-emerald-500/70">
-                                    <ThumbsUp className="w-2.5 h-2.5" />{comment.likes}
-                                  </span>
-                                  <span className="flex items-center gap-1 text-red-500/70">
-                                    <ThumbsDown className="w-2.5 h-2.5" />{comment.dislikes}
-                                  </span>
+                                  <span className="text-[hsl(var(--data-green))]">▲ {comment.likes}</span>
+                                  <span className="text-[hsl(var(--data-red))]">▼ {comment.dislikes}</span>
                                 </span>
                               </div>
                             </div>
@@ -1184,7 +1174,7 @@ function metricConfigForUseCase(useCase: string, allowFallback: boolean): Metric
       },
     ];
   }
-  if (normalized === "pmf-discovery" || normalized === "product-market-fit") {
+  if (normalized === "pmf-discovery" || normalized === "product-market-fit" || normalized === "product-market-research") {
     return [
       {
         label: "Product Interest",
@@ -1194,11 +1184,11 @@ function metricConfigForUseCase(useCase: string, allowFallback: boolean): Metric
         description: "Reflects the latest measured interest or interest-rate signal across the simulated audience.",
       },
       {
-        label: "Target Fit Score",
-        keys: ["target_fit_score"],
+        label: "Target Fit / NPS",
+        keys: ["target_fit_score", "nps_score"],
         fallback: fallback(6.6),
         kind: "score",
-        description: "Summarizes how closely the audience matches the intended target segment and problem profile.",
+        description: "Summarizes target segment fit or net promoter score from the simulation checkpoint.",
       },
     ];
   }

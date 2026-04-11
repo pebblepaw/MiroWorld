@@ -984,7 +984,7 @@ function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loadin
                     {Math.round(leader.influence * 100)}%
                   </span>
                 </div>
-                <p className="text-xs leading-relaxed text-muted-foreground">{leader.topView || leader.topPost || "No viewpoint summary available."}</p>
+                <MarkdownContent className="text-xs text-muted-foreground">{leader.topView || leader.topPost || "No viewpoint summary available."}</MarkdownContent>
               </article>
             ))}
           </div>
@@ -1038,7 +1038,7 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
             </div>
 
             <h4 className="text-sm font-semibold leading-snug text-foreground">{post.title}</h4>
-            <MarkdownContent className="text-sm text-muted-foreground mt-2">{post.content}</MarkdownContent>
+            <MarkdownContent className="text-sm text-muted-foreground mt-2" clampLines={6}>{post.content}</MarkdownContent>
 
             <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-mono text-muted-foreground">
               <span className="text-[hsl(var(--data-green))]">▲ {post.likes}</span>
@@ -1202,10 +1202,10 @@ function normalizeLeadersPayload(payload: Record<string, unknown>, agentNamesByI
         name,
         stance,
         influence: Number(entry.influence ?? entry.influence_score ?? entry.score ?? 0),
-        topView: normalizeViewpointText(
+        topView: String(
           entry.summary ?? entry.viewpoint_summary ?? entry.top_view ?? entry.topView ?? entry.core_viewpoint ?? "",
-        ),
-        topPost: normalizeTopPostText(entry.top_post ?? entry.topPost ?? entry.example_post ?? ""),
+        ).trim(),
+        topPost: String(entry.top_post ?? entry.topPost ?? entry.example_post ?? "").trim(),
       } satisfies Leader;
     })
     .filter((row): row is NonNullable<typeof row> => Boolean(row));

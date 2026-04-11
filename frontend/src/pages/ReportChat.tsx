@@ -714,9 +714,9 @@ export default function ReportChat() {
                     <FileText className="w-4 h-4 text-muted-foreground" />
                     <span className="label-meta">Executive Summary</span>
                   </div>
-                  <p className="text-sm text-foreground/80 leading-relaxed">
+                  <MarkdownContent className="text-sm text-foreground/80">
                     {report.executive_summary || 'No summary available.'}
-                  </p>
+                  </MarkdownContent>
                   {/* Quick stats from new structure */}
                   <div className="mt-4 pt-4 border-t border-border flex items-center gap-6 flex-wrap">
                     <QuickStat label="Agents Simulated" value={reportAgentCount} />
