@@ -901,9 +901,6 @@ export default function Simulation() {
                           {visibleComments.map((comment) => (
                             <div key={comment.id} className="text-body">
                               <div className="flex items-center gap-2 mb-0.5">
-                                <div className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-[9px] font-bold text-white/40 shrink-0">
-                                  {comment.actorName.split(' ').map(n => n[0]).join('').slice(0, 1).toUpperCase()}
-                                </div>
                                 <span className={`font-medium text-[11px] ${tone.nameText}`}>{comment.actorName}</span>
                                 <span className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground ml-auto">
                                   <span className="text-[hsl(var(--data-green))]">▲ {comment.likes}</span>
