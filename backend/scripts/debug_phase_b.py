@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from mckainsey.main import app
+from miroworld.main import app
 
 
 def main() -> None:

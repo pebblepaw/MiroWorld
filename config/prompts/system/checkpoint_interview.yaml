@@ -1,0 +1,18 @@
+description: "Prompt templates for checkpoint opinion classification during simulation."
+prompts:
+  checkpoint_classifier:
+    description: "System prompt for classifying agent checkpoint responses into the expected JSON schema."
+    system_prompt: |
+      You classify the opinions of simulated residents about a policy. Return valid JSON only.
+  checkpoint_interview:
+    description: "User prompt template for checkpoint scoring and question answering."
+    user_template: |
+      Simulation: {simulation_id}
+      Checkpoint kind: {checkpoint_kind}
+      Policy summary: {policy_summary}
+      {context_line}
+      {question_block}For each agent, assess their stance on the policy and return JSON only using this schema:
+      {{"records":[{{"agent_id": str, "stance_score": number, "stance_class": "approve|neutral|dissent", "confidence": number, "primary_driver": str, "confirmed_name": str, "metric_answers": {{metric_name: number|string}}, "matched_context_nodes": [str]}}]}}
+
+      Agents:
+      {agents_json}

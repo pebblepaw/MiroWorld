@@ -1,6 +1,6 @@
-# McKAInsey Backend
+# MiroWorld Backend
 
-FastAPI backend for the McKAInsey V2 workflow: knowledge extraction, population sampling, live OASIS simulation, SQLite-backed memory retrieval, reporting, and analytics.
+FastAPI backend for the MiroWorld V2 workflow: knowledge extraction, population sampling, live OASIS simulation, SQLite-backed memory retrieval, reporting, and analytics.
 
 ## Quick Start
 
@@ -10,7 +10,7 @@ FastAPI backend for the McKAInsey V2 workflow: knowledge extraction, population 
 3. Configure environment variables:
    - Prefer the canonical repo-root `../.env.example`
 4. Run API:
-   - `uvicorn mckainsey.main:app --reload --port 8000`
+   - `uvicorn miroworld.main:app --reload --port 8000`
 5. Run tests:
    - `pytest -q`
 

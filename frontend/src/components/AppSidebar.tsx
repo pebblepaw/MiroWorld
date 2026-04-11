@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Upload, Users, MessageSquare, BarChart3, Bot, Lock, Check, Settings2, Loader2, RefreshCcw } from 'lucide-react';
+import { Upload, Users, MessageSquare, BarChart3, Bot, Lock, Check, Settings2, Loader2, RefreshCcw, Sun, Moon } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -43,6 +44,22 @@ const steps = [
   { step: 4, title: 'Report', icon: BarChart3, path: '/report' },
   { step: 5, title: 'Analytics', icon: Bot, path: '/analytics' },
 ];
+
+function ThemeToggleButton() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <SidebarMenuButton onClick={toggleTheme} tooltip={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}>
+      {theme === 'dark' ? (
+        <Sun className="w-4 h-4 text-muted-foreground mr-2" />
+      ) : (
+        <Moon className="w-4 h-4 text-muted-foreground mr-2" />
+      )}
+      <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+        {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+      </span>
+    </SidebarMenuButton>
+  );
+}
 
 export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const {
@@ -300,7 +317,7 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
             </div>
             {!collapsed && (
               <div>
-                <h1 className="text-foreground font-semibold text-base tracking-wide">McKAInsey</h1>
+                <h1 className="text-foreground font-semibold text-base tracking-wide">MiroWorld</h1>
                 <p className="font-mono text-[9px] text-muted-foreground uppercase tracking-[0.2em]">Simulation Engine</p>
               </div>
             )}
@@ -371,6 +388,9 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
                 <Settings2 className="w-4 h-4 text-muted-foreground mr-2" />
                 <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Configure</span>
               </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <ThemeToggleButton />
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarFooter>

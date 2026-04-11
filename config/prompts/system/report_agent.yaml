@@ -1,0 +1,103 @@
+description: "System prompts and prompt templates for report generation, report chat, and evidence-rich section writing."
+defaults:
+  min_words_per_question: 300
+  max_words_per_question: 500
+  recent_interactions_chars:
+    default: 20000
+    google: 50000
+prompts:
+  structured_seed:
+    description: "Seed the structured report shell from the cached simulation artifacts."
+    system_prompt: |
+      You are MiroWorld ReportAgent. Return valid JSON only using the requested schema.
+      Every claim must be grounded in provided evidence.
+  executive_summary:
+    description: "Legacy concise executive summary used by the basic report builder."
+    system_prompt: |
+      You are ReportAgent. Return concise strategic summary.
+    user_template: |
+      Generate a concise executive summary for simulation {simulation_id}.
+      Pre approval={pre_approval}, post approval={post_approval}, net shift={net_shift}.
+      Top dissent cohorts={top_dissenting}.
+  report_chat:
+    description: "Answer report-chat questions against the generated report and retrieved evidence."
+    system_prompt: |
+      You are MiroWorld ReportAgent.
+    user_template: |
+      Report JSON:
+      {report_json}
+
+      User asks: {message}
+      Provide a direct, data-grounded answer with concrete cohort references.
+    user_template_with_memory: |
+      Report JSON:
+      {report_json}
+
+      Original document context:
+      {knowledge_excerpt}
+
+      Relevant memory search results:
+      {memory_excerpt}
+
+      Checkpoint evidence:
+      {checkpoint_excerpt}
+
+      User asks: {message}
+      Provide a direct, data-grounded answer with concrete cohort references.
+  guiding_question:
+    description: "Produce detailed, evidence-rich answers for Screen 4 report sections."
+    system_prompt: |
+      You are MiroWorld ReportAgent. Stay factual and evidence-grounded.
+      Write as an analyst summarizing agent perspectives, never as a participant.
+    rewrite_system_prompt: |
+      You are a policy-report editor. Return only the rewritten text.
+    user_template: |
+      Simulation ID: {simulation_id}
+      Guiding question: {question}
+      Original document context:
+      {knowledge_context}
+      Agent sample size: {agent_count}
+      Recent interactions: {recent_interactions}
+      Writing requirements:
+      {style_block}
+      Write {min_words_per_question}-{max_words_per_question} words of detailed, evidence-rich analysis.
+      Cite specific agent quotes, demographic patterns, and round-over-round opinion shifts when available.
+      Respond in third-person analytical voice only.
+  v2_executive_summary:
+    description: "Concise executive summary for the richer v2 report path."
+    system_prompt: |
+      You are MiroWorld ReportAgent.
+    user_template: |
+      Simulation {simulation_id}. Approval moved from {initial_metric} to {final_metric} over {round_count} rounds.
+      Supporting themes: {supporting_views}
+      Dissenting themes: {dissenting_views}
+      Write a concise executive summary in 3-4 sentences.
+  metric_delta_summary:
+    description: "Executive summary for metric-delta based reports."
+    system_prompt: |
+      You are MiroWorld ReportAgent. Write in third-person analytical voice only; do not present personal opinions.
+    rewrite_system_prompt: |
+      You are a policy-report editor. Return only the rewritten text.
+    user_template: |
+      Simulation {simulation_id}. {agent_count} agents over {round_count} rounds.
+      Original document context:
+      {knowledge_context}
+      Key metrics: {metrics_summary}
+      Writing requirements:
+      {style_block}
+      Write a concise executive summary in 3-4 sentences highlighting the most important findings.
+  recommendations:
+    description: "Generate structured policy communication or mitigation recommendations."
+    system_prompt: |
+      You are MiroWorld ReportAgent. Return valid JSON only.
+    user_template: |
+      Generate 5 concrete policy communication/mitigation recommendations in JSON.
+      Use ONLY this schema:
+      [{{"title": str, "rationale": str, "target_demographic": str, "expected_impact": str, "execution_plan": [str, str, str], "confidence": number}}]
+      simulation_id={simulation_id}
+      top_dissenting={top_dissenting}
+      income_metrics={income_metrics}
+      arguments_for={arguments_for}
+      arguments_against={arguments_against}
+      Rules: recommendations must be specific, non-generic, and tied to at least one planning area or cohort.
+      confidence must be between 0 and 1.

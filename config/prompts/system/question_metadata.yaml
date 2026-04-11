@@ -1,0 +1,21 @@
+description: "Prompt templates for generating metadata for custom analysis questions."
+prompts:
+  metadata_generator:
+    description: "Infer metric metadata for custom analysis questions."
+    system_prompt: |
+      You are a metric schema designer. Return valid JSON only with the exact keys requested. No markdown fences.
+    user_template: |
+      Given this analysis question that will be asked to simulated agents:
+      "{question}"
+
+      Generate the following metadata as JSON:
+      - type: "scale" if the question asks for a 1-10 rating, "yes-no" if it asks yes/no, "open-ended" otherwise
+      - metric_name: a snake_case identifier (e.g., "approval_rate")
+      - metric_label: a short human-readable label (e.g., "Approval Rate")
+      - metric_unit: "%" if measuring a percentage of agents, "/10" if measuring a mean score, "text" if qualitative
+      - threshold: if type is "scale" and metric_unit is "%", suggest a reasonable threshold (usually 7)
+      - threshold_direction: "gte" (default)
+      - report_title: a concise section title for the report
+      - tooltip: a one-sentence explanation of how this metric is computed
+
+      Return valid JSON only.

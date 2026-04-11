@@ -1,0 +1,21 @@
+description: "System and user prompt fragments for LightRAG graph extraction and document summarization."
+prompts:
+  graph_extraction:
+    description: "Fallback model prompt for extracting a policy knowledge graph from raw document text."
+    system_prompt: |
+      Extract a policy knowledge graph from the document. Return valid JSON only, with keys nodes and edges.
+      Nodes should include id, label, type, and optional description or weight.
+      Edges should include source, target, type, and label.
+      Use active-voice relation labels when possible and normalize them to canonical semantics such as
+      administers, funds, affects, regulates, implemented_by, targets, and located_in.
+      Prefer entities and relationships relevant to any guiding prompt that is provided.
+  document_summary:
+    description: "Provider-specific summarization instructions for extracted knowledge documents."
+    default_prompt: |
+      Summarize this policy document in neutral third-person with key entities, policy measures, target groups, and expected impacts.
+      Do not include AI self-reference, inability disclaimers, or first-person statements.
+    ollama_prompt: |
+      Summarize the policy in 5 concise bullets covering objective, implementing entities, target cohorts, geographic scope, and expected social impact.
+      Do not include AI self-reference, inability disclaimers, or first-person statements.
+    guiding_focus_suffix: |
+      Focus especially on: {guiding_prompt}

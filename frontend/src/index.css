@@ -5,8 +5,66 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light mode (default) */
   :root {
-    /* Nothing-inspired monochrome tokens */
+    --background: 0 0% 98%;
+    --foreground: 0 0% 10%;
+
+    --card: 0 0% 95%;
+    --card-foreground: 0 0% 10%;
+
+    --popover: 0 0% 97%;
+    --popover-foreground: 0 0% 10%;
+
+    /* Accent: Nothing red */
+    --primary: 357 79% 46%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 92%;
+    --secondary-foreground: 0 0% 10%;
+
+    --muted: 0 0% 92%;
+    --muted-foreground: 0 0% 40%;
+
+    --accent: 0 0% 90%;
+    --accent-foreground: 0 0% 10%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 142 60% 38%;
+    --success-foreground: 0 0% 98%;
+
+    --border: 0 0% 85%;
+    --input: 0 0% 85%;
+    --ring: 0 0% 55%;
+
+    --radius: 0.5rem;
+
+    /* Font size scale */
+    --text-page-title: 1.5rem;
+    --text-section-header: 1.125rem;
+    --text-body: 0.875rem;
+    --text-caption: 0.75rem;
+
+    --sidebar-background: 0 0% 95%;
+    --sidebar-foreground: 0 0% 35%;
+    --sidebar-primary: 0 0% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 0 0% 88%;
+    --sidebar-accent-foreground: 0 0% 10%;
+    --sidebar-border: 0 0% 82%;
+    --sidebar-ring: 0 0% 55%;
+
+    /* Data status colors */
+    --data-green: 142 60% 35%;
+    --data-red: 0 72% 51%;
+    --data-amber: 38 92% 44%;
+    --data-blue: 210 100% 46%;
+  }
+
+  /* Dark mode */
+  .dark {
     --background: 0 0% 4%;
     --foreground: 0 0% 93%;
 
@@ -16,7 +74,6 @@
     --popover: 0 0% 8%;
     --popover-foreground: 0 0% 93%;
 
-    /* Accent: Nothing red — used sparingly for ONE CTA per screen */
     --primary: 357 79% 46%;
     --primary-foreground: 0 0% 100%;
 
@@ -39,7 +96,55 @@
     --input: 0 0% 15%;
     --ring: 0 0% 40%;
 
-    --radius: 0.5rem;
+    --sidebar-background: 0 0% 4%;
+    --sidebar-foreground: 0 0% 50%;
+    --sidebar-primary: 0 0% 93%;
+    --sidebar-primary-foreground: 0 0% 4%;
+    --sidebar-accent: 0 0% 10%;
+    --sidebar-accent-foreground: 0 0% 93%;
+    --sidebar-border: 0 0% 12%;
+    --sidebar-ring: 0 0% 40%;
+
+    /* Data status colors */
+    --data-green: 142 60% 45%;
+    --data-red: 0 72% 51%;
+    --data-amber: 38 92% 50%;
+    --data-blue: 210 100% 56%;
+  }
+}
+
+  /* Dark mode */
+  .dark {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 93%;
+
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 93%;
+
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 93%;
+
+    --primary: 357 79% 46%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 93%;
+
+    --muted: 0 0% 11%;
+    --muted-foreground: 0 0% 50%;
+
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 93%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 142 60% 45%;
+    --success-foreground: 0 0% 4%;
+
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 0 0% 40%;
 
     --sidebar-background: 0 0% 4%;
     --sidebar-foreground: 0 0% 50%;
@@ -50,7 +155,7 @@
     --sidebar-border: 0 0% 12%;
     --sidebar-ring: 0 0% 40%;
 
-    /* Data status colors — exempt from monochrome rule */
+    /* Data status colors */
     --data-green: 142 60% 45%;
     --data-red: 0 72% 51%;
     --data-amber: 38 92% 50%;
@@ -85,8 +190,8 @@
   }
 
   .surface-card-hover:hover {
-    background: hsl(0 0% 10%);
-    border-color: hsl(0 0% 18%);
+    background: hsl(var(--accent));
+    border-color: hsl(var(--border));
   }
 
   /* Metadata label style — Space Mono ALL CAPS */
@@ -96,6 +201,38 @@
     letter-spacing: 0.18em;
     text-transform: uppercase;
     color: hsl(var(--muted-foreground));
+  }
+
+  /* Section heading label (foreground color for important labels) */
+  .label-section {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: hsl(var(--foreground));
+  }
+
+  /* Page title */
+  .text-page-title {
+    font-size: var(--text-page-title, 1.5rem);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  /* Section header */
+  .text-section-header {
+    font-size: var(--text-section-header, 1.125rem);
+    font-weight: 600;
+  }
+
+  /* Body text */
+  .text-body {
+    font-size: var(--text-body, 0.875rem);
+  }
+
+  /* Caption / metadata */
+  .text-caption {
+    font-size: var(--text-caption, 0.75rem);
   }
 
   /* Hero number style */

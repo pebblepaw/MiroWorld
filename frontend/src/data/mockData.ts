@@ -20,6 +20,7 @@ export interface SimComment {
   agentOccupation?: string;
   content: string;
   upvotes: number;
+  downvotes?: number;
 }
 
 export interface SimPost {

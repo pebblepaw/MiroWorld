@@ -255,7 +255,7 @@ const VIRAL_POSTS: ViralPost[] = [
 const STANCE_ORDER: Stance[] = ["supporter", "neutral", "dissenter"];
 
 function analyticsCacheKey(sessionId: string): string {
-  return `mckainsey-analytics-${sessionId}`;
+  return `miroworld-analytics-${sessionId}`;
 }
 
 function loadAnalyticsSnapshot(sessionId: string): AnalyticsSnapshot | null {
@@ -587,16 +587,6 @@ export default function Analytics() {
         { key: "ageBucket", label: "Age" },
         { key: "occupation", label: "Occupation" },
         { key: "gender", label: "Gender" },
-      ] as Array<{ key: DemographicDimension; label: string }>;
-    }
-
-    if (useCase === "campaign-content-testing" || useCase === "ad-testing") {
-      return [
-        { key: "ageBucket", label: "Age" },
-        { key: "incomeBracket", label: "Income" },
-        { key: "occupation", label: "Occupation" },
-        { key: "gender", label: "Gender" },
-        { key: "planningArea", label: "Planning Area" },
       ] as Array<{ key: DemographicDimension; label: string }>;
     }
 
@@ -1068,10 +1058,12 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
                     </span>
                   </div>
                   <p className="text-xs leading-relaxed text-white/80">{comment.content}</p>
-                  <div className="mt-1.5 flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
-                    <span className="text-[hsl(var(--data-green))]">▲ {comment.likes}</span>
-                    <span className="text-[hsl(var(--data-red))]">▼ {comment.dislikes}</span>
-                  </div>
+                  {(comment.likes > 0 || comment.dislikes > 0) && (
+                    <div className="mt-1.5 flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
+                      <span className="text-[hsl(var(--data-green))]">▲ {comment.likes}</span>
+                      <span className="text-[hsl(var(--data-red))]">▼ {comment.dislikes}</span>
+                    </div>
+                  )}
                 </div>
               ))}
               {post.comments.length > 3 && (
@@ -1399,7 +1391,6 @@ function inferIndustry(occupation: string): string {
 
 function defaultDimensionForUseCase(useCase: string): DemographicDimension {
   if (useCase === "public-policy-testing" || useCase === "policy-review") return "industry";
-  if (useCase === "campaign-content-testing" || useCase === "ad-testing") return "ageBucket";
   if (useCase === "product-market-research" || useCase === "pmf-discovery") return "occupation";
   return "industry";
 }
@@ -1415,10 +1406,8 @@ function formatUseCase(useCase: string): string {
   const normalized = String(useCase || "").trim().toLowerCase();
   if (normalized === "public-policy-testing") return "Public Policy Testing";
   if (normalized === "product-market-research") return "Product & Market Research";
-  if (normalized === "campaign-content-testing") return "Campaign & Content Testing";
   // V1 backward compat
   if (normalized === "policy-review") return "Public Policy Testing";
-  if (normalized === "ad-testing") return "Campaign & Content Testing";
   if (normalized === "pmf-discovery" || normalized === "reviews") return "Product & Market Research";
   return "Public Policy Testing";
 }

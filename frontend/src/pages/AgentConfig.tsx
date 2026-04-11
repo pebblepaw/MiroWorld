@@ -257,7 +257,7 @@ export default function AgentConfig() {
       {/* Header */}
       <div className="flex items-center justify-between pb-4 border-b border-white/5">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground tracking-tight">Agent Configuration</h2>
+          <h2 className="text-page-title font-semibold text-foreground tracking-tight">Agent Configuration</h2>
           <p className="text-sm text-muted-foreground mt-1 font-light">Generate and refine an AI population cohort matching your parameters</p>
         </div>
         <div className="flex gap-3">
@@ -307,9 +307,22 @@ export default function AgentConfig() {
             step={10}
             className="w-full mb-2"
           />
-          <div className="flex justify-between text-[11px] text-muted-foreground font-mono mb-6">
+          <div className="flex justify-between text-[11px] text-muted-foreground font-mono mb-1">
             <span>10</span><span>500</span>
           </div>
+          <p className="text-[10px] font-mono mb-5" style={{
+            color: agentCount <= 300
+              ? 'hsl(142, 60%, 45%)'
+              : agentCount <= 400
+              ? 'hsl(38, 92%, 50%)'
+              : 'hsl(0, 84%, 60%)',
+          }}>
+            {agentCount <= 300
+              ? '✓ Optimal range — good quality/speed balance'
+              : agentCount <= 400
+              ? '⚠ Large simulation — may take longer'
+              : '⚠ Very large — expect extended run time'}
+          </p>
 
           <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3">Sampling Strategy</div>
           <div className="flex flex-col sm:flex-row gap-2">

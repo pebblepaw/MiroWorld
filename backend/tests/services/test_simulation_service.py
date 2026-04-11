@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mckainsey.config import Settings
-from mckainsey.services.simulation_service import SimulationService
+from miroworld.config import Settings
+from miroworld.services.simulation_service import SimulationService
 
 
 class _Response:
@@ -70,10 +70,10 @@ def test_run_oasis_with_inputs_uses_sidecar_jobs_when_configured(tmp_path: Path,
         delete_calls.append((url, timeout))
         return _Response(200, {"job_id": "job-123", "status": "cancelled"})
 
-    monkeypatch.setattr("mckainsey.services.simulation_service.requests.post", fake_post)
-    monkeypatch.setattr("mckainsey.services.simulation_service.requests.get", fake_get)
-    monkeypatch.setattr("mckainsey.services.simulation_service.requests.delete", fake_delete)
-    monkeypatch.setattr("mckainsey.services.simulation_service.time.sleep", lambda _: None)
+    monkeypatch.setattr("miroworld.services.simulation_service.requests.post", fake_post)
+    monkeypatch.setattr("miroworld.services.simulation_service.requests.get", fake_get)
+    monkeypatch.setattr("miroworld.services.simulation_service.requests.delete", fake_delete)
+    monkeypatch.setattr("miroworld.services.simulation_service.time.sleep", lambda _: None)
 
     service = object.__new__(SimulationService)
     service.settings = settings

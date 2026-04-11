@@ -10,9 +10,9 @@ from typing import Any
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from mckainsey.config import get_settings
-from mckainsey.main import app
-from mckainsey.services.geo_service import PlanningAreaGeoService
+from miroworld.config import get_settings
+from miroworld.main import app
+from miroworld.services.geo_service import PlanningAreaGeoService
 
 
 SIMULATION_ID = "demo-ai-strategy-2025"

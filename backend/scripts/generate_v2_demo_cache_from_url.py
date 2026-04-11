@@ -10,9 +10,9 @@ from typing import Any
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from mckainsey.config import get_settings
-from mckainsey.main import app
-from mckainsey.services.storage import SimulationStore
+from miroworld.config import get_settings
+from miroworld.main import app
+from miroworld.services.storage import SimulationStore
 
 
 DEFAULT_URL = (
