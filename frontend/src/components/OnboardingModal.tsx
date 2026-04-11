@@ -70,7 +70,6 @@ const FALLBACK_PROVIDERS: Record<string, ProviderCard> = {
 const USE_CASES = [
   { id: 'public-policy-testing', label: 'Public Policy Testing', icon: '🏛️' },
   { id: 'product-market-research', label: 'Product & Market Research', icon: '📦' },
-  { id: 'campaign-content-testing', label: 'Campaign & Content Testing', icon: '📢' },
 ];
 
 function toCountryId(code: string, name: string) {

@@ -6,6 +6,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { StepProgress } from "@/components/StepProgress";
 import { AppProvider, useApp } from "@/contexts/AppContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 import PolicyUpload from "@/pages/PolicyUpload";
 import AgentConfig from "@/pages/AgentConfig";
 import Simulation from "@/pages/Simulation";
@@ -50,7 +51,8 @@ const App = () => {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
+      <ThemeProvider>
+        <TooltipProvider>
         <Toaster />
         <Sonner />
         <AppProvider>
@@ -63,6 +65,7 @@ const App = () => {
           </SidebarProvider>
         </AppProvider>
       </TooltipProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 };

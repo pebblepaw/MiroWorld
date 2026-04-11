@@ -44,8 +44,7 @@ const EMPTY_REPORT: StructuredReportState = {
 };
 
 export default function Analysis() {
-  const { sessionId, simulationComplete } = useApp();
-  const [activeTab, setActiveTab] = useState("report");
+  const { sessionId, simulationComplete, analysisActiveTab: activeTab, setAnalysisActiveTab: setActiveTab } = useApp();
   const [reportState, setReportState] = useState<StructuredReportState>(EMPTY_REPORT);
   const [reportError, setReportError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

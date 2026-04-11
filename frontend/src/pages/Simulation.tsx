@@ -23,6 +23,8 @@ type FeedComment = {
   actorName: string;
   content: string;
   roundNo: number;
+  likes: number;
+  dislikes: number;
 };
 
 type FeedThread = {
@@ -113,17 +115,34 @@ type ProcessStage = {
 };
 
 // Custom styled slider with marks
-function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) {
-  const marks = useMemo(() => Array.from({ length: max - min + 1 }, (_, i) => min + i), [min, max]);
+function RoundSlider({ value, onChange, min = 1, max = 50 }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) {
+  // Show every mark when max ≤ 10; every 5 otherwise
+  const step = max > 10 ? 5 : 1;
+  const marks = useMemo(() => {
+    const result = [];
+    for (let i = min; i <= max; i += step) result.push(i);
+    if (result[result.length - 1] !== max) result.push(max);
+    return result;
+  }, [min, max, step]);
   const percentage = ((value - min) / (max - min)) * 100;
+
+  // Color zone: green ≤60%, amber ≤80%, red >80%
+  const getFillColor = (val: number) => {
+    const ratio = (val - min) / (max - min);
+    if (ratio <= 0.4) return 'hsl(142, 60%, 45%)';
+    if (ratio <= 0.7) return 'hsl(38, 92%, 50%)';
+    return 'hsl(0, 84%, 60%)';
+  };
+  const fillColor = getFillColor(value);
+  const estimatedMins = Math.round(value * 0.1);
 
   return (
     <div className="relative w-full pt-2 pb-9">
       <div className="relative h-8">
         <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/5">
           <div
-            className="h-full bg-gradient-to-r from-primary/60 via-primary to-primary/80 transition-all duration-300 ease-out"
-            style={{ width: `${percentage}%` }}
+            className="h-full transition-all duration-300 ease-out"
+            style={{ width: `${percentage}%`, background: fillColor }}
           />
         </div>
 
@@ -138,13 +157,15 @@ function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onC
             >
               <div
                 className={`h-2.5 w-2.5 rounded-full transition-all duration-300 ${
-                  value >= mark ? "bg-primary shadow-lg shadow-primary/40" : "bg-white/20 group-hover:bg-white/35"
+                  value >= mark ? "shadow-lg" : "bg-white/20 group-hover:bg-white/35"
                 } ${value === mark ? "scale-150" : ""}`}
+                style={value >= mark ? { background: fillColor } : undefined}
               />
               <span
                 className={`absolute top-8 text-xs font-mono transition-all duration-300 ${
-                  value === mark ? "font-bold text-primary" : "text-white/35 group-hover:text-white/60"
+                  value === mark ? "font-bold" : "text-white/35 group-hover:text-white/60"
                 }`}
+                style={value === mark ? { color: fillColor } : undefined}
               >
                 {mark}
               </span>
@@ -162,6 +183,12 @@ function RoundSlider({ value, onChange, min = 1, max = 8 }: { value: number; onC
         onChange={(e) => onChange(Number(e.target.value))}
         className="absolute left-0 right-0 top-2 h-8 cursor-pointer opacity-0"
       />
+
+      {value > 10 && (
+        <p className="absolute bottom-0 right-0 text-[10px] font-mono text-muted-foreground">
+          ~{estimatedMins} min est.
+        </p>
+      )}
     </div>
   );
 }
@@ -178,20 +205,29 @@ export default function Simulation() {
     simulationRounds,
     simulationComplete,
     simulationState,
+    simSelectedRound,
+    simSortBy,
     setSimulationRounds,
     setSimulationComplete,
     setSimulationState,
     setSimPosts,
+    setSimSelectedRound,
+    setSimSortBy,
+    simControversyBoostEnabled,
+    setSimControversyBoostEnabled,
     completeStep,
     setCurrentStep,
   } = useApp();
 
   const [feedThreads, setFeedThreads] = useState<FeedThread[]>(() => simPosts.map((post) => simPostToFeedThread(post)));
-  const [controversyBoostEnabled, setControversyBoostEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedRound, setSelectedRound] = useState<number | "all">("all");
-  const [sortBy, setSortBy] = useState<SortOption>("new");
+  const selectedRound = simSelectedRound;
+  const setSelectedRound = setSimSelectedRound;
+  const sortBy = simSortBy;
+  const setSortBy = setSimSortBy;
+  const controversyBoostEnabled = simControversyBoostEnabled;
+  const setControversyBoostEnabled = setSimControversyBoostEnabled;
   const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
   const streamRef = useRef<EventSource | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
@@ -609,8 +645,8 @@ export default function Simulation() {
         {/* Header - removed Generate Report button from here */}
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-foreground">Live Social Simulation</h2>
-            <p className="text-sm text-muted-foreground">Real-time Reddit discourse from native OASIS, grounded in the McKAInsey knowledge graph.</p>
+            <h2 className="text-page-title font-semibold text-foreground">Live Social Simulation</h2>
+            <p className="text-sm text-muted-foreground">Real-time Reddit discourse from native OASIS, grounded in the MiroWorld knowledge graph.</p>
           </div>
           {!completed ? (
             <Button 
@@ -647,7 +683,7 @@ export default function Simulation() {
                     value={simulationRounds} 
                     onChange={setSimulationRounds} 
                     min={1} 
-                    max={8} 
+                    max={50} 
                   />
                 </div>
 
@@ -779,7 +815,7 @@ export default function Simulation() {
                       </div>
                       
                       <h4 className="text-sm font-semibold text-foreground mb-2 leading-tight">{thread.title}</h4>
-                      <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{thread.content}</p>
+                      <p className="text-body text-muted-foreground leading-relaxed whitespace-pre-wrap">{thread.content}</p>
                       
                       <div className="flex items-center gap-5 mt-4 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer">
@@ -800,13 +836,27 @@ export default function Simulation() {
                       {thread.comments.length > 0 && (
                         <div className="mt-4 space-y-2.5 border-l-2 border-white/[0.08] pl-3">
                           {visibleComments.map((comment) => (
-                            <div key={comment.id} className="text-xs flex items-start gap-2">
+                            <div key={comment.id} className="text-body flex items-start gap-2">
                               <div className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-[9px] font-bold text-white/40 flex-shrink-0">
                                 {comment.actorName.split(' ').map(n => n[0]).join('').slice(0, 1).toUpperCase()}
                               </div>
                               <div className="flex-1 min-w-0">
                                 <span className={`font-medium text-[11px] ${tone.nameText}`}>{comment.actorName}</span>
                                 <span className="text-muted-foreground ml-2 whitespace-pre-wrap">{comment.content}</span>
+                                {(comment.likes > 0 || comment.dislikes > 0) && (
+                                  <span className="flex items-center gap-3 mt-1 text-[10px] font-mono text-muted-foreground">
+                                    {comment.likes > 0 && (
+                                      <span className="flex items-center gap-1 text-emerald-500/70">
+                                        <ThumbsUp className="w-2.5 h-2.5" />{comment.likes}
+                                      </span>
+                                    )}
+                                    {comment.dislikes > 0 && (
+                                      <span className="flex items-center gap-1 text-red-500/70">
+                                        <ThumbsDown className="w-2.5 h-2.5" />{comment.dislikes}
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -1050,6 +1100,8 @@ function simPostToFeedThread(post: import("@/data/mockData").SimPost): FeedThrea
       actorName: comment.agentName,
       content: comment.content,
       roundNo: post.round,
+      likes: comment.upvotes ?? 0,
+      dislikes: comment.downvotes ?? 0,
     })),
   };
 }
@@ -1243,7 +1295,8 @@ function toSimPost(thread: FeedThread, agents: { id: string; name: string; plann
       agentName: comment.actorName,
       agentOccupation: "",
       content: comment.content,
-      upvotes: 0,
+      upvotes: comment.likes,
+      downvotes: comment.dislikes,
     })),
   };
 }

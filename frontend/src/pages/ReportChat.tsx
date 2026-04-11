@@ -97,7 +97,7 @@ function hasRenderableReportContent(report: StructuredReportState): boolean {
 }
 
 function reportCacheKey(sessionId: string): string {
-  return `mckainsey-report-${sessionId}`;
+  return `miroworld-report-${sessionId}`;
 }
 
 function loadCachedReport(sessionId: string): StructuredReportState | null {
@@ -591,7 +591,7 @@ export default function ReportChat() {
       const url = URL.createObjectURL(file);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `mckainsey-report-${sessionId}.docx`;
+      anchor.download = `miroworld-report-${sessionId}.docx`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -658,7 +658,7 @@ export default function ReportChat() {
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border flex-shrink-0">
         <div>
-          <h2 className="text-lg font-semibold text-foreground tracking-tight">Analysis Report</h2>
+          <h2 className="text-page-title font-semibold text-foreground tracking-tight">Analysis Report</h2>
           <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
             {formatCountry(country)} · {formatUseCase(useCase)} · {reportAgentCount} agents · {reportRoundCount} rounds
           </p>
@@ -761,7 +761,7 @@ export default function ReportChat() {
                 {/* Analysis Question Sections */}
                 {(report as any).sections && (report as any).sections.length > 0 && (
                   <section className="space-y-4">
-                    <span className="label-meta block">Analysis Findings</span>
+                    <span className="label-section block">Analysis Findings</span>
                     {((report as any).sections as any[]).map((section: any, i: number) => (
                       <div key={i} className="surface-card p-5">
                         <div className="flex items-center gap-2 mb-2">
@@ -790,7 +790,7 @@ export default function ReportChat() {
                             </span>
                           </div>
                         )}
-                        <p className="text-xs text-foreground/80 leading-relaxed">{formatPlainText(section.answer)}</p>
+                        <p className="text-sm text-foreground/80 leading-relaxed">{formatPlainText(section.answer)}</p>
                         {Array.isArray(section.evidence) && section.evidence.length > 0 && (
                           <div className="mt-4 space-y-2 border-t border-border pt-3">
                             <div className="label-meta">Evidence</div>
@@ -810,7 +810,7 @@ export default function ReportChat() {
                                   )}
                                   {item.source_label && <span>· {String(item.source_label)}</span>}
                                 </div>
-                                <p className="text-xs leading-relaxed text-foreground/80">{String(item.quote || item.content || '')}</p>
+                                <p className="text-sm leading-relaxed text-foreground/80">{String(item.quote || item.content || '')}</p>
                               </div>
                             ))}
                           </div>
@@ -835,7 +835,7 @@ export default function ReportChat() {
                 {/* Legacy fallback: Insight Cards */}
                 {report.insight_cards && report.insight_cards.length > 0 && !(report as any).metric_deltas && (
                   <section>
-                    <span className="label-meta block mb-3">Key Insights</span>
+                    <span className="label-section block mb-3">Key Insights</span>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       {report.insight_cards.map((card: any, i: number) => (
                         <div key={i} className="surface-card p-4">
@@ -866,7 +866,7 @@ export default function ReportChat() {
                 {/* Legacy fallback: Recommendations */}
                 {report.recommendations && report.recommendations.length > 0 && !(report as any).preset_sections && (
                   <section className="surface-card p-5">
-                    <span className="label-meta block mb-4">Recommendations</span>
+                    <span className="label-section block mb-4">Recommendations</span>
                     <div className="space-y-4">
                       {report.recommendations.map((rec: any, i: number) => (
                         <div key={i} className="flex gap-3">
@@ -1376,10 +1376,8 @@ function formatUseCase(useCase: string): string {
   const normalized = String(useCase || '').trim().toLowerCase();
   if (normalized === 'public-policy-testing') return 'Public Policy Testing';
   if (normalized === 'product-market-research') return 'Product & Market Research';
-  if (normalized === 'campaign-content-testing') return 'Campaign & Content Testing';
   // V1 backward compat
   if (normalized === 'policy-review') return 'Public Policy Testing';
-  if (normalized === 'ad-testing') return 'Campaign & Content Testing';
   if (normalized === 'pmf-discovery' || normalized === 'reviews') return 'Product & Market Research';
   return 'Public Policy Testing';
 }

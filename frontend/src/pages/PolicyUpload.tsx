@@ -163,7 +163,21 @@ async function readFileText(file: File): Promise<string> {
 
 function isServerParsedDocument(file: File): boolean {
   const name = file.name.toLowerCase();
-  return name.endsWith('.pdf') || name.endsWith('.doc') || name.endsWith('.docx');
+  return (
+    name.endsWith('.pdf') ||
+    name.endsWith('.doc') ||
+    name.endsWith('.docx') ||
+    name.endsWith('.ppt') ||
+    name.endsWith('.pptx') ||
+    name.endsWith('.xls') ||
+    name.endsWith('.xlsx') ||
+    name.endsWith('.png') ||
+    name.endsWith('.jpg') ||
+    name.endsWith('.jpeg') ||
+    name.endsWith('.gif') ||
+    name.endsWith('.webp') ||
+    name.endsWith('.bmp')
+  );
 }
 
 function mergeKnowledgeArtifacts(
@@ -1177,7 +1191,7 @@ export default function PolicyUpload() {
       <div className="flex flex-col border-r border-border overflow-y-auto scrollbar-thin bg-background min-h-0">
         {/* Header */}
         <div className="p-5 pb-4 border-b border-border">
-          <h2 className="text-lg font-bold text-foreground font-mono uppercase tracking-wider">NEW SIMULATION RUN</h2>
+          <h2 className="text-page-title font-semibold text-foreground">New Simulation Run</h2>
           <p className="text-xs text-muted-foreground mt-1">Upload unstructured documents to build the context graph</p>
           {/* Use-case badge */}
           <div className="mt-3">
@@ -1197,11 +1211,11 @@ export default function PolicyUpload() {
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
           >
-            <input type="file" className="hidden" accept=".pdf,.docx,.doc,.txt,.md,.markdown,.html,.htm,.json,.csv,.yaml,.yml" multiple onChange={handleFileSelect} />
+            <input type="file" className="hidden" accept=".pdf,.docx,.doc,.ppt,.pptx,.xls,.xlsx,.txt,.md,.markdown,.html,.htm,.csv,.png,.jpg,.jpeg,.gif,.webp,.bmp" multiple onChange={handleFileSelect} />
             <Upload className="w-6 h-6 text-muted-foreground mb-2" />
             <span className="text-sm text-foreground">Drop documents here</span>
             <span className="text-[10px] text-muted-foreground mt-1 font-mono uppercase tracking-wider">
-              PDF · DOCX · TXT · MD · HTML · CSV · YAML
+              PDF · PPT · DOCX · XLSX · Images · HTML · CSV · MD · TXT
             </span>
           </label>
 
@@ -1297,7 +1311,7 @@ export default function PolicyUpload() {
         <div className="p-5 border-b border-border">
           <div className="flex items-center justify-between gap-3 mb-3">
             <div>
-              <span className="label-meta">Analysis Questions</span>
+              <span className="label-section">Analysis Questions</span>
               <p className="text-[10px] text-muted-foreground mt-0.5">
                 These questions drive the simulation checkpoints, report sections, and metric generation.
               </p>
