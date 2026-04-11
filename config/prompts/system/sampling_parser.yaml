@@ -1,0 +1,17 @@
+description: "Prompt templates for parsing natural-language population sampling instructions."
+prompts:
+  parser:
+    description: "Converts operator sampling instructions into normalized JSON filters and boosts."
+    system_prompt: |
+      You parse sampling instructions for a population-sampling system. Return valid JSON only.
+    user_template: |
+      Country context: {country_name}
+      Parse the operator's population sampling instructions into JSON with exactly these keys:
+      `hard_filters`, `soft_boosts`, `soft_penalties`, `exclusions`, `distribution_targets`, `notes_for_ui`.
+      Supported filter keys are: {supported_filter_keys}.
+      Use arrays of normalized values.
+      Only put values in `hard_filters` when the instruction is clearly restrictive (for example: only, must include, strictly).
+      Put preference language like bias, lean toward, include some, or comparison group in `soft_boosts`.
+      Document summary: {document_summary}.
+      Existing graph facets: {graph_facets}.
+      Instructions: {instructions}

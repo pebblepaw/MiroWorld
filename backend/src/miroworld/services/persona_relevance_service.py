@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from miroworld.config import Settings
+from miroworld.services.config_service import ConfigService
 from miroworld.services.lightrag_service import (
     AGE_COHORT_ALIASES,
     EDUCATION_LEVEL_ALIASES,
@@ -50,8 +51,11 @@ SHORT_TEXT_FIELDS = (
     "hobbies_and_interests_list",
 )
 LONG_TEXT_FIELDS = (
+    "travel_persona",
+    "sports_persona",
     "professional_persona",
     "persona",
+    "arts_persona",
     "cultural_background",
     "skills_and_expertise",
     "career_goals_and_ambitions",
@@ -112,6 +116,21 @@ NAME_WITH_VERB_PATTERN = re.compile(
     r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+(?:grew|works|is|was|lives|resides|studies|believes|prefers)\b"
 )
 CAPITALIZED_NAME_PATTERN = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b")
+LEADING_NOISE_PATTERN = re.compile(r"^(?:At\s+\d{1,3},?\s*|In\s+\d{4},?\s*)+", flags=re.IGNORECASE)
+NAME_TOKEN_PATTERN = re.compile(
+    r"(?:[A-Z][A-Za-z'\-]+|[A-Z]\.|\([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+)*\))"
+)
+LEADING_NAME_TOKEN_PATTERN = re.compile(
+    r"^(?P<token>[A-Z][A-Za-z'\-]+|[A-Z]\.|\([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+)*\))(?P<suffix>\s+|$)"
+)
+PERSONA_NAME_FIELDS = (
+    "travel_persona",
+    "sports_persona",
+    "persona",
+    "professional_persona",
+    "arts_persona",
+    "cultural_background",
+)
 
 
 @dataclass
@@ -123,6 +142,7 @@ class PersonaRelevanceService:
     def __post_init__(self) -> None:
         self.llm = GeminiChatClient(self.settings)
         self.embeddings = GeminiEmbeddingClient(self.settings)
+        self.config = ConfigService(self.settings)
 
     def parse_sampling_instructions(
         self,
@@ -130,6 +150,7 @@ class PersonaRelevanceService:
         *,
         knowledge_artifact: dict[str, Any] | None = None,
         live_mode: bool = False,
+        country: str | None = None,
     ) -> dict[str, Any]:
         if not instructions or not instructions.strip():
             return dict(EMPTY_PARSED_INSTRUCTIONS)
@@ -140,10 +161,17 @@ class PersonaRelevanceService:
                 raise RuntimeError("Live sampling instruction parsing requires a configured model provider.")
             raise RuntimeError("Sampling instruction parsing requires a configured model provider.")
 
-        prompt = self._build_instruction_prompt(cleaned, knowledge_artifact or {})
+        supported_fields = self._supported_instruction_fields(country)
+        prompt = self._build_instruction_prompt(cleaned, knowledge_artifact or {}, country=country)
         raw = self.llm.complete_required(
             prompt,
-            system_prompt="You parse sampling instructions for a Singapore population-sampling system. Return valid JSON only.",
+            system_prompt=self.config.get_system_prompt_value(
+                "sampling_parser",
+                "prompts",
+                "parser",
+                "system_prompt",
+                default="You parse sampling instructions for a population-sampling system. Return valid JSON only.",
+            ),
         )
         parsed = self._extract_json_object(raw)
         if not parsed:
@@ -152,13 +180,22 @@ class PersonaRelevanceService:
             fallback = self._augment_with_deterministic_constraints(
                 cleaned,
                 self._fallback_parse_sampling_instructions(cleaned),
+                supported_fields=supported_fields,
             )
             if not fallback.get("notes_for_ui"):
                 fallback["notes_for_ui"] = [cleaned]
             return fallback
 
-        normalized = self._normalize_parsed_instructions(parsed, source=self.llm.provider)
-        normalized = self._augment_with_deterministic_constraints(cleaned, normalized)
+        normalized = self._normalize_parsed_instructions(
+            parsed,
+            source=self.llm.provider,
+            supported_fields=supported_fields,
+        )
+        normalized = self._augment_with_deterministic_constraints(
+            cleaned,
+            normalized,
+            supported_fields=supported_fields,
+        )
         if self._has_actionable_instruction_signal(normalized):
             return normalized
         if not normalized.get("notes_for_ui"):
@@ -740,43 +777,83 @@ class PersonaRelevanceService:
         return {"nodes": nodes, "links": links}
 
     def _extract_persona_display_name(self, persona: dict[str, Any]) -> str:
-        for key in ("display_name", "name", "full_name"):
+        for key in ("confirmed_name", "display_name", "name", "full_name"):
             value = persona.get(key)
             if isinstance(value, str):
                 candidate = value.strip()
                 if self._is_valid_display_name(candidate):
                     return candidate
 
-        persona_text = "\n".join(
-            str(persona.get(field, ""))
-            for field in (
-                "professional_persona",
-                "persona",
-                "cultural_background",
+        candidates: list[str] = []
+        combined_sections: list[str] = []
+        for field in PERSONA_NAME_FIELDS:
+            raw_text = str(persona.get(field, "") or "").strip()
+            if not raw_text:
+                continue
+            combined_sections.append(raw_text)
+            candidate = self._extract_name_candidate_from_text(raw_text)
+            if candidate:
+                candidates.append(candidate)
+
+        if candidates:
+            ordered_counts = Counter(candidates)
+            first_seen = {candidate: index for index, candidate in enumerate(candidates)}
+            return max(
+                ordered_counts,
+                key=lambda candidate: (ordered_counts[candidate], -first_seen[candidate], len(candidate)),
             )
-            if persona.get(field)
-        )
 
-        match = NAME_FIELD_PATTERN.search(persona_text)
-        if match:
-            candidate = match.group(1).strip()
-            if self._is_valid_display_name(candidate):
-                return candidate
+        persona_text = "\n".join(combined_sections)
+        if persona_text:
+            match = NAME_FIELD_PATTERN.search(persona_text)
+            if match:
+                candidate = match.group(1).strip()
+                if self._is_valid_display_name(candidate):
+                    return candidate
 
-        contextual_match = NAME_WITH_VERB_PATTERN.search(persona_text)
-        if contextual_match:
-            candidate = contextual_match.group(1).strip()
-            if self._is_valid_display_name(candidate):
-                return candidate
+            contextual_match = NAME_WITH_VERB_PATTERN.search(persona_text)
+            if contextual_match:
+                candidate = contextual_match.group(1).strip()
+                if self._is_valid_display_name(candidate):
+                    return candidate
 
-        for candidate in CAPITALIZED_NAME_PATTERN.findall(persona_text):
-            normalized = candidate.strip()
-            if self._is_valid_display_name(normalized):
-                return normalized
+            for candidate in CAPITALIZED_NAME_PATTERN.findall(persona_text):
+                normalized = candidate.strip()
+                if self._is_valid_display_name(normalized):
+                    return normalized
 
         occupation = str(persona.get("occupation") or "Resident").strip().title()
         planning_area = str(persona.get("planning_area") or "Singapore").strip().title()
         return f"{occupation} ({planning_area})"
+
+    def _extract_name_candidate_from_text(self, text: str) -> str | None:
+        cleaned = LEADING_NOISE_PATTERN.sub("", str(text or "").strip())
+        if not cleaned:
+            return None
+
+        segments = [cleaned, *re.split(r"\n+", cleaned)]
+        for segment in segments:
+            normalized_segment = LEADING_NOISE_PATTERN.sub("", segment.strip())
+            if not normalized_segment:
+                continue
+            candidate = self._consume_leading_name_tokens(normalized_segment)
+            if not candidate:
+                continue
+            if self._is_valid_display_name(candidate):
+                return candidate
+        return None
+
+    def _consume_leading_name_tokens(self, text: str) -> str | None:
+        remainder = str(text or "").strip()
+        tokens: list[str] = []
+        while remainder and len(tokens) < 7:
+            match = LEADING_NAME_TOKEN_PATTERN.match(remainder)
+            if not match:
+                break
+            tokens.append(match.group("token"))
+            remainder = remainder[match.end():].lstrip()
+        candidate = " ".join(tokens).strip(" ,.;:")
+        return candidate or None
 
     def _is_valid_display_name(self, value: str) -> bool:
         if not value:
@@ -813,7 +890,10 @@ class PersonaRelevanceService:
             return False
         if words & blocked_terms:
             return False
-        return bool(re.fullmatch(r"[A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*){0,3}", cleaned))
+        tokens = NAME_TOKEN_PATTERN.findall(cleaned)
+        if not tokens or " ".join(tokens) != cleaned:
+            return False
+        return 2 <= len(tokens) <= 7
 
     def _collect_matches(
         self,
@@ -1067,7 +1147,13 @@ class PersonaRelevanceService:
                     break
         return chosen
 
-    def _build_instruction_prompt(self, instructions: str, knowledge_artifact: dict[str, Any]) -> str:
+    def _build_instruction_prompt(
+        self,
+        instructions: str,
+        knowledge_artifact: dict[str, Any],
+        *,
+        country: str | None = None,
+    ) -> str:
         summary = str(knowledge_artifact.get("summary", "")).strip()
         facets = sorted(
             {
@@ -1076,15 +1162,23 @@ class PersonaRelevanceService:
                 if node.get("canonical_key")
             }
         )
-        return (
-            "Parse the operator's population sampling instructions into JSON with exactly these keys: "
-            "`hard_filters`, `soft_boosts`, `soft_penalties`, `exclusions`, `distribution_targets`, `notes_for_ui`. "
-            "Supported filter keys are: planning_area, sex, age_cohort, education_level, marital_status, occupation, industry, hobby, skill. "
-            "Use arrays of normalized values. Only put values in `hard_filters` when the instruction is clearly restrictive "
-            "(for example: only, must include, strictly). Put preference language like bias, lean toward, include some, or comparison group in `soft_boosts`. "
-            f"Document summary: {summary or 'n/a'}. "
-            f"Existing graph facets: {facets or ['none']}. "
-            f"Instructions: {instructions}"
+        country_name = "Selected country"
+        if country:
+            try:
+                country_name = str(self.config.get_country(country).get("name") or country).strip() or country_name
+            except Exception:
+                country_name = str(country).strip().title() or country_name
+        return self.config.get_system_prompt_value(
+            "sampling_parser",
+            "prompts",
+            "parser",
+            "user_template",
+        ).format(
+            supported_filter_keys=", ".join(self._format_filterable_columns_for_prompt(country)),
+            country_name=country_name,
+            document_summary=summary or "n/a",
+            graph_facets=facets or ["none"],
+            instructions=instructions,
         )
 
     def _extract_json_object(self, raw: str) -> dict[str, Any] | None:
@@ -1105,11 +1199,18 @@ class PersonaRelevanceService:
                 return parsed
         return None
 
-    def _normalize_parsed_instructions(self, parsed: dict[str, Any] | None, *, source: str) -> dict[str, Any]:
+    def _normalize_parsed_instructions(
+        self,
+        parsed: dict[str, Any] | None,
+        *,
+        source: str,
+        supported_fields: set[str] | None = None,
+    ) -> dict[str, Any]:
         base = dict(EMPTY_PARSED_INSTRUCTIONS)
         base["source"] = source
         if not parsed:
             return base
+        allowed_fields = supported_fields or set(SUPPORTED_INSTRUCTION_FIELDS)
 
         normalized = dict(base)
         for key in ("hard_filters", "soft_boosts", "soft_penalties", "exclusions", "distribution_targets"):
@@ -1118,7 +1219,7 @@ class PersonaRelevanceService:
                 normalized[key] = {
                     self._slug(field_name): self._normalize_instruction_values(field_name, field_value)
                     for field_name, field_value in value.items()
-                    if self._slug(field_name) in SUPPORTED_INSTRUCTION_FIELDS
+                    if self._slug(field_name) in allowed_fields
                     if field_value not in (None, "", [], {})
                 }
         notes = parsed.get("notes_for_ui", [])
@@ -1158,8 +1259,18 @@ class PersonaRelevanceService:
         age = int(match.group(0))
         return max(0, min(120, age))
 
-    def _augment_with_deterministic_constraints(self, instructions: str, parsed: dict[str, Any]) -> dict[str, Any]:
-        normalized = self._normalize_parsed_instructions(parsed, source=str(parsed.get("source", "runtime")))
+    def _augment_with_deterministic_constraints(
+        self,
+        instructions: str,
+        parsed: dict[str, Any],
+        *,
+        supported_fields: set[str] | None = None,
+    ) -> dict[str, Any]:
+        normalized = self._normalize_parsed_instructions(
+            parsed,
+            source=str(parsed.get("source", "runtime")),
+            supported_fields=supported_fields,
+        )
         hard_filters = dict(normalized.get("hard_filters") or {})
         notes = list(normalized.get("notes_for_ui") or [])
 
@@ -1176,6 +1287,35 @@ class PersonaRelevanceService:
             normalized["notes_for_ui"] = notes
         normalized["hard_filters"] = hard_filters
         return normalized
+
+    def _supported_instruction_fields(self, country: str | None) -> set[str]:
+        configured = {
+            self._slug(item.get("field"))
+            for item in self._country_filterable_columns(country)
+            if self._slug(item.get("field"))
+        }
+        return configured or set(SUPPORTED_INSTRUCTION_FIELDS)
+
+    def _country_filterable_columns(self, country: str | None) -> list[dict[str, Any]]:
+        if not country:
+            return []
+        try:
+            return self.config.get_country_filterable_columns(country)
+        except Exception:
+            return []
+
+    def _format_filterable_columns_for_prompt(self, country: str | None) -> list[str]:
+        columns = self._country_filterable_columns(country)
+        if not columns:
+            return sorted(SUPPORTED_INSTRUCTION_FIELDS)
+        rendered: list[str] = []
+        for item in columns:
+            field = self._slug(item.get("field"))
+            description = str(item.get("description") or "").strip()
+            if not field:
+                continue
+            rendered.append(f"{field} ({description})" if description else field)
+        return rendered or sorted(self._supported_instruction_fields(country))
 
     def _extract_age_constraints(self, instructions: str) -> dict[str, int | None]:
         lower = instructions.lower()

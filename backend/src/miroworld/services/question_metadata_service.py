@@ -10,25 +10,8 @@ import json
 from typing import Any
 
 from miroworld.config import Settings
+from miroworld.services.config_service import ConfigService
 from miroworld.services.llm_client import GeminiChatClient
-
-
-_METADATA_PROMPT_TEMPLATE = """\
-Given this analysis question that will be asked to simulated agents:
-"{question}"
-
-Generate the following metadata as JSON:
-- type: "scale" if the question asks for a 1-10 rating, "yes-no" if it asks yes/no, "open-ended" otherwise
-- metric_name: a snake_case identifier (e.g., "approval_rate")
-- metric_label: a short human-readable label (e.g., "Approval Rate")
-- metric_unit: "%" if measuring a percentage of agents, "/10" if measuring a mean score, "text" if qualitative
-- threshold: if type is "scale" and metric_unit is "%", suggest a reasonable threshold (usually 7)
-- threshold_direction: "gte" (default)
-- report_title: a concise section title for the report
-- tooltip: a one-sentence explanation of how this metric is computed
-
-Return valid JSON only.
-"""
 
 
 class QuestionMetadataService:
@@ -37,16 +20,24 @@ class QuestionMetadataService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.llm = GeminiChatClient(settings)
+        self.config = ConfigService(settings)
 
     async def generate_metric_metadata(self, question_text: str) -> dict[str, Any]:
         """Calls LLM to generate type, metric_name, metric_label, etc."""
-        prompt = _METADATA_PROMPT_TEMPLATE.format(question=question_text.strip())
+        prompt = self.config.get_system_prompt_value(
+            "question_metadata",
+            "prompts",
+            "metadata_generator",
+            "user_template",
+        ).format(question=question_text.strip())
         try:
             raw = self.llm.complete_required(
                 prompt,
-                system_prompt=(
-                    "You are a metric schema designer. Return valid JSON only "
-                    "with the exact keys requested. No markdown fences."
+                system_prompt=self.config.get_system_prompt_value(
+                    "question_metadata",
+                    "prompts",
+                    "metadata_generator",
+                    "system_prompt",
                 ),
             )
             parsed = _parse_json_object(raw)
@@ -57,13 +48,20 @@ class QuestionMetadataService:
 
     def generate_metric_metadata_sync(self, question_text: str) -> dict[str, Any]:
         """Synchronous variant of generate_metric_metadata."""
-        prompt = _METADATA_PROMPT_TEMPLATE.format(question=question_text.strip())
+        prompt = self.config.get_system_prompt_value(
+            "question_metadata",
+            "prompts",
+            "metadata_generator",
+            "user_template",
+        ).format(question=question_text.strip())
         try:
             raw = self.llm.complete_required(
                 prompt,
-                system_prompt=(
-                    "You are a metric schema designer. Return valid JSON only "
-                    "with the exact keys requested. No markdown fences."
+                system_prompt=self.config.get_system_prompt_value(
+                    "question_metadata",
+                    "prompts",
+                    "metadata_generator",
+                    "system_prompt",
                 ),
             )
             parsed = _parse_json_object(raw)

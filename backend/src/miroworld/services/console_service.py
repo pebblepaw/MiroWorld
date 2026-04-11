@@ -888,14 +888,15 @@ class ConsoleService:
                     event_callback=emit_knowledge_event,
                 )
                 artifacts.append(artifact)
-        except HTTPException:
+        except HTTPException as exc:
+            failure_detail = str(exc.detail).strip() or "Knowledge extraction failed."
             self.knowledge_streams.append_events(
                 session_id,
                 [
                     {
                         "event_type": "knowledge_failed",
                         "session_id": session_id,
-                        "detail": "Knowledge extraction failed.",
+                        "detail": failure_detail,
                     }
                 ],
             )
@@ -1107,6 +1108,11 @@ class ConsoleService:
     def preview_population(self, session_id: str, request: Any) -> dict[str, Any]:
         knowledge = self.store.get_knowledge_artifact(session_id)
         if not knowledge:
+            knowledge_state = self.knowledge_streams.get_state(session_id)
+            if str(knowledge_state.get("status") or "").strip().lower() == "failed":
+                detail = str(knowledge_state.get("last_error") or "").strip()
+                if detail:
+                    raise HTTPException(status_code=502, detail=detail)
             raise HTTPException(status_code=404, detail=f"Knowledge artifact not found for session {session_id}")
 
         runtime_settings = self._runtime_settings_for_session(session_id)
@@ -1118,6 +1124,7 @@ class ConsoleService:
                 request.sampling_instructions,
                 knowledge_artifact=knowledge,
                 live_mode=live_mode,
+                country=str(self._read_session_config(session_id).get("country") or "singapore"),
             )
         except HTTPException:
             raise
@@ -2650,8 +2657,14 @@ class ConsoleService:
         for row in sampled_rows:
             agent_id = str(row.get("agent_id"))
             persona = dict(row.get("persona") or {})
-            pre_score = float(baseline_map.get(agent_id, {}).get("stance_score", 0.5))
-            post_score = float(final_map.get(agent_id, baseline_map.get(agent_id, {})).get("stance_score", pre_score))
+            baseline_row = baseline_map.get(agent_id, {})
+            final_row = final_map.get(agent_id, baseline_row)
+            pre_score = float(baseline_row.get("stance_score", 0.5))
+            post_score = float(final_row.get("stance_score", pre_score))
+            confirmed_name = str(final_row.get("confirmed_name") or baseline_row.get("confirmed_name") or "").strip()
+            if confirmed_name:
+                persona["confirmed_name"] = confirmed_name
+                persona["display_name"] = confirmed_name
             updated_agents.append(
                 {
                     "agent_id": agent_id,

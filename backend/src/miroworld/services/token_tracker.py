@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from miroworld.config import BACKEND_DIR
+
 
 class TokenTracker:
     """Track token usage and estimate provider-aware costs."""
-
-    PRICING = {
-        "gemini-2.0-flash": {"input": 0.075, "output": 0.30, "cached_input": 0.01875},
-        "gemini-2.5-pro": {"input": 1.25, "output": 5.00, "cached_input": 0.3125},
-        "gpt-4o": {"input": 2.50, "output": 10.0, "cached_input": None},
-        "gpt-4o-mini": {"input": 0.15, "output": 0.60, "cached_input": None},
-        "ollama": {"input": 0.0, "output": 0.0, "cached_input": 0.0},
-    }
 
     def __init__(self, model: str = "gemini-2.0-flash") -> None:
         self.model = model
@@ -42,6 +42,7 @@ class TokenTracker:
             "caching_savings_usd": round(cached_savings, 4),
             "caching_savings_pct": round((cached_savings / uncached_cost) * 100, 1) if uncached_cost > 0 else 0,
             "model": self.model,
+            "pricing_last_updated": self._pricing_last_updated(),
         }
 
     def estimate_cost(
@@ -74,10 +75,23 @@ class TokenTracker:
             "without_caching_usd": round(uncached_cost, 2),
             "savings_pct": round((savings / uncached_cost) * 100, 1) if uncached_cost > 0 else 0,
             "model": self.model,
+            "pricing_last_updated": self._pricing_last_updated(),
         }
 
     def _pricing_for_model(self, model: str) -> dict[str, float | None]:
-        return self.PRICING.get(model, self.PRICING["gemini-2.0-flash"])
+        pricing = self._pricing_payload().get("models") or {}
+        if not isinstance(pricing, dict):
+            pricing = {}
+        resolved = pricing.get(model) or pricing.get("gemini-2.0-flash") or {}
+        return {
+            "input": float((resolved or {}).get("input", 0.0) or 0.0),
+            "output": float((resolved or {}).get("output", 0.0) or 0.0),
+            "cached_input": (
+                None
+                if (resolved or {}).get("cached_input") is None
+                else float((resolved or {}).get("cached_input") or 0.0)
+            ),
+        }
 
     def _uncached_cost(self, input_tokens: int, output_tokens: int, pricing: dict[str, float | None]) -> float:
         return (
@@ -92,3 +106,16 @@ class TokenTracker:
         full_price = (cached_tokens / 1_000_000) * float(pricing["input"] or 0.0)
         cached_price = (cached_tokens / 1_000_000) * float(cached_input)
         return max(0.0, full_price - cached_price)
+
+    def _pricing_last_updated(self) -> str:
+        return str(self._pricing_payload().get("last_updated") or "").strip()
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _pricing_payload() -> dict[str, Any]:
+        pricing_path = BACKEND_DIR.parent / "config" / "llm_pricing.yaml"
+        raw = pricing_path.read_text(encoding="utf-8")
+        payload = yaml.safe_load(raw)
+        if not isinstance(payload, dict):
+            raise ValueError(f"LLM pricing config must be a mapping: {pricing_path}")
+        return payload

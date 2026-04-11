@@ -71,6 +71,18 @@ def _get_demo_service(settings: Settings) -> DemoService:
     return DemoService(settings)
 
 
+def _request_has_explicit_live_knowledge_input(req: ConsoleKnowledgeProcessRequest) -> bool:
+    if str(req.document_text or "").strip():
+        return True
+    if str(req.source_path or "").strip():
+        return True
+    return any(
+        isinstance(item, dict)
+        and (str(item.get("document_text") or "").strip() or str(item.get("source_path") or "").strip())
+        for item in (req.documents or [])
+    )
+
+
 def _normalize_group_chat_segment(segment: Any) -> str:
     segment_key = str(segment or "").strip().lower()
     alias_map = {
@@ -232,7 +244,11 @@ async def process_knowledge(
     settings: Settings = Depends(get_settings),
 ) -> KnowledgeArtifactResponse:
     # Check if demo mode with cached data
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+    if (
+        _is_demo_session(session_id, settings)
+        and _get_demo_service(settings).is_demo_available()
+        and not _request_has_explicit_live_knowledge_input(req)
+    ):
         # Return cached knowledge for demo
         demo_service = _get_demo_service(settings)
         knowledge = demo_service.get_knowledge_artifact(session_id)
@@ -259,14 +275,6 @@ async def upload_knowledge(
     demographic_focus: str | None = Form(default=None),
     settings: Settings = Depends(get_settings),
 ) -> KnowledgeArtifactResponse:
-    # Check if demo mode with cached data
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        # Return cached knowledge for demo
-        demo_service = _get_demo_service(settings)
-        knowledge = demo_service.get_knowledge_artifact(session_id)
-        if knowledge:
-            return KnowledgeArtifactResponse(**knowledge)
-    
     payload = await ConsoleService(settings).process_uploaded_knowledge(
         session_id,
         upload=file,

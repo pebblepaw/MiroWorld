@@ -3,7 +3,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
 from miroworld.config import Settings
+from miroworld.models.console import PopulationPreviewRequest
 from miroworld.services.console_service import ConsoleService
 from miroworld.services.knowledge_stream_service import KnowledgeStreamService
 from miroworld.services.lightrag_service import LightRAGService
@@ -222,3 +226,159 @@ def test_console_process_knowledge_publishes_stream_events(tmp_path: Path, monke
     assert state["total_chunks"] == 2
     assert state["total_nodes"] == 1
     assert state["total_edges"] == 1
+
+
+def test_console_process_knowledge_records_runtime_failure_detail(tmp_path: Path, monkeypatch) -> None:
+    settings = _make_settings(tmp_path)
+    service = ConsoleService(settings)
+    session_id = "session-usa-failure"
+    service.create_v2_session(
+        country="usa",
+        use_case="public-policy-testing",
+        provider="google",
+        model="gemini-2.5-flash-lite",
+        api_key="test-key",
+        mode="live",
+        session_id=session_id,
+    )
+
+    async def fake_process_document(
+        self: LightRAGService,
+        simulation_id: str,
+        document_text: str,
+        source_path: str | None,
+        document_id: str | None = None,
+        guiding_prompt: str | None = None,
+        demographic_focus: str | None = None,
+        live_mode: bool = False,
+        event_callback=None,
+    ) -> dict[str, object]:
+        raise HTTPException(status_code=502, detail="USA LightRAG extraction failed: malformed graph payload")
+
+    monkeypatch.setattr(LightRAGService, "process_document", fake_process_document)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            service.process_knowledge(
+                session_id,
+                document_text="USA policy text",
+                source_path="usa-policy.txt",
+            )
+        )
+
+    state = KnowledgeStreamService(settings).get_state(session_id)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "USA LightRAG extraction failed: malformed graph payload"
+    assert state["status"] == "failed"
+    assert state["last_error"] == "USA LightRAG extraction failed: malformed graph payload"
+
+
+def test_preview_population_surfaces_prior_knowledge_failure(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    service = ConsoleService(settings)
+    session_id = "session-usa-preview"
+    service.create_v2_session(
+        country="usa",
+        use_case="public-policy-testing",
+        provider="google",
+        model="gemini-2.5-flash-lite",
+        api_key="test-key",
+        mode="live",
+        session_id=session_id,
+    )
+
+    service.knowledge_streams.reset(session_id)
+    service.knowledge_streams.append_events(
+        session_id,
+        [
+            {"event_type": "knowledge_started", "session_id": session_id, "document_count": 1},
+            {
+                "event_type": "knowledge_failed",
+                "session_id": session_id,
+                "detail": "USA LightRAG extraction failed: malformed graph payload",
+            },
+        ],
+    )
+
+    request = PopulationPreviewRequest(agent_count=10, sample_mode="affected_groups")
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.preview_population(session_id, request)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "USA LightRAG extraction failed: malformed graph payload"
+
+
+def test_process_uploaded_knowledge_persists_artifact_for_usa_session(tmp_path: Path, monkeypatch) -> None:
+    settings = _make_settings(tmp_path)
+    service = ConsoleService(settings)
+    session_id = "session-usa-upload"
+    service.create_v2_session(
+        country="usa",
+        use_case="public-policy-testing",
+        provider="google",
+        model="gemini-2.5-flash-lite",
+        api_key="test-key",
+        mode="live",
+        session_id=session_id,
+    )
+
+    class _Upload:
+        filename = "usa-policy.pdf"
+
+        async def read(self) -> bytes:
+            return b"%PDF-1.4 fake pdf payload"
+
+    async def fake_process_document(
+        self: LightRAGService,
+        simulation_id: str,
+        document_text: str,
+        source_path: str | None,
+        document_id: str | None = None,
+        guiding_prompt: str | None = None,
+        demographic_focus: str | None = None,
+        live_mode: bool = False,
+        event_callback=None,
+    ) -> dict[str, object]:
+        assert simulation_id == session_id
+        assert live_mode is True
+        assert source_path is not None and source_path.endswith("usa-policy.pdf")
+        return {
+            "simulation_id": session_id,
+            "document_id": "doc-usa-1",
+            "document": {
+                "document_id": "doc-usa-1",
+                "source_path": source_path,
+                "file_name": "usa-policy.pdf",
+                "file_type": "application/pdf",
+                "text_length": len(document_text),
+                "paragraph_count": 1,
+            },
+            "summary": "USA policy summary",
+            "guiding_prompt": guiding_prompt,
+            "demographic_context": demographic_focus,
+            "entity_nodes": [{"id": "node-usa-1", "label": "Housing Support", "type": "policy"}],
+            "relationship_edges": [{"source": "node-usa-1", "target": "node-usa-2", "type": "affects"}],
+            "entity_type_counts": {"policy": 1},
+            "graph_origin": "lightrag_native",
+            "processing_logs": ["ingested usa upload"],
+            "demographic_focus_summary": demographic_focus,
+        }
+
+    monkeypatch.setattr("miroworld.services.console_service.extract_document_text", lambda *_: "USA housing policy text")
+    monkeypatch.setattr(LightRAGService, "process_document", fake_process_document)
+
+    payload = asyncio.run(
+        service.process_uploaded_knowledge(
+            session_id,
+            upload=_Upload(),
+        )
+    )
+
+    stored_artifact = service.store.get_knowledge_artifact(session_id)
+
+    assert payload["summary"] == "USA policy summary"
+    assert stored_artifact is not None
+    assert stored_artifact["summary"] == "USA policy summary"
+    assert stored_artifact["document"]["source_path"].endswith("usa-policy.pdf")

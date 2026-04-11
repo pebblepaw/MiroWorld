@@ -42,6 +42,10 @@ class ConfigService:
     def prompts_dir(self) -> Path:
         return Path(self.settings.config_prompts_dir)
 
+    @property
+    def system_prompts_dir(self) -> Path:
+        return self.prompts_dir / "system"
+
     # ── Country methods ──
 
     def list_countries(self) -> list[dict[str, Any]]:
@@ -73,6 +77,13 @@ class ConfigService:
                 return payload
 
         raise FileNotFoundError(f"Country config not found for: {country_id}")
+
+    def get_country_filterable_columns(self, country_id: str) -> list[dict[str, Any]]:
+        payload = self.get_country(country_id)
+        columns = payload.get("filterable_columns")
+        if isinstance(columns, list) and columns:
+            return [item for item in columns if isinstance(item, dict)]
+        return []
 
     # ── Use-case methods ──
 
@@ -110,6 +121,30 @@ class ConfigService:
                 "icon": payload.get("icon", ""),
             })
         return cases
+
+    def get_system_prompt_config(self, prompt_id: str) -> dict[str, Any]:
+        normalized = str(prompt_id).strip().lower().replace("\\", "/")
+        cache_key = f"system::{normalized}"
+        if cache_key in self._prompt_cache:
+            return self._prompt_cache[cache_key]
+
+        path = self.system_prompts_dir / f"{normalized}.yaml"
+        if not path.exists():
+            raise FileNotFoundError(f"System prompt config not found for: {prompt_id}")
+
+        payload = self._load_yaml(path)
+        self._prompt_cache[cache_key] = payload
+        return payload
+
+    def get_system_prompt_value(self, prompt_id: str, *keys: str, default: str = "") -> str:
+        payload: Any = self.get_system_prompt_config(prompt_id)
+        for key in keys:
+            if not isinstance(payload, dict):
+                return default
+            payload = payload.get(key)
+        if payload is None:
+            return default
+        return str(payload).strip()
 
     def get_system_prompt(self, use_case_id: str) -> str:
         payload = self.get_use_case(use_case_id)

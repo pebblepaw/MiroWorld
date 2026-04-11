@@ -23,6 +23,26 @@ filter_fields:
     type: "multi-select-chips"
     label: "Ethnicity"
 
+filterable_columns:
+  - field: "state"
+    description: "US state or territory."
+    type: "categorical"
+  - field: "gender"
+    description: "Gender of the person."
+    type: "categorical"
+  - field: "ethnicity"
+    description: "Ethnicity or racial identity."
+    type: "categorical"
+  - field: "min_age"
+    description: "Minimum age constraint."
+    type: "range"
+  - field: "max_age"
+    description: "Maximum age constraint."
+    type: "range"
+  - field: "occupation"
+    description: "Primary occupation."
+    type: "categorical"
+
 geo_json_path: "config/countries/usa_geo.json"
 map_center: [39.8283, -98.5795]
 map_zoom: 4

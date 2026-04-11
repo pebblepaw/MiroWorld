@@ -17,6 +17,7 @@ from lightrag.types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNod
 from lightrag.utils import EmbeddingFunc
 
 from miroworld.config import Settings
+from miroworld.services.config_service import ConfigService
 
 
 def _constant_slugify(value: str) -> str:
@@ -275,16 +276,6 @@ NAME_TITLE_PREFIXES = {
     "professor",
     "sir",
 }
-GRAPH_EXTRACTION_SYSTEM_PROMPT = (
-    "Extract a policy knowledge graph from the document. Return valid JSON only, "
-    "with keys nodes and edges. Nodes should include id, label, type, and optional "
-    "description or weight. Edges should include source, target, type, and label. "
-    "Use active-voice relation labels when possible and normalize them to canonical "
-    "semantics such as administers, funds, affects, regulates, implemented_by, "
-    "targets, and located_in. Prefer entities and relationships relevant to any "
-    "guiding prompt that is provided."
-)
-
 NODE_TYPE_ALIASES = {
     "agency": "organization",
     "authorities": "organization",
@@ -360,6 +351,7 @@ RELATION_TYPE_ALIASES = {
 class LightRAGService:
     def __init__(self, settings: Settings):
         self._settings = settings
+        self._config = ConfigService(settings)
         self._rag: LightRAG | None = None
         self._init_lock = asyncio.Lock()
 
@@ -509,19 +501,29 @@ class LightRAGService:
                     },
                 )
 
-        summary_prompt = (
-            "Summarize this policy document in neutral third-person with key entities, "
-            "policy measures, target groups, and expected impacts. "
-            "Do not include AI self-reference, inability disclaimers, or first-person statements."
+        summary_prompt = self._config.get_system_prompt_value(
+            "graph_extraction",
+            "prompts",
+            "document_summary",
+            "default_prompt",
         )
         if provider == "ollama":
-            summary_prompt = (
-                "Summarize the policy in 5 concise bullets covering objective, implementing entities, "
-                "target cohorts, geographic scope, and expected social impact. "
-                "Do not include AI self-reference, inability disclaimers, or first-person statements."
+            summary_prompt = self._config.get_system_prompt_value(
+                "graph_extraction",
+                "prompts",
+                "document_summary",
+                "ollama_prompt",
             )
         if normalized_guiding_prompt:
-            summary_prompt = f"{summary_prompt} Focus especially on: {normalized_guiding_prompt}"
+            summary_prompt = (
+                f"{summary_prompt} "
+                + self._config.get_system_prompt_value(
+                    "graph_extraction",
+                    "prompts",
+                    "document_summary",
+                    "guiding_focus_suffix",
+                ).format(guiding_prompt=normalized_guiding_prompt)
+            ).strip()
         summary = await self._rag.aquery(
             summary_prompt,
             param=QueryParam(mode=summary_mode),
@@ -1088,10 +1090,16 @@ async def _extract_graph_payload(
     if not api_key:
         raise RuntimeError("A provider API key is required for graph extraction.")
 
+    config = ConfigService(settings)
     raw_response = openai_complete_if_cache(
         settings.gemini_model,
         prompt,
-        system_prompt=GRAPH_EXTRACTION_SYSTEM_PROMPT,
+        system_prompt=config.get_system_prompt_value(
+            "graph_extraction",
+            "prompts",
+            "graph_extraction",
+            "system_prompt",
+        ),
         api_key=api_key,
         base_url=settings.gemini_openai_base_url,
         enable_cot=False,

@@ -77,13 +77,13 @@ def _row_stance(row: dict[str, Any], agent: dict[str, Any] | None = None) -> str
 def _agent_name(agent: dict[str, Any] | None, fallback: str) -> str:
     if not agent:
         return fallback
-    for key in ("name", "agent_name", "display_name", "label"):
+    for key in ("confirmed_name", "name", "agent_name", "display_name", "label"):
         value = _clean_text(agent.get(key))
         if value:
             return value
     persona = agent.get("persona")
     if isinstance(persona, dict):
-        for key in ("name", "agent_name", "display_name", "label"):
+        for key in ("confirmed_name", "name", "agent_name", "display_name", "label"):
             value = _clean_text(persona.get(key))
             if value:
                 return value

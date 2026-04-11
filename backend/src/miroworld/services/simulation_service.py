@@ -16,6 +16,7 @@ from typing import Any, Callable
 from miroworld.config import Settings
 from miroworld.models.phase_a import PersonaFilterRequest
 from miroworld.models.phase_b import SimulationRunRequest
+from miroworld.services.config_service import ConfigService
 from miroworld.services.llm_client import GeminiChatClient
 from miroworld.services.persona_sampler import PersonaSampler
 from miroworld.services.storage import SimulationStore
@@ -38,6 +39,7 @@ class SimulationService:
             download_workers=self.settings.nemotron_download_workers,
         )
         self.llm = GeminiChatClient(self.settings)
+        self.config = ConfigService(self.settings)
 
     def run(self, req: SimulationRunRequest) -> dict[str, Any]:
         sample_req = PersonaFilterRequest(
@@ -328,9 +330,12 @@ class SimulationService:
                 try:
                     raw = self.llm.complete_required(
                         prompt,
-                        system_prompt=(
-                            "You classify the opinions of simulated Singapore residents about a policy. "
-                            "Return valid JSON only."
+                        system_prompt=self.config.get_system_prompt_value(
+                            "checkpoint_interview",
+                            "prompts",
+                            "checkpoint_classifier",
+                            "system_prompt",
+                            default="You classify the opinions of simulated residents about a policy. Return valid JSON only.",
                         ),
                         response_format=response_format,
                     )
@@ -789,17 +794,18 @@ class SimulationService:
                     + "\n"
                 )
         context_line = f"Shared document context: {knowledge_digest}\n" if knowledge_digest else ""
-        return (
-            f"Simulation: {simulation_id}\n"
-            f"Checkpoint kind: {checkpoint_kind}\n"
-            f"Policy summary: {policy_summary}\n"
-            f"{context_line}\n"
-            f"{question_block}"
-            "For each agent, assess their stance on the policy and return JSON only using this schema:\n"
-            "{\"records\":[{\"agent_id\": str, \"stance_score\": number, \"stance_class\": \"approve|neutral|dissent\", "
-            "\"confidence\": number, \"primary_driver\": str, \"confirmed_name\": str, "
-            "\"metric_answers\": {metric_name: number|string}, \"matched_context_nodes\": [str]}]}\n\n"
-            f"Agents:\n{json.dumps(payload, ensure_ascii=False)}"
+        return self.config.get_system_prompt_value(
+            "checkpoint_interview",
+            "prompts",
+            "checkpoint_interview",
+            "user_template",
+        ).format(
+            simulation_id=simulation_id,
+            checkpoint_kind=checkpoint_kind,
+            policy_summary=policy_summary,
+            context_line=context_line.strip(),
+            question_block=question_block,
+            agents_json=json.dumps(payload, ensure_ascii=False),
         )
 
     def _normalize_checkpoint_records(

@@ -173,12 +173,20 @@ def _extract_title(content: str) -> str:
         return "New discussion thread"
 
     normalized = re.sub(r"^As an? [^,]{1,80},\s*", "", text, flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"^(?:I\s+(?:think|feel|believe|support|oppose|worry|suspect)|I'm\s+concerned|I\s+am\s+concerned)\b[:,]?\s*",
+        "",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    contrast_split = re.split(r"\b(?:but|however|though|although)\b", normalized, maxsplit=1, flags=re.IGNORECASE)
+    primary_clause = contrast_split[0].strip(" ,.;:") if contrast_split else normalized
     segments = [
         segment.strip(" .,!?:;\"")
-        for segment in re.split(r"[.!?]\s+", normalized)
+        for segment in re.split(r"[.!?]\s+|,\s+", primary_clause or normalized)
         if segment.strip()
     ]
-    candidate = next((segment for segment in segments if len(segment.split()) >= 5), normalized)
+    candidate = next((segment for segment in segments if len(segment.split()) >= 4), primary_clause or normalized)
     tokens = TITLE_TOKEN_PATTERN.findall(candidate)
     informative = [token for token in tokens if token.lower() not in TITLE_STOPWORDS]
     chosen = informative if len(informative) >= 4 else tokens

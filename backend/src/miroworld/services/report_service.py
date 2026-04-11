@@ -74,6 +74,7 @@ class ReportService:
         self.store = SimulationStore(settings.simulation_db_path)
         self.llm = GeminiChatClient(settings)
         self.memory = MemoryService(settings)
+        self.config = ConfigService(settings)
 
     def generate_structured_report(self, simulation_id: str, use_case: str | None = None) -> dict[str, Any]:
         existing = self.store.get_report_state(simulation_id)
@@ -107,9 +108,11 @@ class ReportService:
             try:
                 raw = self.llm.complete_required(
                     prompt,
-                    system_prompt=(
-                        "You are MiroWorld ReportAgent. Return valid JSON only using the requested schema. "
-                        "Every claim must be grounded in provided evidence."
+                    system_prompt=self.config.get_system_prompt_value(
+                        "report_agent",
+                        "prompts",
+                        "structured_seed",
+                        "system_prompt",
                     ),
                 )
             except Exception:  # noqa: BLE001
@@ -251,13 +254,24 @@ class ReportService:
         arguments_against = sorted(arguments_against, key=lambda x: x["strength"], reverse=True)[:12]
 
         executive_summary = self.llm.complete(
-            prompt=(
-                f"Generate a concise executive summary for simulation {simulation_id}. "
-                f"Pre approval={_approval(pre):.2f}, post approval={_approval(post):.2f}, "
-                f"net shift={_mean(post)-_mean(pre):.2f}. "
-                f"Top dissent cohorts={top_dissenting[:3]}."
+            prompt=self.config.get_system_prompt_value(
+                "report_agent",
+                "prompts",
+                "executive_summary",
+                "user_template",
+            ).format(
+                simulation_id=simulation_id,
+                pre_approval=f"{_approval(pre):.2f}",
+                post_approval=f"{_approval(post):.2f}",
+                net_shift=f"{_mean(post)-_mean(pre):.2f}",
+                top_dissenting=top_dissenting[:3],
             ),
-            system_prompt="You are ReportAgent. Return concise strategic summary.",
+            system_prompt=self.config.get_system_prompt_value(
+                "report_agent",
+                "prompts",
+                "executive_summary",
+                "system_prompt",
+            ),
         )
 
         recommendations = self._recommend(
@@ -290,12 +304,24 @@ class ReportService:
 
     def report_chat(self, simulation_id: str, message: str) -> str:
         report = self.build_report(simulation_id)
-        prompt = (
-            f"Report JSON:\n{report}\n\n"
-            f"User asks: {message}\n"
-            "Provide a direct, data-grounded answer with concrete cohort references."
+        prompt = self.config.get_system_prompt_value(
+            "report_agent",
+            "prompts",
+            "report_chat",
+            "user_template",
+        ).format(
+            report_json=report,
+            message=message,
         )
-        return self.llm.complete_required(prompt, system_prompt="You are MiroWorld ReportAgent.")
+        return self.llm.complete_required(
+            prompt,
+            system_prompt=self.config.get_system_prompt_value(
+                "report_agent",
+                "prompts",
+                "report_chat",
+                "system_prompt",
+            ),
+        )
 
     def report_chat_payload(self, simulation_id: str, message: str) -> dict[str, Any]:
         report = self.build_report(simulation_id)
@@ -304,15 +330,27 @@ class ReportService:
         memory_excerpt = "\n".join(f"- {item['content']}" for item in memory_context["episodes"][:6])
         checkpoint_excerpt = self.memory.format_checkpoint_records(memory_context["checkpoint_records"], limit=6)
         knowledge_excerpt = "\n".join(self._knowledge_context_lines(knowledge))
-        prompt = (
-            f"Report JSON:\n{report}\n\n"
-            f"Original document context:\n{knowledge_excerpt or '- none'}\n\n"
-            f"Relevant memory search results:\n{memory_excerpt or '- none'}\n\n"
-            f"Checkpoint evidence:\n{checkpoint_excerpt or '- none'}\n\n"
-            f"User asks: {message}\n"
-            "Provide a direct, data-grounded answer with concrete cohort references."
+        prompt = self.config.get_system_prompt_value(
+            "report_agent",
+            "prompts",
+            "report_chat",
+            "user_template_with_memory",
+        ).format(
+            report_json=report,
+            knowledge_excerpt=knowledge_excerpt or "- none",
+            memory_excerpt=memory_excerpt or "- none",
+            checkpoint_excerpt=checkpoint_excerpt or "- none",
+            message=message,
         )
-        response = self.llm.complete_required(prompt, system_prompt="You are MiroWorld ReportAgent.")
+        response = self.llm.complete_required(
+            prompt,
+            system_prompt=self.config.get_system_prompt_value(
+                "report_agent",
+                "prompts",
+                "report_chat",
+                "system_prompt",
+            ),
+        )
         return {
             "session_id": simulation_id,
             "simulation_id": simulation_id,
@@ -701,11 +739,18 @@ class ReportService:
             agent_id = str(agent.get("agent_id") or agent.get("id") or "").strip()
             if not agent_id:
                 continue
+            persona = agent.get("persona") if isinstance(agent.get("persona"), dict) else {}
             display_name = _clean_report_text(
-                agent.get("name")
+                agent.get("confirmed_name")
+                or agent.get("name")
                 or agent.get("agent_name")
                 or agent.get("display_name")
                 or agent.get("label")
+                or persona.get("confirmed_name")
+                or persona.get("name")
+                or persona.get("agent_name")
+                or persona.get("display_name")
+                or persona.get("label")
                 or agent_id
             )
             agent_names[agent_id] = display_name or agent_id
@@ -941,21 +986,34 @@ class ReportService:
         knowledge_context = "\n".join(self._knowledge_context_lines(knowledge))
         style_rules = self._resolve_report_writer_instructions(use_case)
         style_block = "\n".join(f"- {rule}" for rule in style_rules)
-        prompt = (
-            f"Simulation ID: {simulation_id}\n"
-            f"Guiding question: {question}\n"
-            f"Original document context:\n{knowledge_context or '- none'}\n"
-            f"Agent sample size: {len(agents)}\n"
-            f"Recent interactions: {json.dumps(interactions[-20:], ensure_ascii=False)[:6000]}\n"
-            f"Writing requirements:\n{style_block}\n"
-            "Respond in 2-4 sentences and reference evidence from the interactions."
+        report_prompt_cfg = self.config.get_system_prompt_config("report_agent")
+        recent_char_limits = ((report_prompt_cfg.get("defaults") or {}).get("recent_interactions_chars") or {})
+        recent_char_limit = int(recent_char_limits.get(self.llm.provider, recent_char_limits.get("default", 20000)) or 20000)
+        min_words = int(((report_prompt_cfg.get("defaults") or {}).get("min_words_per_question") or 300))
+        max_words = int(((report_prompt_cfg.get("defaults") or {}).get("max_words_per_question") or 500))
+        prompt = self.config.get_system_prompt_value(
+            "report_agent",
+            "prompts",
+            "guiding_question",
+            "user_template",
+        ).format(
+            simulation_id=simulation_id,
+            question=question,
+            knowledge_context=knowledge_context or "- none",
+            agent_count=len(agents),
+            recent_interactions=json.dumps(interactions, ensure_ascii=False)[:recent_char_limit],
+            style_block=style_block or "- none",
+            min_words_per_question=min_words,
+            max_words_per_question=max_words,
         )
         try:
             response = self.llm.complete_required(
                 prompt,
-                system_prompt=(
-                    "You are MiroWorld ReportAgent. Stay factual and evidence-grounded. "
-                    "Write as an analyst summarizing agent perspectives, never as a participant."
+                system_prompt=self.config.get_system_prompt_value(
+                    "report_agent",
+                    "prompts",
+                    "guiding_question",
+                    "system_prompt",
                 ),
             )
             response = _clean_report_text(response)
@@ -966,7 +1024,12 @@ class ReportService:
                         "Do not use first-person pronouns. Keep all facts and evidence references intact.\n\n"
                         f"Text:\n{response}"
                     ),
-                    system_prompt="You are a policy-report editor. Return only the rewritten text.",
+                    system_prompt=self.config.get_system_prompt_value(
+                        "report_agent",
+                        "prompts",
+                        "guiding_question",
+                        "rewrite_system_prompt",
+                    ),
                 )
                 response = _clean_report_text(rewrite)
             return response
@@ -1034,15 +1097,29 @@ class ReportService:
         supporting_views: list[str],
         dissenting_views: list[str],
     ) -> str:
-        prompt = (
-            f"Simulation {simulation_id}. Approval moved from {initial_metric} to {final_metric} "
-            f"over {round_count} rounds.\n"
-            f"Supporting themes: {supporting_views[:3]}\n"
-            f"Dissenting themes: {dissenting_views[:3]}\n"
-            "Write a concise executive summary in 3-4 sentences."
+        prompt = self.config.get_system_prompt_value(
+            "report_agent",
+            "prompts",
+            "v2_executive_summary",
+            "user_template",
+        ).format(
+            simulation_id=simulation_id,
+            initial_metric=initial_metric,
+            final_metric=final_metric,
+            round_count=round_count,
+            supporting_views=supporting_views[:3],
+            dissenting_views=dissenting_views[:3],
         )
         try:
-            return self.llm.complete_required(prompt, system_prompt="You are MiroWorld ReportAgent.")
+            return self.llm.complete_required(
+                prompt,
+                system_prompt=self.config.get_system_prompt_value(
+                    "report_agent",
+                    "prompts",
+                    "v2_executive_summary",
+                    "system_prompt",
+                ),
+            )
         except Exception:  # noqa: BLE001
             direction = "declined" if final_metric < initial_metric else "improved"
             return (
@@ -1197,19 +1274,27 @@ class ReportService:
         style_block = "\n".join(f"- {rule}" for rule in style_rules)
         knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
         knowledge_context = "\n".join(self._knowledge_context_lines(knowledge))
-        prompt = (
-            f"Simulation {simulation_id}. {agent_count} agents over {round_count} rounds.\n"
-            f"Original document context:\n{knowledge_context or '- none'}\n"
-            f"Key metrics: {metrics_summary}\n"
-            f"Writing requirements:\n{style_block}\n"
-            "Write a concise executive summary in 3-4 sentences highlighting the most important findings."
+        prompt = self.config.get_system_prompt_value(
+            "report_agent",
+            "prompts",
+            "metric_delta_summary",
+            "user_template",
+        ).format(
+            simulation_id=simulation_id,
+            agent_count=agent_count,
+            round_count=round_count,
+            knowledge_context=knowledge_context or "- none",
+            metrics_summary=metrics_summary,
+            style_block=style_block or "- none",
         )
         try:
             response = self.llm.complete_required(
                 prompt,
-                system_prompt=(
-                    "You are MiroWorld ReportAgent. Write in third-person analytical voice only; "
-                    "do not present personal opinions."
+                system_prompt=self.config.get_system_prompt_value(
+                    "report_agent",
+                    "prompts",
+                    "metric_delta_summary",
+                    "system_prompt",
                 ),
             )
             response = _clean_report_text(response)
@@ -1220,7 +1305,12 @@ class ReportService:
                         "Do not use first-person pronouns. Keep the same findings.\n\n"
                         f"Text:\n{response}"
                     ),
-                    system_prompt="You are a policy-report editor. Return only the rewritten text.",
+                    system_prompt=self.config.get_system_prompt_value(
+                        "report_agent",
+                        "prompts",
+                        "metric_delta_summary",
+                        "rewrite_system_prompt",
+                    ),
                 )
                 response = _clean_report_text(rewrite)
             return response
@@ -1250,23 +1340,27 @@ class ReportService:
                 }
             ]
 
-        prompt = (
-            "Generate 5 concrete policy communication/mitigation recommendations in JSON. "
-            "Use ONLY this schema: "
-            "[{\"title\": str, \"rationale\": str, \"target_demographic\": str, "
-            "\"expected_impact\": str, \"execution_plan\": [str, str, str], \"confidence\": number}]\n"
-            f"simulation_id={simulation_id}\n"
-            f"top_dissenting={top_dissenting[:6]}\n"
-            f"income_metrics={sorted(income_metrics, key=lambda x: x['approval_post'])[:6]}\n"
-            f"arguments_for={arguments_for[:6]}\n"
-            f"arguments_against={arguments_against[:6]}\n"
-            "Rules: recommendations must be specific, non-generic, and tied to at least one planning area or cohort. "
-            "confidence must be between 0 and 1."
+        prompt = self.config.get_system_prompt_value(
+            "report_agent",
+            "prompts",
+            "recommendations",
+            "user_template",
+        ).format(
+            simulation_id=simulation_id,
+            top_dissenting=top_dissenting[:6],
+            income_metrics=sorted(income_metrics, key=lambda x: x["approval_post"])[:6],
+            arguments_for=arguments_for[:6],
+            arguments_against=arguments_against[:6],
         )
 
         raw = self.llm.complete_required(
             prompt=prompt,
-            system_prompt="You are MiroWorld ReportAgent. Return valid JSON only.",
+            system_prompt=self.config.get_system_prompt_value(
+                "report_agent",
+                "prompts",
+                "recommendations",
+                "system_prompt",
+            ),
         )
         parsed = self._parse_recommendations(raw)
         if parsed:

@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from miroworld.config import Settings
+from miroworld.services.config_service import ConfigService
 from miroworld.services.llm_client import GeminiChatClient
 from miroworld.services.storage import SimulationStore
 
@@ -14,6 +15,7 @@ class MemoryService:
         self._settings = settings
         self.store = SimulationStore(settings.simulation_db_path)
         self.llm = GeminiChatClient(settings)
+        self.config = ConfigService(settings)
         self._simulation_context_cache: dict[tuple[str, str, int, bool, str], dict[str, Any]] = {}
         self._interaction_cache: dict[str, list[dict[str, Any]]] = {}
         self._transcript_cache: dict[str, list[dict[str, Any]]] = {}
@@ -135,24 +137,32 @@ class MemoryService:
         context_excerpt = self._format_episode_excerpt(memory_context["episodes"], limit=6)
         checkpoint_excerpt = self.format_checkpoint_records(memory_context["checkpoint_records"], limit=4)
         activity_excerpt = self._format_agent_activity_excerpt(memories, agent_id=agent_id, limit=8)
-        prompt = (
-            f"You are persona agent {agent_id} from MiroWorld simulation {simulation_id}.\n"
-            "## Your Profile\n"
-            f"{agent['persona']}\n\n"
-            "## Your Checkpoint Responses\n"
-            f"{checkpoint_excerpt or '- none'}\n\n"
-            "## Your Social Media Activity (Most Recent First)\n"
-            f"{activity_excerpt or '- none'}\n\n"
-            f"## Key Discussions You Participated In ({memory_context.get('memory_backend', self._memory_backend)})\n"
-            f"{context_excerpt or '- none'}\n\n"
-            f"User question: {message}\n"
-            "Answer in-character in 3-5 sentences, grounded only in the memories above."
+        prompt = self.config.get_system_prompt_value(
+            "memory_context",
+            "prompts",
+            "agent_chat",
+            "user_template",
+        ).format(
+            agent_id=agent_id,
+            simulation_id=simulation_id,
+            persona=agent["persona"],
+            checkpoint_excerpt=checkpoint_excerpt or "- none",
+            activity_excerpt=activity_excerpt or "- none",
+            memory_backend=memory_context.get("memory_backend", self._memory_backend),
+            context_excerpt=context_excerpt or "- none",
+            message=message,
         )
 
         if self.llm.is_enabled():
             response = self.llm.complete_required(
                 prompt,
-                system_prompt="You are a simulated Singapore persona agent. Stay grounded in supplied memory.",
+                system_prompt=self.config.get_system_prompt_value(
+                    "memory_context",
+                    "prompts",
+                    "agent_chat",
+                    "system_prompt",
+                    default="You are a simulated persona agent. Stay grounded in supplied memory.",
+                ),
             )
         else:
             response = self._local_fallback_agent_response(
