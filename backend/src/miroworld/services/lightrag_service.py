@@ -545,8 +545,6 @@ class LightRAGService:
                 f"Adapted LightRAG entity graph ({len(entity_nodes)} nodes, {len(relationship_edges)} edges)"
             )
         else:
-            if live_mode:
-                raise RuntimeError("Live knowledge extraction requires native LightRAG graph output.")
             graph_origin = "fallback_model_extract"
             entity_nodes, relationship_edges = await _build_graph_from_text(
                 document_text=fallback_graph_text,
@@ -556,6 +554,8 @@ class LightRAGService:
             processing_logs.append(
                 f"Native LightRAG graph unavailable, used fallback extraction ({len(entity_nodes)} nodes, {len(relationship_edges)} edges)"
             )
+            if live_mode:
+                processing_logs.append("Live mode accepted fallback graph extraction after empty native LightRAG output.")
 
         entity_type_counts = dict(Counter(str(node.get("type", "unknown")) for node in entity_nodes))
 
