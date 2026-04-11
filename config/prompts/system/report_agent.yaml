@@ -16,9 +16,10 @@ prompts:
     system_prompt: |
       You are ReportAgent. Return concise strategic summary.
     user_template: |
-      Generate a concise executive summary for simulation {simulation_id}.
+      Generate a concise executive summary for this policy simulation.
       Pre approval={pre_approval}, post approval={post_approval}, net shift={net_shift}.
       Top dissent cohorts={top_dissenting}.
+      Do NOT mention any simulation ID or session identifier in the output.
   report_chat:
     description: "Answer report-chat questions against the generated report and retrieved evidence."
     system_prompt: |
@@ -54,7 +55,6 @@ prompts:
     rewrite_system_prompt: |
       You are a policy-report editor. Return only the rewritten text.
     user_template: |
-      Simulation ID: {simulation_id}
       Guiding question: {question}
       Original document context:
       {knowledge_context}
@@ -70,7 +70,7 @@ prompts:
     system_prompt: |
       You are MiroWorld ReportAgent.
     user_template: |
-      Simulation {simulation_id}. Approval moved from {initial_metric} to {final_metric} over {round_count} rounds.
+      Approval moved from {initial_metric} to {final_metric} over {round_count} rounds.
       Supporting themes: {supporting_views}
       Dissenting themes: {dissenting_views}
       Write a concise executive summary in 3-4 sentences.
@@ -81,13 +81,14 @@ prompts:
     rewrite_system_prompt: |
       You are a policy-report editor. Return only the rewritten text.
     user_template: |
-      Simulation {simulation_id}. {agent_count} agents over {round_count} rounds.
+      {agent_count} agents simulated over {round_count} rounds.
       Original document context:
       {knowledge_context}
       Key metrics: {metrics_summary}
       Writing requirements:
       {style_block}
       Write a concise executive summary in 3-4 sentences highlighting the most important findings.
+      Do NOT mention any simulation ID, session ID, or session identifier in the output.
   recommendations:
     description: "Generate structured policy communication or mitigation recommendations."
     system_prompt: |
@@ -96,7 +97,6 @@ prompts:
       Generate 5 concrete policy communication/mitigation recommendations in JSON.
       Use ONLY this schema:
       [{{"title": str, "rationale": str, "target_demographic": str, "expected_impact": str, "execution_plan": [str, str, str], "confidence": number}}]
-      simulation_id={simulation_id}
       top_dissenting={top_dissenting}
       income_metrics={income_metrics}
       arguments_for={arguments_for}

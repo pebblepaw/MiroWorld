@@ -984,7 +984,7 @@ function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loadin
                     {Math.round(leader.influence * 100)}%
                   </span>
                 </div>
-                <MarkdownContent className="text-xs text-muted-foreground">{leader.topView || leader.topPost || "No viewpoint summary available."}</MarkdownContent>
+                <MarkdownContent className="text-xs text-muted-foreground">{leader.topPost || leader.topView || "No viewpoint summary available."}</MarkdownContent>
               </article>
             ))}
           </div>
@@ -1179,6 +1179,20 @@ function normalizeOpinionFlowPayload(payload: Record<string, unknown>): OpinionF
   };
 }
 
+/** Extract full text from a top_post field, which may be a string or a dict with content/body keys. */
+function extractTopPostText(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "object" && value !== null) {
+    const obj = value as Record<string, unknown>;
+    const text = obj.content ?? obj.body ?? obj.text ?? obj.summary ?? obj.title ?? "";
+    if (typeof text === "string" && text.trim()) return text.trim();
+  }
+  const str = String(value ?? "").trim();
+  // Avoid "[object Object]"
+  return str === "[object Object]" ? "" : str;
+}
+
 function normalizeLeadersPayload(payload: Record<string, unknown>, agentNamesById: Map<string, string>): Leader[] | null {
   const candidates = payload.top_influencers ?? payload.leaders ?? payload.items;
   if (!Array.isArray(candidates)) {
@@ -1205,7 +1219,7 @@ function normalizeLeadersPayload(payload: Record<string, unknown>, agentNamesByI
         topView: String(
           entry.summary ?? entry.viewpoint_summary ?? entry.top_view ?? entry.topView ?? entry.core_viewpoint ?? "",
         ).trim(),
-        topPost: String(entry.top_post ?? entry.topPost ?? entry.example_post ?? "").trim(),
+        topPost: extractTopPostText(entry.top_post ?? entry.topPost ?? entry.example_post),
       } satisfies Leader;
     })
     .filter((row): row is NonNullable<typeof row> => Boolean(row));

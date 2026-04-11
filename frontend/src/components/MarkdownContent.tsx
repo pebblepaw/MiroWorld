@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import Markdown from "react-markdown";
 
 interface MarkdownContentProps {
@@ -10,14 +10,28 @@ interface MarkdownContentProps {
 
 /**
  * Pre-process AI-generated text so Markdown syntax is correctly interpreted.
- * Handles cases where `### ` headings appear inline after other text.
+ *
+ * Handles common LLM output quirks:
+ * - `### ` headings appearing inline after other text
+ * - `**Bold Label:** rest of text` that should be a heading on its own line
+ * - Single `*` used as bullet markers inline within a paragraph
  */
 function preprocessMarkdown(raw: string): string {
   let text = raw;
-  // Ensure markdown headings start on their own line
+
+  // 1. Ensure markdown headings (e.g. ### Heading) start on their own line
   text = text.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2");
-  // Ensure `**bold**` markers aren't stuck to preceding text
-  text = text.replace(/([^\n*])\*\*([^*]+)\*\*/g, "$1 **$2**");
+
+  // 2. Convert inline `* Item:` or `* Item` patterns into proper list items.
+  //    Matches " * " or ". * " mid-sentence (not already at line start).
+  text = text.replace(/([.;,])\s*\*\s+/g, "$1\n\n- ");
+  // Also handle `* ` at the very start of a line already (standardize to `- `)
+  text = text.replace(/^\*\s+/gm, "- ");
+
+  // 3. Ensure bold labels like "**Thematic Consensus:**" get their own paragraph
+  //    when they appear right after a period/newline (i.e. start of a new thought).
+  text = text.replace(/([.!?\n])\s*\*\*([^*]+?):?\*\*\s*/g, "$1\n\n**$2:** ");
+
   return text;
 }
 
@@ -26,15 +40,27 @@ function preprocessMarkdown(raw: string): string {
  * Works in both light and dark mode via Tailwind's dark-class strategy.
  */
 export function MarkdownContent({ children, className = "", clampLines }: MarkdownContentProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+
   const text = preprocessMarkdown(String(children ?? "").trim());
+
+  // Detect whether content is actually overflowing the clamp
+  useEffect(() => {
+    if (!clampLines || !contentRef.current) return;
+    const el = contentRef.current;
+    setClamped(el.scrollHeight > el.clientHeight + 2);
+  }, [text, clampLines]);
+
   if (!text) return null;
 
-  const [expanded, setExpanded] = useState(false);
   const clamp = clampLines && !expanded;
 
   return (
-    <div className={clamp ? "relative" : undefined}>
+    <div>
       <div
+        ref={contentRef}
         className={`prose prose-sm dark:prose-invert max-w-none
           prose-p:my-1.5 prose-p:leading-relaxed
           prose-headings:font-semibold prose-headings:tracking-tight
@@ -50,7 +76,7 @@ export function MarkdownContent({ children, className = "", clampLines }: Markdo
       >
         <Markdown>{text}</Markdown>
       </div>
-      {clampLines && (
+      {clampLines && (clamped || expanded) && (
         <button
           type="button"
           onClick={() => setExpanded((prev) => !prev)}

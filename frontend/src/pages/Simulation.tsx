@@ -297,6 +297,15 @@ export default function Simulation() {
   const liveMode = isLiveBootMode();
   const metricCards = useMemo(() => metricConfigForUseCase(useCase, !liveMode), [liveMode, useCase]);
   const roundProgressLabel = useMemo(() => readRoundProgressLabel(simulationState), [simulationState]);
+  const sentimentBreakdown = useMemo(() => {
+    let positive = 0, neutral = 0, negative = 0;
+    for (const t of feedThreads) {
+      if (t.likes > t.dislikes) positive++;
+      else if (t.dislikes > t.likes) negative++;
+      else neutral++;
+    }
+    return { positive, neutral, negative };
+  }, [feedThreads]);
 
   const runtimeEstimate = useMemo(
     () => estimateRuntimeBreakdown(populationArtifact?.sample_count ?? 0, simulationRounds, modelProvider),
@@ -750,7 +759,7 @@ export default function Simulation() {
                     <span className="text-muted-foreground font-mono">{populationArtifact?.sample_count ?? 250} agents × {simulationRounds} rounds</span>
                   </div>
                   <div className="justify-self-start lg:justify-self-end font-mono text-primary/85 bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
-                    ~${(0.85 * simulationRounds).toFixed(2)} cost
+                    ~${estimateCostUsd(populationArtifact?.sample_count ?? 250, simulationRounds, modelProvider).toFixed(2)} cost
                   </div>
                 </div>
               </GlassCard>
@@ -847,30 +856,30 @@ export default function Simulation() {
                   const isExpanded = Boolean(expandedReplies[thread.id]);
                   const visibleComments = isExpanded ? thread.comments : thread.comments.slice(0, 3);
                   return (
-                    <GlassCard key={thread.id} className="p-4 bg-card/50 border border-border hover:border-muted-foreground/30 transition-all duration-200 group">
-                      <div className="flex items-start justify-between gap-4 mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-full ${tone.avatarBg} flex items-center justify-center text-sm font-bold ${tone.avatarText} border ${tone.avatarBorder}`}>
+                    <GlassCard key={thread.id} className="p-3 bg-card/50 border border-border hover:border-muted-foreground/30 transition-all duration-200 group">
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-9 h-9 rounded-full ${tone.avatarBg} flex items-center justify-center text-xs font-bold ${tone.avatarText} border ${tone.avatarBorder} shrink-0`}>
                             {thread.actorName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                           </div>
                           <div>
                             <div className={`text-sm font-semibold ${tone.nameText}`}>{thread.actorName}</div>
-                            <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                            <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
                               <span>{thread.actorSubtitle}</span>
                               <span className="w-1 h-1 rounded-full bg-white/20" />
                               <span className="font-mono text-white/40">R{thread.roundNo}</span>
                             </div>
                           </div>
                         </div>
-                        <div className="px-2 py-1 rounded-full text-[10px] font-medium bg-muted text-muted-foreground border border-border">
+                        <div className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground border border-border">
                           {thread.actorOccupation || "Agent"}
                         </div>
                       </div>
                       
-                      <h4 className="text-sm font-semibold text-foreground mb-2 leading-tight">{thread.title}</h4>
+                      <h4 className="text-sm font-semibold text-foreground mb-1.5 leading-tight">{thread.title}</h4>
                       <MarkdownContent className="text-body text-muted-foreground" clampLines={6}>{thread.content}</MarkdownContent>
                       
-                      <div className="flex items-center gap-5 mt-4 text-xs font-mono text-muted-foreground">
+                      <div className="flex items-center gap-5 mt-3 text-xs font-mono text-muted-foreground">
                         <span className="text-[hsl(var(--data-green))]">▲ {thread.likes}</span>
                         <span className="text-[hsl(var(--data-red))]">▼ {thread.dislikes}</span>
                         <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -881,20 +890,20 @@ export default function Simulation() {
                       </div>
                       
                       {thread.comments.length > 0 && (
-                        <div className="mt-4 space-y-2.5 border-l-2 border-border pl-3">
+                        <div className="mt-3 space-y-2 border-l-2 border-border pl-3">
                           {visibleComments.map((comment) => (
-                            <div key={comment.id} className="text-body flex items-start gap-2">
-                              <div className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-[9px] font-bold text-white/40 flex-shrink-0">
-                                {comment.actorName.split(' ').map(n => n[0]).join('').slice(0, 1).toUpperCase()}
-                              </div>
-                              <div className="flex-1 min-w-0">
+                            <div key={comment.id} className="text-body">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <div className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-[9px] font-bold text-white/40 shrink-0">
+                                  {comment.actorName.split(' ').map(n => n[0]).join('').slice(0, 1).toUpperCase()}
+                                </div>
                                 <span className={`font-medium text-[11px] ${tone.nameText}`}>{comment.actorName}</span>
-                                <MarkdownContent className="text-xs text-muted-foreground ml-2">{comment.content}</MarkdownContent>
-                                <span className="flex items-center gap-3 mt-1 text-[10px] font-mono text-muted-foreground">
+                                <span className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground ml-auto">
                                   <span className="text-[hsl(var(--data-green))]">▲ {comment.likes}</span>
                                   <span className="text-[hsl(var(--data-red))]">▼ {comment.dislikes}</span>
                                 </span>
                               </div>
+                              <MarkdownContent className="text-xs text-muted-foreground">{comment.content}</MarkdownContent>
                             </div>
                           ))}
                           {thread.comments.length > 3 && (
@@ -1070,6 +1079,24 @@ export default function Simulation() {
                     </TooltipContent>
                   </Tooltip>
                 ))}
+                {/* Sentiment breakdown derived from feed threads */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex flex-col gap-1 px-3 py-2 bg-muted/40 border border-border rounded-lg cursor-help col-span-2">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Sentiment</span>
+                      <div className="flex items-center gap-3 text-sm font-mono font-bold">
+                        <span className="text-[hsl(var(--data-green))]">{sentimentBreakdown.positive} positive</span>
+                        <span className="text-muted-foreground/80">·</span>
+                        <span className="text-muted-foreground">{sentimentBreakdown.neutral} neutral</span>
+                        <span className="text-muted-foreground/80">·</span>
+                        <span className="text-[hsl(var(--data-red))]">{sentimentBreakdown.negative} negative</span>
+                      </div>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[220px] text-xs leading-relaxed bg-popover text-popover-foreground border-border">
+                    Counts posts by net likes: positive (likes &gt; dislikes), neutral (equal), negative (dislikes &gt; likes).
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </GlassCard>
 
@@ -1218,13 +1245,6 @@ function metricConfigForUseCase(useCase: string, allowFallback: boolean): Metric
       kind: "percent",
       description: "Reads the latest approval rate from the simulation metrics payload.",
     },
-    {
-      label: "Net Sentiment",
-      keys: ["net_sentiment"],
-      fallback: fallback(7.2),
-      kind: "score",
-      description: "Converts the latest net sentiment signal into the 10-point display used in the dashboard.",
-    },
   ];
 }
 
@@ -1296,6 +1316,34 @@ function estimateRuntimeBreakdown(agentCount: number, rounds: number, provider: 
     finalCheckpointSeconds,
     totalSeconds: baselineCheckpointSeconds + roundWindowSeconds + finalCheckpointSeconds,
   };
+}
+
+/** Estimate simulation cost using cached Gemini pricing (per-million token rates). */
+function estimateCostUsd(agentCount: number, rounds: number, provider: string): number {
+  const normalizedProvider = String(provider || "ollama").toLowerCase();
+  if (normalizedProvider === "ollama") return 0;
+
+  // Rates from config/llm_pricing.yaml for gemini-2.0-flash (USD per million tokens)
+  const pricing =
+    normalizedProvider === "openai"
+      ? { input: 0.15, output: 0.60, cachedInput: 0.15 } // gpt-4o-mini, no caching discount
+      : { input: 0.075, output: 0.30, cachedInput: 0.01875 }; // gemini-2.0-flash
+
+  const totalCalls = Math.max(0, agentCount) * Math.max(1, rounds);
+  const avgInput = 3000;
+  const avgOutput = 500;
+  const cachedRatio = 0.6;
+
+  const totalInput = totalCalls * avgInput;
+  const totalOutput = totalCalls * avgOutput;
+  const cachedTokens = Math.round(totalInput * cachedRatio);
+  const nonCachedInput = totalInput - cachedTokens;
+
+  return (
+    (nonCachedInput / 1_000_000) * pricing.input +
+    (cachedTokens / 1_000_000) * pricing.cachedInput +
+    (totalOutput / 1_000_000) * pricing.output
+  );
 }
 
 function mergeRoundActivity(existingRounds: number[], roundNo: number): number[] {
