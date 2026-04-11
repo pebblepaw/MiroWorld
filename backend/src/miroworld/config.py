@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,6 +37,7 @@ class Settings(BaseSettings):
 
     google_default_model: str = "gemini-2.5-flash-lite"
     google_default_embed_model: str = "gemini-embedding-001"
+    google_fallback_embed_models: str = "gemini-embedding-2-preview"
     google_default_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
     openai_default_model: str = "gpt-5-mini"
@@ -50,6 +52,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_api: str | None = None
     openrouter_api_key: str | None = None
+    huggingface_api_key: str | None = None
 
     # The repo historically used GEMINI_API key names. We keep compatibility
     # aliases to avoid breaking existing local setup.
@@ -200,6 +203,28 @@ class Settings(BaseSettings):
     @property
     def resolved_gemini_key(self) -> str | None:
         return self.resolved_key_for_provider(self.llm_provider)
+
+    def provider_embed_model_candidates(self, provider: str, *, preferred_model: str | None = None) -> list[str]:
+        normalized = self._normalize_provider(provider)
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        def add(model_name: str | None) -> None:
+            candidate = str(model_name or "").strip()
+            if not candidate:
+                return
+            normalized_candidate = candidate.lower()
+            if normalized_candidate in seen:
+                return
+            seen.add(normalized_candidate)
+            ordered.append(candidate)
+
+        add(preferred_model)
+        add(self.default_embed_model_for_provider(normalized))
+        if normalized == "google":
+            for model_name in re.split(r"[\n,]+", self.google_fallback_embed_models):
+                add(model_name)
+        return ordered
 
 
 @lru_cache(maxsize=1)

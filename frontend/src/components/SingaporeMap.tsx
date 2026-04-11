@@ -54,7 +54,7 @@ export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapPr
 
   if (!geoData) {
     return (
-      <div className="w-full h-[160px] flex items-center justify-center bg-white/[0.02] rounded-md">
+      <div className="w-full h-[160px] flex items-center justify-center bg-muted/20 rounded-md">
         <span className="text-xs text-muted-foreground animate-pulse">Loading Map Data...</span>
       </div>
     );
@@ -84,13 +84,13 @@ export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapPr
       fillColor: count > 0 ? `hsl(38, 92%, ${15 + intensity * 40}%)` : 'hsl(215, 20%, 30%)',
       weight: 1,
       opacity: 0.6,
-      color: 'rgba(255,255,255,0.1)',
+      color: 'rgba(100,100,100,0.3)',
       fillOpacity: intensity > 0.1 ? 0.8 : 0.1,
     };
   };
 
   return (
-    <div className="w-full h-[160px] rounded-md overflow-hidden bg-[#0A0A0A] relative isolate">
+    <div className="w-full h-[160px] rounded-md overflow-hidden bg-card relative isolate">
       <MapContainer
         center={mapConfig.center}
         zoom={mapConfig.zoom}

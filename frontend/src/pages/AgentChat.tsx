@@ -48,14 +48,14 @@ export default function AgentChat() {
   return (
     <div className="flex h-full p-6 gap-6 overflow-hidden">
       {/* Agent List */}
-      <GlassCard className="w-72 flex-shrink-0 flex flex-col gap-3 p-4 h-full border-white/5 bg-black/20">
+      <GlassCard className="w-72 flex-shrink-0 flex flex-col gap-3 p-4 h-full border-border bg-card/50">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search agents..."
-            className="pl-9 bg-black/40 border-white/10 focus-visible:ring-primary/50"
+            className="pl-9 bg-input border-border focus-visible:ring-primary/50"
           />
         </div>
         <div className="flex gap-1.5">
@@ -64,7 +64,7 @@ export default function AgentChat() {
               key={s}
               onClick={() => setFilterSentiment(s)}
               className={`text-[10px] px-2 py-1 rounded-full border transition-all capitalize ${
-                filterSentiment === s ? 'bg-primary/20 border-primary/50 text-primary shadow-[0_0_10px_rgba(255,100,0,0.2)]' : 'border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5'
+                filterSentiment === s ? 'bg-primary/20 border-primary/50 text-primary shadow-[0_0_10px_rgba(255,100,0,0.2)]' : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted/50'
               }`}
             >
               {s}
@@ -77,11 +77,11 @@ export default function AgentChat() {
               key={agent.id}
               onClick={() => setSelectedAgent(agent)}
               className={`w-full text-left p-3 rounded-xl transition-all duration-300 group ${
-                selectedAgent?.id === agent.id ? 'bg-gradient-to-r from-primary/20 to-transparent border border-primary/30 shadow-[0_0_15px_rgba(255,100,0,0.1)]' : 'hover:bg-white/5 border border-transparent hover:border-white/10'
+                selectedAgent?.id === agent.id ? 'bg-gradient-to-r from-primary/20 to-transparent border border-primary/30 shadow-[0_0_15px_rgba(255,100,0,0.1)]' : 'hover:bg-muted/50 border border-transparent hover:border-border'
               }`}
             >
               <div className="flex items-center gap-2">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${selectedAgent?.id === agent.id ? 'bg-primary/20 text-primary' : 'bg-black/40 text-muted-foreground group-hover:text-foreground'}`}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${selectedAgent?.id === agent.id ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground group-hover:text-foreground'}`}>
                   <span className="text-xs font-bold">{agent.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</span>
                 </div>
                 <div className="min-w-0 flex-1">
@@ -101,7 +101,7 @@ export default function AgentChat() {
       </GlassCard>
 
       {/* Chat Panel */}
-      <GlassCard className="flex-1 flex flex-col min-w-0 h-full p-4 border-white/5 bg-black/20">
+      <GlassCard className="flex-1 flex flex-col min-w-0 h-full p-4 border-border bg-card/50">
         {selectedAgent ? (
           <>
             {/* Agent Header */}
@@ -116,10 +116,10 @@ export default function AgentChat() {
                     {selectedAgent.age}y · {selectedAgent.gender} · {selectedAgent.ethnicity} · {selectedAgent.occupation} · {selectedAgent.planningArea}
                   </div>
                 </div>
-                <div className="ml-auto flex items-center gap-1.5 bg-black/40 px-3 py-1.5 rounded-full border border-white/5">
+                <div className="ml-auto flex items-center gap-1.5 bg-muted/60 px-3 py-1.5 rounded-full border border-border">
                   <span className={`w-2 h-2 rounded-full ${sentimentColor(selectedAgent.sentiment)} shadow-[0_0_5px_currentColor]`} />
                   <span className="text-xs text-muted-foreground capitalize">{selectedAgent.sentiment}</span>
-                  <div className="w-px h-3 bg-white/10 mx-1" />
+                  <div className="w-px h-3 bg-border mx-1" />
                   <span className="text-xs font-mono text-primary">{selectedAgent.approvalScore}% approval</span>
                 </div>
               </div>
@@ -137,7 +137,7 @@ export default function AgentChat() {
                   <div className={`max-w-[70%] rounded-2xl px-4 py-2.5 text-sm shadow-lg ${
                     msg.role === 'user'
                       ? 'bg-gradient-to-br from-primary to-orange-600 text-white rounded-tr-sm'
-                      : 'bg-black/40 border border-white/10 text-foreground rounded-tl-sm backdrop-blur-md'
+                      : 'bg-card border border-border text-foreground rounded-tl-sm backdrop-blur-md'
                   }`}>
                     {msg.content}
                   </div>
@@ -153,7 +153,7 @@ export default function AgentChat() {
                 onChange={e => setMessage(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && sendMessage()}
                 placeholder={`Ask ${selectedAgent.name.split(' ')[0]} about the policy...`}
-                className="bg-black/40 border-white/10 focus-visible:ring-primary/50 h-12 rounded-xl"
+                className="bg-input border-border focus-visible:ring-primary/50 h-12 rounded-xl"
               />
               <Button onClick={sendMessage} size="icon" className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary to-orange-600 text-white shadow-[0_0_15px_rgba(255,100,0,0.3)] hover:shadow-[0_0_25px_rgba(255,100,0,0.5)] transition-all flex-shrink-0 border-none">
                 <Send className="w-5 h-5" />
@@ -163,7 +163,7 @@ export default function AgentChat() {
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             <div className="flex flex-col items-center gap-4 opacity-50">
-              <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center">
+              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
                 <Search className="w-8 h-8" />
               </div>
               <p>Select an agent from the list to start chatting</p>

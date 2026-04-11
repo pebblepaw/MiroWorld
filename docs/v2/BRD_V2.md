@@ -1,14 +1,14 @@
-# McKAInsey V2 — Business Requirements Document
+# MiroWorld V2 — Business Requirements Document
 
 > Version: 2.2  
-> Date: 2026-04-10  
-> Status: Implemented and documentation-synchronized
+> Date: 2026-04-12  
+> Status: Implemented, merged-main verified, and documentation-synchronized
 
 This document describes the current V2 product and engineering contract. It supersedes earlier V2 planning language that still referenced separate Screen 6 behavior, generic policy kickoff posts, retired Gemini defaults, or V1-style use-case metrics.
 
 ## 1. Product Summary
 
-McKAInsey V2 is a local-first, multi-use-case AI population simulation platform. The current shipped flow is:
+MiroWorld V2 is a local-first, multi-use-case AI population simulation platform. The current shipped flow is:
 
 1. Screen 0: configure country, provider, model, and use case
 2. Screen 1: upload one or more source documents, review/edit analysis questions, and run knowledge extraction
@@ -24,7 +24,7 @@ McKAInsey V2 is a local-first, multi-use-case AI population simulation platform.
 - Singapore
 - United States
 
-Country availability and dataset/filter metadata are loaded from `config/countries/*.yaml`.
+Country availability, dataset download metadata, geography metadata, and filter contracts are loaded from `config/countries/*.yaml`.
 
 ### 2.2 Canonical Use Cases
 
@@ -51,6 +51,8 @@ Current rules:
 
 - Frontend: React + Vite + TypeScript
 - Backend: FastAPI
+- Country config/runtime metadata: YAML + backend country metadata service
+- Country dataset readiness/download orchestration: backend country dataset service
 - Simulation: native OASIS runner in Python 3.11
 - Knowledge extraction: LightRAG-backed processing
 - Memory: SQLite FTS5 over interactions, transcripts, and checkpoints for Screen 4 chat grounding
@@ -108,10 +110,20 @@ Purpose:
 Current backend compatibility endpoint:
 
 - `GET /api/v2/countries`
+- `POST /api/v2/countries/{country}/download`
+- `GET /api/v2/countries/{country}/download-status`
 - `GET /api/v2/providers`
 - `POST /api/v2/session/create`
 
 Current Gemini defaults should prefer active models such as `gemini-2.5-flash-lite`, not retired `gemini-2.0-*` models.
+
+Current live-mode rules:
+
+- country selection is a Screen 0 UI decision, not a CLI/startup decision
+- `GET /api/v2/countries` is the source of truth for dataset readiness in live mode
+- if `dataset_ready=false` for the selected country, launch must remain blocked
+- the user can trigger a dataset download from Screen 0 through the backend download endpoints
+- if the backend reports `huggingface_api_key_missing`, the UI should instruct the user to add `HUGGINGFACE_API_KEY` to the root `.env` and restart the backend
 
 ### 4.2 Screen 1 — Knowledge Graph
 
@@ -142,6 +154,13 @@ Current contracts:
 
 - `GET /api/v2/console/session/{id}/filters`
 - `GET /api/v2/token-usage/{session_id}/estimate`
+
+Current country/geography rules:
+
+- geography filters are derived from the selected country YAML, not from hard-coded backend lists
+- Singapore uses `planning_area`
+- United States uses `state`
+- sampler and relevance parsing must respect the configured country geography field instead of mixing country-specific field names in generic logic
 
 ### 4.4 Screen 3 — Simulation
 
@@ -230,7 +249,18 @@ Current behavior:
 - demo mode can still fall back to local constants
 - KOL and viral-post displays should use agent names and viewpoint summaries, not raw serial ids
 
-## 5. Canonical Prompt Configuration
+## 5. Verification Snapshot
+
+As of 2026-04-12, merged main was verified with:
+
+- a full live browser flow using `ollama` + `qwen3:4b-instruct-2507-q4_K_M`, starting from Screen 0 and progressing through knowledge extraction, population sampling, simulation, report/chat, and analytics
+- a targeted browser verification of the Screen 0 dataset-readiness contract, proving that launch is disabled while `dataset_ready=false`, that the UI calls the country download endpoints, and that launch re-enables once the country reports `dataset_ready=true`
+
+Provider caveat:
+
+- Gemini live extraction was rate-limited during verification on this machine. This is an external provider quota/runtime issue, not the Screen 0 country-dataset contract.
+
+## 6. Canonical Prompt Configuration
 
 Prompt YAML files live in `config/prompts/`:
 
@@ -253,11 +283,13 @@ For the current public-policy YAML, the canonical built-in questions are:
 
 Custom Screen 1 questions are appended at the session level and participate in simulation/report generation exactly like preset questions after metadata inference.
 
-## 6. API Contract
+## 7. API Contract
 
-### 6.1 Session and Setup
+### 7.1 Session and Setup
 
 - `GET /api/v2/countries`
+- `POST /api/v2/countries/{country}/download`
+- `GET /api/v2/countries/{country}/download-status`
 - `GET /api/v2/providers`
 - `POST /api/v2/session/create`
 - `PATCH /api/v2/session/{id}/config`

@@ -45,7 +45,7 @@ describe("console-api live-mode routing", () => {
   });
 
 
-  it("sends V2 session config patches with analysis questions through the canonical config route", async () => {
+  it("sends session config patches with analysis questions through the canonical config route", async () => {
     vi.stubEnv("VITE_BOOT_MODE", "live");
 
     const { updateV2SessionConfig } = await import("./console-api");

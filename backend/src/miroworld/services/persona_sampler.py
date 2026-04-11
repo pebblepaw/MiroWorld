@@ -58,9 +58,12 @@ class PersonaSampler:
         *,
         limit: int,
         seed: int,
+        dataset_path: str | None = None,
+        country_values: list[str] | None = None,
+        geography_field: str | None = None,
+        geography_values: list[str] | None = None,
         min_age: int | None = None,
         max_age: int | None = None,
-        planning_areas: list[str] | None = None,
         sexes: list[str] | None = None,
         marital_statuses: list[str] | None = None,
         education_levels: list[str] | None = None,
@@ -68,32 +71,41 @@ class PersonaSampler:
         industries: list[str] | None = None,
         extra_filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        parquet_glob = self._local_parquet_glob()
+        parquet_glob = self._resolve_filter_inference_source(dataset_path) if dataset_path else self._local_parquet_glob()
+        available_columns = self._parquet_columns(parquet_glob)
+        location_column = geography_field if geography_field in available_columns else _resolve_location_column(available_columns)
+        country_column = "country" if "country" in available_columns else None
         where_clauses: list[str] = []
 
         if min_age is not None:
             where_clauses.append(f"age >= {min_age}")
         if max_age is not None:
             where_clauses.append(f"age <= {max_age}")
-        if planning_areas:
-            where_clauses.append(f"planning_area IN ({', '.join(_sql_quote(v) for v in planning_areas)})")
+        if country_values and country_column is not None:
+            normalized_countries = [str(value).strip().lower() for value in country_values if str(value).strip()]
+            if normalized_countries:
+                where_clauses.append(_build_text_in_clause(country_column, normalized_countries))
+        if geography_values and location_column is not None:
+            normalized_locations = _normalize_filter_values_for_column(location_column, geography_values)
+            if normalized_locations:
+                where_clauses.append(_build_text_in_clause(location_column, normalized_locations))
         if sexes:
-            where_clauses.append(f"sex IN ({', '.join(_sql_quote(v) for v in sexes)})")
+            where_clauses.append(_build_text_in_clause("sex", sexes))
         if marital_statuses:
-            where_clauses.append(f"marital_status IN ({', '.join(_sql_quote(v) for v in marital_statuses)})")
+            where_clauses.append(_build_text_in_clause("marital_status", marital_statuses))
         if education_levels:
-            where_clauses.append(f"education_level IN ({', '.join(_sql_quote(v) for v in education_levels)})")
+            where_clauses.append(_build_text_in_clause("education_level", education_levels))
         if occupations:
-            where_clauses.append(f"occupation IN ({', '.join(_sql_quote(v) for v in occupations)})")
+            where_clauses.append(_build_text_in_clause("occupation", occupations))
         if industries:
-            where_clauses.append(f"industry IN ({', '.join(_sql_quote(v) for v in industries)})")
+            where_clauses.append(_build_text_in_clause("industry", industries))
         where_clauses.extend(_build_dynamic_filter_clauses(extra_filters))
 
         where_sql = ""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
 
-        order_expr = f"hash(coalesce(uuid, persona, occupation, planning_area, '') || '{seed}')"
+        order_expr = _seeded_order_expression(available_columns, seed=seed)
         query = f"""
             SELECT *
             FROM read_parquet('{parquet_glob}')
@@ -105,6 +117,15 @@ class PersonaSampler:
         conn = duckdb.connect()
         try:
             rows = conn.execute(query).fetch_df().to_dict(orient="records")
+            if location_column:
+                for row in rows:
+                    value = row.get(location_column)
+                    text = str(value or "").strip()
+                    if text:
+                        row["geography_field"] = location_column
+                        row["geography_value"] = text
+                        if location_column != "planning_area":
+                            row["planning_area"] = text
             return cast(list[dict[str, Any]], rows)
         finally:
             conn.close()
@@ -180,7 +201,8 @@ class PersonaSampler:
                 return False
             if req.max_age is not None and (age is None or age > req.max_age):
                 return False
-            if req.planning_areas and row.get("planning_area") not in set(req.planning_areas):
+            location_value = _row_location_value(row)
+            if req.planning_areas and location_value not in set(req.planning_areas):
                 return False
             row_income = row.get("income_bracket")
             if req.income_brackets and row_income not in {None, ""} and row_income not in set(req.income_brackets):
@@ -207,23 +229,23 @@ class PersonaSampler:
 
     def _sample_local_parquet(self, req: PersonaFilterRequest) -> list[dict[str, Any]]:
         where_clauses: list[str] = []
+        parquet_glob = self._local_parquet_glob()
+        available_columns = self._parquet_columns(parquet_glob)
+        location_column = _resolve_location_column(available_columns)
 
         if req.min_age is not None:
             where_clauses.append(f"age >= {req.min_age}")
         if req.max_age is not None:
             where_clauses.append(f"age <= {req.max_age}")
-        if req.planning_areas:
-            quoted = ", ".join(_sql_quote(v) for v in req.planning_areas)
-            where_clauses.append(f"planning_area IN ({quoted})")
+        if req.planning_areas and location_column is not None:
+            where_clauses.append(_build_text_in_clause(location_column, req.planning_areas))
         if req.income_brackets:
-            quoted = ", ".join(_sql_quote(v) for v in req.income_brackets)
-            where_clauses.append(f"income_bracket IN ({quoted})")
+            where_clauses.append(_build_text_in_clause("income_bracket", req.income_brackets))
 
         where_sql = ""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
 
-        parquet_glob = self._local_parquet_glob()
         query = f"""
             SELECT *
             FROM '{parquet_glob}'
@@ -328,7 +350,6 @@ def _build_dynamic_filter_clauses(extra_filters: dict[str, Any] | None) -> list[
     reserved_fields = {
         "min_age",
         "max_age",
-        "planning_area",
         "sex",
         "marital_status",
         "education_level",
@@ -357,14 +378,15 @@ def _build_dynamic_filter_clauses(extra_filters: dict[str, Any] | None) -> list[
             continue
 
         if isinstance(raw_value, list):
-            values = [str(value).strip() for value in raw_value if str(value).strip()]
+            values = _normalize_filter_values_for_column(column_name, raw_value)
             if values:
-                clauses.append(f"{identifier} IN ({', '.join(_sql_quote(value) for value in values)})")
+                clauses.append(_build_text_in_clause(column_name, values))
             continue
 
-        scalar = str(raw_value).strip()
+        scalar_values = _normalize_filter_values_for_column(column_name, [raw_value])
+        scalar = scalar_values[0] if scalar_values else ""
         if scalar:
-            clauses.append(f"{identifier} = {_sql_quote(scalar)}")
+            clauses.append(_build_text_equals_clause(column_name, scalar))
     return clauses
 
 
@@ -383,3 +405,56 @@ def _normalize_filter_field_name(name: str) -> str:
     if normalized == "gender":
         return "sex"
     return normalized
+
+
+def _normalize_filter_values_for_column(column_name: str, values: list[Any]) -> list[str]:
+    normalized_values: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if not text:
+            continue
+        normalized_values.append(text.lower())
+    return normalized_values
+
+
+def _resolve_location_column(available_columns: set[str]) -> str | None:
+    for field_name in ("planning_area", "state", "province", "region", "district", "city", "county", "territory", "area"):
+        if field_name in available_columns:
+            return field_name
+    return None
+
+
+def _seeded_order_expression(available_columns: set[str], *, seed: int) -> str:
+    location_column = _resolve_location_column(available_columns)
+    candidate_columns = [
+        column
+        for column in ("uuid", "persona", "occupation", "age")
+        if column in available_columns
+    ]
+    if location_column and location_column not in candidate_columns:
+        candidate_columns.append(location_column)
+    if not candidate_columns:
+        return f"hash('{seed}')"
+
+    parts = [f"coalesce(CAST({_sql_identifier(column)} AS VARCHAR), '')" for column in candidate_columns]
+    return f"hash({' || '.join(parts)} || '{seed}')"
+
+
+def _build_text_in_clause(column_name: str, values: list[Any]) -> str:
+    identifier = _sql_identifier(column_name)
+    normalized_values = [str(value).strip().lower() for value in values if str(value).strip()]
+    return f"lower(CAST({identifier} AS VARCHAR)) IN ({', '.join(_sql_quote(value) for value in normalized_values)})"
+
+
+def _build_text_equals_clause(column_name: str, value: Any) -> str:
+    identifier = _sql_identifier(column_name)
+    normalized_value = str(value).strip().lower()
+    return f"lower(CAST({identifier} AS VARCHAR)) = {_sql_quote(normalized_value)}"
+
+
+def _row_location_value(row: dict[str, Any]) -> str | None:
+    location_column = _resolve_location_column(set(row.keys()))
+    if not location_column:
+        return None
+    text = str(row.get(location_column) or "").strip()
+    return text or None

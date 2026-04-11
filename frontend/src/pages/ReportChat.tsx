@@ -775,7 +775,7 @@ export default function ReportChat() {
                           <span className="text-sm font-medium text-foreground">{formatPlainText(section.report_title || section.question)}</span>
                         </div>
                         {section.metric && (
-                          <div className="flex items-center gap-3 mb-3 px-3 py-2 rounded bg-white/[0.03] border border-white/5">
+                          <div className="flex items-center gap-3 mb-3 px-3 py-2 rounded bg-muted/20 border border-border">
                             <span className="text-lg font-mono font-medium text-foreground">
                               {formatMetricValue(section.metric.initial_value, section.metric.metric_unit, section.type)}
                               {' -> '}
@@ -795,7 +795,7 @@ export default function ReportChat() {
                           <div className="mt-4 space-y-2 border-t border-border pt-3">
                             <div className="label-meta">Evidence</div>
                             {section.evidence.slice(0, 4).map((item: any, evidenceIndex: number) => (
-                              <div key={`${item.agent_id || 'evidence'}-${evidenceIndex}`} className="rounded border border-white/10 bg-white/[0.02] p-3">
+                              <div key={`${item.agent_id || 'evidence'}-${evidenceIndex}`} className="rounded border border-border bg-muted/20 p-3">
                                 <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
                                   {item.agent_id ? (
                                     <button
@@ -940,7 +940,7 @@ export default function ReportChat() {
                   {displayedGroupAgents.map(agent => (
                     <span
                       key={agent.id}
-                      className="shrink-0 inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[10px] font-mono bg-white/5 border border-white/10 text-muted-foreground whitespace-nowrap"
+                      className="shrink-0 inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[10px] font-mono bg-muted border border-border text-muted-foreground whitespace-nowrap"
                     >
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                         chatSegment === 'dissenters' ? 'bg-red-400' : 'bg-emerald-400'
@@ -1264,7 +1264,7 @@ function AgentProfileDrawer({
   ].filter((item): item is string => Boolean(item));
 
   return (
-    <aside className="absolute inset-y-0 right-0 z-30 w-[340px] border-l border-white/10 bg-[#0B0B0B]/95 backdrop-blur-sm">
+    <aside className="absolute inset-y-0 right-0 z-30 w-[340px] border-l border-border bg-background/95 backdrop-blur-sm">
       <div className="flex h-full flex-col">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Agent Profile</div>
@@ -1326,7 +1326,7 @@ function AgentProfileDrawer({
             <div className="label-meta mb-3">Key Posts</div>
             <div className="space-y-3">
               {posts.length > 0 ? posts.map((post) => (
-                <div key={post.id} className="rounded border border-white/10 bg-black/20 p-2.5">
+                <div key={post.id} className="rounded border border-border bg-muted/30 p-2.5">
                   <div className="text-xs font-medium text-foreground">{post.title}</div>
                   <div className="mt-1 text-[10px] text-muted-foreground">▲ {post.upvotes} · ▼ {post.downvotes} · 💬 {post.commentCount}</div>
                 </div>

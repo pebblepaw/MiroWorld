@@ -8,6 +8,20 @@ const BUDGET_URL =
   process.env.BUDGET_URL ||
   "https://www.singaporebudget.gov.sg/budget-speech/budget-statement/e-give-families-more-support-and-greater-assurance#Give-Families-More-Support-and-Greater-Assurance";
 const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(process.cwd(), "../output/playwright");
+const E2E_PROVIDER = String(process.env.E2E_PROVIDER || "gemini").trim().toLowerCase();
+const E2E_MODEL_HINT = String(process.env.E2E_MODEL_HINT || "gemini-2.5-flash-lite").trim();
+const E2E_COUNTRY = String(process.env.E2E_COUNTRY || "singapore").trim().toLowerCase();
+const E2E_USE_CASE = String(process.env.E2E_USE_CASE || "public-policy-testing").trim().toLowerCase();
+const E2E_INPUT_MODE = String(process.env.E2E_INPUT_MODE || "url").trim().toLowerCase();
+const E2E_CHAT_MODE = String(process.env.E2E_CHAT_MODE || "full").trim().toLowerCase();
+const E2E_PASTE_TEXT =
+  process.env.E2E_PASTE_TEXT ||
+  [
+    "Budget 2026 introduces targeted childcare subsidies, reskilling grants, and transport rebates for lower-income families.",
+    "Supporters argue the package improves affordability and workforce resilience.",
+    "Critics argue the support is too narrow and may not offset inflation pressure for renters and gig workers.",
+  ].join("\n\n");
+const E2E_SIMULATION_ROUNDS = Number.parseInt(process.env.E2E_SIMULATION_ROUNDS || "1", 10);
 
 const ONBOARDING_TIMEOUT = 120_000;
 const EXTRACTION_TIMEOUT = 600_000;
@@ -119,6 +133,44 @@ async function patchProviderCatalog(page) {
   });
 }
 
+async function selectCountry(page, countryId) {
+  const names = {
+    singapore: /singapore/i,
+    usa: /usa|united states/i,
+  };
+  const matcher = names[countryId];
+  if (!matcher) return;
+  const button = page.getByRole("button", { name: matcher }).first();
+  if (await button.count()) {
+    await button.click();
+  }
+}
+
+async function selectUseCase(page, useCaseId) {
+  const names = {
+    "public-policy-testing": /Public Policy Testing/i,
+    "product-market-research": /Product\s*&\s*Market Research/i,
+    "campaign-content-testing": /Campaign Content Testing/i,
+  };
+  const matcher = names[useCaseId];
+  if (!matcher) return;
+  const button = page.getByRole("button", { name: matcher }).first();
+  if (await button.count()) {
+    await button.click();
+  }
+}
+
+async function setSimulationRounds(page, rounds) {
+  const target = Number.isFinite(rounds) && rounds > 0 ? Math.max(1, Math.min(rounds, 50)) : 1;
+  const slider = page.locator('input[type="range"]').first();
+  await slider.waitFor({ state: "visible", timeout: 60_000 });
+  await slider.evaluate((element, value) => {
+    element.value = String(value - 1);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }, target);
+}
+
 async function expectChatOutcome(page, endpointMatcher, timeoutMs = 180_000) {
   const response = await page
     .waitForResponse(
@@ -202,6 +254,17 @@ async function runOneToOneChatProbe(page, promptText) {
   return expectChatOutcome(page, /\/api\/v2\/console\/session\/[^/]+\/chat\/agent\//i);
 }
 
+function skippedChatProbe(reason) {
+  return {
+    ok: true,
+    skipped: true,
+    status: "skipped",
+    response_count: 0,
+    ui_error_visible: false,
+    detail: reason,
+  };
+}
+
 async function navigateSidebar(page, labelPattern, timeoutMs = 60_000) {
   const button = page.getByRole("button", { name: labelPattern }).first();
   await button.waitFor({ state: "visible", timeout: timeoutMs });
@@ -249,7 +312,9 @@ async function run() {
   });
 
   try {
-    await patchProviderCatalog(page);
+    if (E2E_PROVIDER === "gemini") {
+      await patchProviderCatalog(page);
+    }
     await page.goto(APP_URL, { waitUntil: "domcontentloaded" });
 
     await page.getByText("Configure your simulation environment", { exact: false }).waitFor({ timeout: ONBOARDING_TIMEOUT });
@@ -257,18 +322,16 @@ async function run() {
     const providerSelect = page.locator('label:has-text("Provider") + select').first();
     const modelSelect = page.locator('label:has-text("Model") + select').first();
 
-    await providerSelect.selectOption("gemini");
+    await selectCountry(page, E2E_COUNTRY);
+    await providerSelect.selectOption(E2E_PROVIDER);
 
     const modelOptions = await modelSelect.locator("option").allTextContents();
-    const preferredModel = modelOptions.find((option) => option.includes("gemini-2.5-flash-lite")) || modelOptions[0];
+    const preferredModel = modelOptions.find((option) => option.includes(E2E_MODEL_HINT)) || modelOptions[0];
     if (preferredModel) {
       await modelSelect.selectOption({ label: preferredModel });
     }
 
-    const policyTemplateButton = page.getByRole("button", { name: /Public Policy Testing/i });
-    if (await policyTemplateButton.count()) {
-      await policyTemplateButton.first().click();
-    }
+    await selectUseCase(page, E2E_USE_CASE);
 
     await clickWhenEnabled(page, /Launch Simulation Environment/i, ONBOARDING_TIMEOUT);
 
@@ -309,9 +372,15 @@ async function run() {
 
     await page.getByText("NEW SIMULATION RUN", { exact: false }).waitFor({ timeout: 60_000 });
 
-    await clickWhenEnabled(page, /^URL$/i, 60_000);
-    await page.getByPlaceholder("https://example.com/policy-doc").fill(BUDGET_URL);
-    await clickWhenEnabled(page, /^Scrape$/i, 60_000);
+    if (E2E_INPUT_MODE === "paste") {
+      await clickWhenEnabled(page, /^Paste$/i, 60_000);
+      await page.getByPlaceholder("Paste document text here...").fill(E2E_PASTE_TEXT);
+      await clickWhenEnabled(page, /Add as Document/i, 60_000);
+    } else {
+      await clickWhenEnabled(page, /^URL$/i, 60_000);
+      await page.getByPlaceholder("https://example.com/policy-doc").fill(BUDGET_URL);
+      await clickWhenEnabled(page, /^Scrape$/i, 60_000);
+    }
 
     await waitForVisibleButton(page, /Start Extraction/i, 120_000);
     await clickWhenEnabled(page, /Start Extraction/i, 120_000);
@@ -323,6 +392,7 @@ async function run() {
     await clickWhenEnabled(page, /^Proceed\b/i, POPULATION_TIMEOUT);
 
     await page.getByText("Live Social Simulation", { exact: false }).waitFor({ timeout: 120_000 });
+    await setSimulationRounds(page, E2E_SIMULATION_ROUNDS);
     await clickWhenEnabled(page, /Start Simulation/i, 120_000);
 
     await waitForEnabledButton(page, /Generate Report/i, SIMULATION_TIMEOUT);
@@ -348,15 +418,21 @@ async function run() {
       /Top dissenters/i,
       `E2E dissenters check ${Date.now()}: what is your main concern?`,
     );
-    const groupSupporters = await runGroupChatProbe(
-      page,
-      /Top supporters/i,
-      `E2E supporters check ${Date.now()}: what should be prioritized next?`,
-    );
-    const oneToOne = await runOneToOneChatProbe(
-      page,
-      `E2E 1:1 check ${Date.now()}: summarize your position in one paragraph.`,
-    );
+    const groupSupporters =
+      E2E_CHAT_MODE === "full"
+        ? await runGroupChatProbe(
+            page,
+            /Top supporters/i,
+            `E2E supporters check ${Date.now()}: what should be prioritized next?`,
+          )
+        : skippedChatProbe(`Skipped because E2E_CHAT_MODE=${E2E_CHAT_MODE}`);
+    const oneToOne =
+      E2E_CHAT_MODE === "full"
+        ? await runOneToOneChatProbe(
+            page,
+            `E2E 1:1 check ${Date.now()}: summarize your position in one paragraph.`,
+          )
+        : skippedChatProbe(`Skipped because E2E_CHAT_MODE=${E2E_CHAT_MODE}`);
 
     await clickWhenEnabled(page, /^Proceed\b/i, 120_000);
     await page.getByText("Simulation Analytics", { exact: false }).waitFor({ timeout: 120_000 });
@@ -424,6 +500,12 @@ async function run() {
       finished_at: new Date().toISOString(),
       app_url: APP_URL,
       api_base: API_BASE,
+      provider: E2E_PROVIDER,
+      model_hint: E2E_MODEL_HINT,
+      country: E2E_COUNTRY,
+      use_case: E2E_USE_CASE,
+      input_mode: E2E_INPUT_MODE,
+      chat_mode: E2E_CHAT_MODE,
       session_id: resolvedSessionId,
       budget_url: BUDGET_URL,
       observed_session_ids: Array.from(observedSessionIds),

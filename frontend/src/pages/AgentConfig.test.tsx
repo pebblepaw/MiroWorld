@@ -6,7 +6,19 @@ import AgentConfig from "@/pages/AgentConfig";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 
 vi.mock("@/components/SingaporeMap", () => ({
-  SingaporeMap: ({ country = "singapore" }: { country?: string }) => <div data-testid={`country-map-${country}`} />,
+  SingaporeMap: ({
+    areaData = [],
+    country = "singapore",
+  }: {
+    areaData?: Array<{ name: string; count: number }>;
+    country?: string;
+  }) => (
+    <div data-testid={`country-map-${country}`}>
+      {areaData.map((row) => (
+        <span key={row.name}>{row.name}</span>
+      ))}
+    </div>
+  ),
 }));
 
 function SeedStage2Context() {
@@ -105,14 +117,14 @@ function SeedStage2ContextUsa() {
         source: "gemini",
       },
       coverage: {
-        planning_areas: ["California", "Texas"],
+        states: ["California", "Texas"],
         age_buckets: { "20-29": 1, "30-39": 1 },
       },
       sampled_personas: [],
       agent_graph: { nodes: [], links: [] },
       representativeness: {
         status: "balanced",
-        planning_area_distribution: { California: 1, Texas: 1 },
+        state_distribution: { California: 1, Texas: 1 },
         sex_distribution: {},
       },
       selection_diagnostics: {},
@@ -313,6 +325,7 @@ describe("AgentConfig", () => {
     expect(screen.getByLabelText("Persona agent-0002")).toBeInTheDocument();
     expect(screen.getByLabelText("Persona agent-0003")).toBeInTheDocument();
     expect(screen.getByTestId("country-map-singapore")).toBeInTheDocument();
+    expect(screen.getByText("Population Baseline")).toBeInTheDocument();
   });
 
   it("updates the sample helper text with the current target size", async () => {
@@ -348,13 +361,13 @@ describe("AgentConfig", () => {
               source: "gemini",
             },
             coverage: {
-              planning_areas: ["California", "Texas"],
+              states: ["California", "Texas"],
               age_buckets: { "20-29": 1, "30-39": 1 },
             },
             sampled_personas: [
               {
                 agent_id: "agent-us-1",
-                persona: { age: 28, sex: "Female", occupation: "analyst", industry: "technology", planning_area: "California", country: "USA" },
+                persona: { age: 28, sex: "Female", occupation: "analyst", industry: "technology", state: "California", country: "USA" },
                 selection_reason: {
                   score: 0.9,
                   matched_facets: [],
@@ -372,7 +385,7 @@ describe("AgentConfig", () => {
               },
               {
                 agent_id: "agent-us-2",
-                persona: { age: 35, sex: "Male", occupation: "teacher", industry: "education", planning_area: "Texas", country: "USA" },
+                persona: { age: 35, sex: "Male", occupation: "teacher", industry: "education", state: "Texas", country: "USA" },
                 selection_reason: {
                   score: 0.8,
                   matched_facets: [],
@@ -392,7 +405,7 @@ describe("AgentConfig", () => {
             agent_graph: { nodes: [], links: [] },
             representativeness: {
               status: "balanced",
-              planning_area_distribution: { California: 1, Texas: 1 },
+              state_distribution: { California: 1, Texas: 1 },
             },
             selection_diagnostics: {},
           },
@@ -410,6 +423,9 @@ describe("AgentConfig", () => {
     await screen.findByRole("button", { name: /sample population/i });
     fireEvent.click(screen.getByRole("button", { name: /sample population/i }));
     expect(await screen.findByTestId("country-map-usa")).toBeInTheDocument();
+    expect(screen.getByText("California")).toBeInTheDocument();
+    expect(screen.getByText("Texas")).toBeInTheDocument();
+    expect(screen.getByText("Population Baseline")).toBeInTheDocument();
   });
 
   it("omits removed legacy range filters from the sampling payload", async () => {
@@ -502,7 +518,7 @@ describe("AgentConfig", () => {
       </AppProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /singapore baseline/i }));
+    fireEvent.click(screen.getByRole("button", { name: /population baseline/i }));
     fireEvent.change(screen.getByLabelText(/strategic parameters/i), {
       target: { value: "Include a broad comparison group across Singapore." },
     });

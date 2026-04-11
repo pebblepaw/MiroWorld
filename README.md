@@ -43,6 +43,8 @@ python -m pip install -e ./backend[dev]
 cd frontend && npm install && cd ..
 ```
 
+If you want to use countries whose Nemotron parquet files are not already present locally, set `HUGGINGFACE_API_KEY` in `.env`. The backend uses that key to download the selected country dataset on demand.
+
 ### Launch
 
 Demo mode uses the bundled cached artifacts and is the fastest smoke test:

@@ -70,7 +70,7 @@ def _parse_with_markitdown(filename: str, payload: bytes) -> str:
         temp_path = Path(handle.name)
     try:
         result = client.convert(str(temp_path))
-        text = getattr(result, "text_content", None) or getattr(result, "markdown", None) or str(result)
+        text = _extract_markitdown_text(result)
         return _normalize_text(text)
     finally:
         temp_path.unlink(missing_ok=True)
@@ -82,6 +82,18 @@ def _get_markitdown_client():
     except ImportError as exc:  # pragma: no cover - exercised via integration environments
         raise RuntimeError("MarkItDown is required for this document type but is not installed.") from exc
     return MarkItDown()
+
+
+def _extract_markitdown_text(result: object) -> str:
+    if isinstance(result, str):
+        return result
+
+    for attribute in ("text_content", "markdown", "plain_text", "text", "content"):
+        value = getattr(result, attribute, None)
+        if isinstance(value, str) and value.strip():
+            return value
+
+    raise ValueError("MarkItDown did not return readable text content.")
 
 
 def _normalize_text(text: str) -> str:

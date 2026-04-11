@@ -312,8 +312,8 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
       <Sidebar collapsible="icon" className="border-r border-border bg-sidebar">
         <SidebarHeader className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 bg-white/10">
-              <span className="text-white font-mono text-sm font-bold">M</span>
+            <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 bg-foreground/10">
+              <span className="text-foreground font-mono text-sm font-bold">M</span>
             </div>
             {!collapsed && (
               <div>
@@ -338,19 +338,19 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
                         onClick={() => !locked && setCurrentStep(step)}
                         className={`relative h-10 transition-colors rounded-md overflow-hidden group ${
                           active
-                            ? 'bg-white/8 text-foreground'
+                            ? 'bg-foreground/[0.08] text-foreground'
                             : locked
                             ? 'text-muted-foreground/72 cursor-not-allowed'
-                            : 'text-muted-foreground/65 hover:text-foreground hover:bg-white/4'
+                            : 'text-muted-foreground/65 hover:text-foreground hover:bg-foreground/[0.04]'
                         }`}
                         disabled={locked}
                       >
                         {active && (
-                          <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-white rounded-full" />
+                          <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-foreground rounded-full" />
                         )}
                         <div className="relative flex items-center justify-center w-5 h-5 z-10">
                           {completed && !active ? (
-                            <Check className="w-3.5 h-3.5 text-white/60" />
+                            <Check className="w-3.5 h-3.5 text-muted-foreground" />
                           ) : locked ? (
                             <Lock className="w-3.5 h-3.5 text-muted-foreground/80" />
                           ) : (

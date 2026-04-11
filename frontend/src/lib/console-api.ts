@@ -53,6 +53,11 @@ export interface V2CountryResponse {
   flag_emoji: string;
   dataset_path: string;
   available: boolean;
+  dataset_ready: boolean;
+  download_required: boolean;
+  download_status: "ready" | "missing" | "downloading" | "error";
+  download_error: string | null;
+  missing_dependency: "huggingface_api_key" | null;
 }
 
 export interface V2ProviderResponse {
@@ -291,7 +296,10 @@ export interface PopulationArtifact {
   sample_seed: number;
   parsed_sampling_instructions: ParsedSamplingInstructions;
   coverage: {
-    planning_areas: string[];
+    planning_areas?: string[];
+    states?: string[];
+    geography?: string[];
+    geography_label?: string | null;
     age_buckets: Record<string, number>;
     sex_distribution?: Record<string, number>;
   };
@@ -302,7 +310,10 @@ export interface PopulationArtifact {
   };
   representativeness: {
     status: string;
+    geography_distribution?: Record<string, number>;
+    state_distribution?: Record<string, number>;
     planning_area_distribution?: Record<string, number>;
+    geography_label?: string | null;
     sex_distribution?: Record<string, number>;
   };
   selection_diagnostics: {
@@ -436,10 +447,10 @@ type DemoAgentRecord = {
 };
 
 const STATIC_COUNTRIES: V2CountryResponse[] = [
-  { name: "Singapore", code: "sg", flag_emoji: "🇸🇬", dataset_path: "config/countries/singapore.yaml", available: true },
-  { name: "USA", code: "usa", flag_emoji: "🇺🇸", dataset_path: "config/countries/usa.yaml", available: true },
-  { name: "India", code: "india", flag_emoji: "🇮🇳", dataset_path: "", available: false },
-  { name: "Japan", code: "japan", flag_emoji: "🇯🇵", dataset_path: "", available: false },
+  { name: "Singapore", code: "sg", flag_emoji: "🇸🇬", dataset_path: "config/countries/singapore.yaml", available: true, dataset_ready: true, download_required: false, download_status: "ready", download_error: null, missing_dependency: null },
+  { name: "USA", code: "usa", flag_emoji: "🇺🇸", dataset_path: "config/countries/usa.yaml", available: true, dataset_ready: true, download_required: false, download_status: "ready", download_error: null, missing_dependency: null },
+  { name: "India", code: "india", flag_emoji: "🇮🇳", dataset_path: "", available: false, dataset_ready: false, download_required: false, download_status: "missing", download_error: null, missing_dependency: null },
+  { name: "Japan", code: "japan", flag_emoji: "🇯🇵", dataset_path: "", available: false, dataset_ready: false, download_required: false, download_status: "missing", download_error: null, missing_dependency: null },
 ];
 
 const STATIC_V2_PROVIDERS: V2ProviderResponse[] = [
@@ -1117,6 +1128,18 @@ export async function getV2Countries(): Promise<V2CountryResponse[]> {
     return STATIC_COUNTRIES.map((country) => ({ ...country }));
   }
   const response = await fetch(`${API_BASE}/api/v2/countries`);
+  return parseJson(response);
+}
+
+export async function downloadCountryDataset(countryId: string): Promise<{ status: string }> {
+  const response = await fetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryId)}/download`, {
+    method: "POST",
+  });
+  return parseJson(response);
+}
+
+export async function getCountryDownloadStatus(countryId: string): Promise<V2CountryResponse> {
+  const response = await fetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryId)}/download-status`);
   return parseJson(response);
 }
 

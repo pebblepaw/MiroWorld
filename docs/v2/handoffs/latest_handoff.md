@@ -1,250 +1,164 @@
-# McKAInsey V2 - Latest Handoff
+# MiroWorld V2 - Latest Handoff
 
-> Date: 2026-04-11  
-> Branch: `feat/phase1-3-impl`  
-> Worktree: `.worktrees/phase1-3-impl`  
-> Canonical spec: `docs/v2/ImplementationPlan.md`
+> Date: 2026-04-12  
+> Branch: `main`  
+> HEAD: `1e662594562ed21e14bfc5232d703b7b154f4b69`  
+> Canonical runtime docs: `docs/v2/BRD_V2.md`, `docs/v2/architecture.md`, `docs/v2/backend/*.md`
 
-## 1) Rules For Continuation
+## 1) What Changed In This Workstream
 
-- Treat `docs/v2/ImplementationPlan.md` as the source of truth.
-- Do not mark any checklist item complete without direct evidence from a command/test/run.
-- User requirement remains: push to `origin/main` as new baseline first, then finish remaining Phase 1-3 tasks.
-- Never commit `.env` or any real secrets.
+### Country dataset and geography contract
 
-## 2) Branch and Git State Right Now
+- Backend country handling is now YAML-driven instead of relying on hard-coded Singapore/USA lists inside generic services.
+- Country dataset readiness is enforced at runtime through:
+  - `GET /api/v2/countries`
+  - `POST /api/v2/countries/{country}/download`
+  - `GET /api/v2/countries/{country}/download-status`
+- `ConsoleService` now blocks live session creation or country changes when the selected country dataset is not ready.
+- Country-specific geography fields are resolved from YAML metadata:
+  - Singapore: `planning_area`
+  - USA: `state`
+- Sampler/relevance/filter fallback logic now uses country metadata instead of ad hoc `if field == "state"` / `if field == "planning_area"` branches spread across the codebase.
 
-- Current branch: `feat/phase1-3-impl`
-- Current HEAD: `4d90f3b4182874f3c5f68b054133be87d9f8cf3e`
-- Divergence vs `origin/main`: `0 behind`, `12 ahead`
-- Important: all current work is still uncommitted.
+### Test harness
 
-Exact current `git status --short`:
+- `frontend/scripts/playwright-live-e2e.mjs` was parameterized so the live browser E2E can run against providers other than Gemini.
+- New env knobs added to that script:
+  - `E2E_PROVIDER`
+  - `E2E_MODEL_HINT`
+  - `E2E_COUNTRY`
+  - `E2E_USE_CASE`
+  - `E2E_INPUT_MODE`
+  - `E2E_PASTE_TEXT`
+  - `E2E_SIMULATION_ROUNDS`
+  - `E2E_CHAT_MODE`
 
-```text
-M .env.example
-M .github/workflows/ci.yml
-M README.md
-M backend/.env.example
-M backend/Dockerfile
-M backend/README.md
-D backend/scripts/generate_comprehensive_demo_cache.py
-M backend/scripts/generate_demo_cache.py
-M backend/scripts/oasis_server.py
-D backend/scripts/prepare_demo_cache.py
-M backend/src/mckainsey/config.py
-M backend/src/mckainsey/models/console.py
-M backend/src/mckainsey/services/console_service.py
-M backend/src/mckainsey/services/demo_service.py
-M backend/src/mckainsey/services/model_provider_service.py
-M backend/src/mckainsey/services/persona_relevance_service.py
-M backend/src/mckainsey/services/report_service.py
-M backend/src/mckainsey/services/simulation_service.py
-M docker-compose.yml
-M docs/v2/ImplementationPlan.md
-M docs/v2/handoffs/latest_handoff.md
-D frontend/.env.example
-M frontend/eslint.config.js
-M frontend/src/lib/console-api.test.ts
-M frontend/src/lib/console-api.ts
-M frontend/src/pages/AgentConfig.test.tsx
-M frontend/src/pages/AgentConfig.tsx
-M frontend/src/pages/Analytics.tsx
-M frontend/src/pages/PolicyUpload.tsx
-M frontend/src/pages/ReportChat.test.tsx
-M frontend/src/pages/ReportChat.tsx
-M frontend/src/pages/Simulation.test.tsx
-M frontend/src/pages/Simulation.tsx
-M frontend/vite.config.ts
-M quick_start.sh
-?? .github/workflows/pages.yml
-?? backend/Sample_Inputs/
-?? backend/tests/services/test_model_provider_service.py
-?? backend/tests/services/test_simulation_service.py
-?? docs/v2/tasks/
-?? tmp/openrouter_poll_and_report.py
-?? tmp/openrouter_post_knowledge_check.py
-?? tmp/openrouter_smoke_check.py
-```
+### Documentation
 
-## 3) What Was Implemented (Rolled Up)
+Updated:
 
-### 3.1 Frontend / Demo-Static / Pages
+- `docs/v2/BRD_V2.md`
+- `docs/v2/architecture.md`
+- `docs/v2/backend/config-system.md`
+- `docs/v2/backend/context-caching.md`
+- `docs/v2/handoffs/latest_handoff.md`
 
-- `demo-static` mode support completed in `frontend/src/lib/console-api.ts` and wired across pages.
-- Shared bundled-data loader path used instead of ad-hoc `/demo-output.json` fetches.
-- `Simulation.tsx` hydrates bundled simulation state in `demo-static` mode instead of relying on SSE.
-- Regression fix in `ensureDemoSessionConfig()` to avoid undefined patch values clobbering bundled metadata.
-- Added GitHub Pages base-path support via `VITE_PUBLIC_BASE` in `frontend/vite.config.ts`.
-- Added `.github/workflows/pages.yml` for Pages build/deploy pipeline.
-- Updated/expanded frontend tests for `demo-static` and live-mode assumptions.
+Those docs now reflect the verified Screen 0 dataset-readiness/download contract and the YAML-driven country geography contract.
 
-### 3.2 Backend / Runtime / Provider Wiring
+## 2) Verification Completed
 
-- Provider-aware model/defaults work expanded in backend config and model-provider service.
-- OASIS/simulation related updates made in runtime and service layers (`oasis_server.py`, `simulation_service.py`, related models/services).
-- Added backend service tests for model provider and simulation paths (`backend/tests/services/*.py`).
+### A. Full live browser E2E on merged `main`
 
-### 3.3 Release Hygiene and Risk Fixes
-
-- Removed client-side API key injection from `frontend/vite.config.ts` (no secret should be injected into the browser bundle).
-- Deleted stale tracked scripts not used in current flow:
-  - `backend/scripts/generate_comprehensive_demo_cache.py`
-  - `backend/scripts/prepare_demo_cache.py`
-- Deleted stale tracked `frontend/.env.example`.
-- Updated docs and local-run guidance (`README.md`, `.env.example`, `quick_start.sh`, backend docs).
-
-### 3.4 Plan/Checklist Edits
-
-- `docs/v2/ImplementationPlan.md` was updated during this workstream to mark only evidence-backed items complete at the time.
-- Some Phase 1/2/3 items remain intentionally unchecked pending live E2E verification.
-
-## 4) What Was Tested
-
-### 4.1 Previously completed in this worktree
-
-Frontend:
-
-- `cd frontend && npm run test -- --run src/lib/console-api.test.ts`
-- `cd frontend && npm run build`
-- `cd frontend && VITE_BOOT_MODE=demo-static VITE_PUBLIC_BASE=/Nemotron_AI_Consultant/ npm run build`
-- `cd frontend && npm run lint`
-- `cd frontend && npm run test -- --run`
-
-Observed:
-
-- Frontend tests passed (`10` files, `65` tests at that run).
-- Both normal and Pages-style demo-static builds succeeded.
-- Lint exited `0` (warnings only).
-
-Backend:
-
-- `cd backend && python -m ruff check src`
-- `cd backend && python -m pytest -q tests`
-- `bash -n quick_start.sh`
-
-Observed:
-
-- Ruff passed.
-- Backend tests passed (`11 passed` at that run).
-- Shell syntax check passed.
-
-Docker smoke:
-
-- `cp .env.example .env`
-- `docker compose up --build -d`
-- `curl -fsS http://127.0.0.1:8000/health`
-- `curl -fsS -I http://127.0.0.1:5173/`
-- `docker compose ps`
-- `docker compose down -v`
-
-Observed:
-
-- Backend healthy on `8000`
-- Frontend `200 OK` on `5173`
-- OASIS sidecar healthy on `8001`
-
-### 4.2 Additional checks completed after that
-
-- Verified source launcher booted in live mode with OpenRouter env mapping, then stopped cleanly.
-- Verified the local env key alias issue: local env uses `OpenRouter_API_Key`; runtime expects `OPENROUTER_API_KEY`/`openrouter_api_key`.
-- Verified no leftover listeners on `8010`, `5180`, `8000`, `5173` at handoff time.
-- Verified Playwright CLI is present at `/opt/homebrew/bin/playwright-cli`.
-
-### 4.3 What is not yet verified
-
-- Full source-mode OpenRouter E2E API flow has not been completed to successful simulation+report+chat.
-- Full live simulation through OASIS sidecar (not just health checks) is still not proven.
-- No final post-change full regression rerun has been recorded after the latest backend/runtime file set.
-
-## 5) Where Work Is Stuck / Risks
-
-- Push-first requirement is not completed yet. Nothing has been committed/pushed from current diff set.
-- OpenRouter live E2E is incomplete; key alias mapping must be exported before run.
-- Current worktree has multiple untracked helper/temp files under `tmp/` and `docs/v2/tasks/`; decide whether to keep or drop before commit.
-- Real secrets exist in local `.env`; must not be committed and should be rotated before any public release.
-
-## 6) Exact Next Steps For Next Agent
-
-1. Finish source-mode OpenRouter smoke end-to-end.
+Command used:
 
 ```bash
-cd <repo-root>/.worktrees/phase1-3-impl
-rm -f .env && \
-set -a && source <repo-root>/.env && set +a && \
-export OPENROUTER_API_KEY="${OpenRouter_API_Key:-${OPENROUTER_API_KEY:-}}" && \
-export LLM_PROVIDER=openrouter && \
-export LLM_MODEL='meta-llama/llama-3.1-8b-instruct:free' && \
-export LLM_EMBED_MODEL='openai/text-embedding-3-small' && \
-export LLM_BASE_URL='https://openrouter.ai/api/v1/' && \
-export PY_BIN='<repo-root>/.venv/bin/python' && \
-export OASIS_PY_BIN='<repo-root>/backend/.venv311/bin/python' && \
-export BACKEND_PORT=8010 && \
-export FRONTEND_PORT=5180 && \
-./quick_start.sh --mode live
+E2E_PROVIDER=ollama \
+E2E_MODEL_HINT='qwen3:4b-instruct-2507-q4_K_M' \
+E2E_INPUT_MODE=paste \
+E2E_SIMULATION_ROUNDS=1 \
+node frontend/scripts/playwright-live-e2e.mjs
 ```
 
-2. In another shell, run minimal live API flow:
+Observed result:
 
-```bash
-curl -sS -X POST http://127.0.0.1:8010/api/v2/console/session \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "session_id": "smoke-openrouter-live",
-    "mode": "live",
-    "model_provider": "openrouter",
-    "model_name": "meta-llama/llama-3.1-8b-instruct:free",
-    "embed_model_name": "openai/text-embedding-3-small"
-  }'
+- output artifact: `/Users/pebblepaw/Documents/CODING_PROJECTS/output/playwright/live-e2e-artifact.json`
+- final session id: `session-3ab33b7a`
+- status: `ok`
+- live flow reached:
+  - Screen 0 onboarding
+  - Screen 1 knowledge extraction
+  - Screen 2 population sampling
+  - Screen 3 simulation
+  - Screen 4 report + group/1:1 chat
+  - Screen 5 analytics
 
-curl -sS -X POST http://127.0.0.1:8010/api/v2/console/session/smoke-openrouter-live/knowledge/process \
-  -H 'Content-Type: application/json' \
-  -d '{"use_default_demo_document": true}'
+Key artifact facts:
 
-curl -sS -X POST http://127.0.0.1:8010/api/v2/console/session/smoke-openrouter-live/sampling/preview \
-  -H 'Content-Type: application/json' \
-  -d '{"agent_count": 2, "sample_mode": "affected_groups"}'
+- `group_chat_dissenters_ok = true`
+- `group_chat_supporters_ok = true`
+- `one_to_one_chat_ok = true`
+- `report_persisted_after_return = true`
+- `analytics_empty_after_return = false`
+- `report_section_count = 1`
 
-curl -sS -X POST http://127.0.0.1:8010/api/v2/console/session/smoke-openrouter-live/simulate \
-  -H 'Content-Type: application/json' \
-  -d '{"rounds": 1, "mode": "live"}'
+### B. Browser-level Screen 0 dataset-readiness contract check
 
-curl -sS -X POST http://127.0.0.1:8010/api/v2/console/session/smoke-openrouter-live/report/generate
+Method:
 
-curl -sS -X POST http://127.0.0.1:8010/api/v2/console/session/smoke-openrouter-live/interaction-hub/report-chat \
-  -H 'Content-Type: application/json' \
-  -d '{"message": "What is the main public risk in this simulation?"}'
+- separate headless Playwright run against the live Vite app
+- mocked country/download endpoints to force `USA` through:
+  - `dataset_ready=false`
+  - `download_status=downloading`
+  - `dataset_ready=true`
+
+Observed result:
+
+```json
+{
+  "status": "ok",
+  "launch_disabled_before_download": true,
+  "prompt_visible_before_download": true,
+  "launch_disabled_after_download": false,
+  "session_create_count": 1,
+  "download_status_calls": 2
+}
 ```
 
-3. If simulation is long, monitor stream:
+Interpretation:
 
-```bash
-curl -N http://127.0.0.1:8010/api/v2/console/session/smoke-openrouter-live/simulation/stream
-```
+- launch was correctly blocked before the dataset became ready
+- the UI called the download endpoints
+- launch re-enabled once the mocked backend reported `dataset_ready=true`
+- session creation proceeded only after readiness transitioned to ready
 
-4. Update `docs/v2/ImplementationPlan.md` only for newly proven items.
+## 3) Important Caveats Still Present
 
-5. Resolve commit scope (include/exclude `tmp/`, `docs/v2/tasks/`, `backend/Sample_Inputs/`) and commit logically.
+### Gemini provider rate limiting
 
-6. Complete push-first requirement:
+- Gemini failed during live knowledge extraction in this session with a provider-side rate-limit path.
+- The SSE failure detail recorded for `session-67c3894f` was:
+  - `RetryError[<Future at ... state=finished raised RateLimitError>]`
+- Treat this as an external provider/runtime problem, not a failure of the country dataset contract.
 
-- Commit branch changes.
-- Merge/fast-forward to `main`.
-- Push `main` to `origin`.
+### LightRAG cache contamination is still a live investigation item
 
-7. Finish remaining Phase 2/3 publish tasks:
+- During a separate Ollama/default-document backend run, `quick_start_backend.log` still showed unrelated merged entities such as:
+  - `Noah Carter`
+  - `World Athletics Championship`
+  - `100m Sprint Record`
+- That output does not belong to the Singapore budget sample document.
+- A separate pasted-text live run produced a clean session-scoped artifact, so the issue appears to be in LightRAG/internal cache reuse rather than in Screen 0 or the YAML country contract.
+- Next agent should treat this as an unresolved backend bug and investigate the session-scoped LightRAG cache/workdir behavior directly.
 
-- Secret rotation and leakage audit.
-- GitHub Pages deployment verification (`gh-pages` branch/site reachable).
-- Version tag (`v2.0.0`) after all checks pass.
+### Report voice heuristic still has some leakage
 
-## 7) Checklist Guidance
+- The successful browser E2E artifact reported:
+  - `report_first_person_match_count = 1`
+- This means the report still contains at least one first-person style passage according to the current heuristic.
+- The run still completed successfully, but this is a quality issue worth tightening later.
 
-- User-approved rule: for OpenRouter free-model runs, rate-limit failures are acceptable evidence of provider reachability and may be treated as non-blocking; non-rate-limit endpoint/model misconfiguration should be fixed.
-- Keep unchecked anything that is not directly validated by logs/command output.
+## 4) Current Repo/Runtime State
 
-## 8) Hygiene Notes At Handoff Time
+- Local dev stack was stopped cleanly after verification.
+- Confirmed no listeners remain on:
+  - `127.0.0.1:5173`
+  - `127.0.0.1:8000`
 
-- No source-mode app process is currently running.
-- No temporary `.env` was left in worktree root from smoke runs.
-- This file is the current handoff baseline for the next agent.
+## 5) Files Most Relevant For Follow-up
+
+- `backend/src/miroworld/services/country_dataset_service.py`
+- `backend/src/miroworld/services/country_metadata_service.py`
+- `backend/src/miroworld/services/console_service.py`
+- `backend/src/miroworld/services/persona_sampler.py`
+- `backend/src/miroworld/services/persona_relevance_service.py`
+- `frontend/scripts/playwright-live-e2e.mjs`
+- `docs/v2/BRD_V2.md`
+- `docs/v2/architecture.md`
+- `docs/v2/backend/config-system.md`
+- `docs/v2/backend/context-caching.md`
+
+## 6) Recommended Next Steps
+
+1. Fix the LightRAG cache contamination issue seen in the default-document Ollama run.
+2. Tighten report-generation prompting/post-processing to eliminate the first-person voice leakage seen in the E2E artifact.
+3. Once satisfied with the remaining backend issues, commit the current doc + backend + test-harness changes and push from `main`.

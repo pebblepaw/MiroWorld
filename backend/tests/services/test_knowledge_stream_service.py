@@ -11,6 +11,7 @@ from miroworld.models.console import PopulationPreviewRequest
 from miroworld.services.console_service import ConsoleService
 from miroworld.services.knowledge_stream_service import KnowledgeStreamService
 from miroworld.services.lightrag_service import LightRAGService
+from miroworld.services.persona_relevance_service import PersonaRelevanceService
 
 
 def _make_settings(tmp_path: Path) -> Settings:
@@ -382,3 +383,285 @@ def test_process_uploaded_knowledge_persists_artifact_for_usa_session(tmp_path: 
     assert stored_artifact is not None
     assert stored_artifact["summary"] == "USA policy summary"
     assert stored_artifact["document"]["source_path"].endswith("usa-policy.pdf")
+
+
+def test_process_knowledge_clears_prior_artifacts_and_stream_state(tmp_path: Path, monkeypatch) -> None:
+    settings = _make_settings(tmp_path)
+    service = ConsoleService(settings)
+    session_id = "session-reset"
+    service.create_v2_session(
+        country="usa",
+        use_case="public-policy-testing",
+        provider="google",
+        model="gemini-2.5-flash-lite",
+        api_key="test-key",
+        mode="live",
+        session_id=session_id,
+    )
+
+    service.store.save_knowledge_artifact(session_id, {"session_id": session_id, "summary": "old summary"})
+    service.store.save_population_artifact(session_id, {"session_id": session_id, "sample_count": 99})
+    service.store.save_simulation_state_snapshot(session_id, {"session_id": session_id, "status": "running"})
+    service.store.save_report_state(session_id, {"session_id": session_id, "status": "running"})
+    service.store.replace_checkpoint_records(
+        session_id,
+        "baseline",
+        [{"agent_id": "agent-old", "checkpoint_kind": "baseline"}],
+    )
+    service.store.append_interaction_transcript(session_id, "group_chat", "user", "stale transcript")
+    service.store.save_memory_sync_state(session_id, 10, 5, last_checkpoint_id=3)
+    service.knowledge_streams.append_events(
+        session_id,
+        [{"event_type": "knowledge_started", "session_id": session_id, "document_count": 1}],
+    )
+
+    async def fake_process_document(
+        self: LightRAGService,
+        simulation_id: str,
+        document_text: str,
+        source_path: str | None,
+        document_id: str | None = None,
+        guiding_prompt: str | None = None,
+        demographic_focus: str | None = None,
+        live_mode: bool = False,
+        event_callback=None,
+    ) -> dict[str, object]:
+        assert simulation_id == session_id
+        assert live_mode is True
+        assert source_path == "policy.txt"
+        assert event_callback is not None
+        await event_callback(
+            "knowledge_partial",
+            {
+                "document_id": "doc-new",
+                "chunk_index": 1,
+                "chunk_count": 1,
+                "entity_nodes": [{"id": "node-new", "label": "Policy Change", "type": "policy"}],
+                "relationship_edges": [],
+                "total_nodes": 1,
+                "total_edges": 0,
+            },
+        )
+        return {
+            "simulation_id": session_id,
+            "document_id": "doc-new",
+            "document": {
+                "document_id": "doc-new",
+                "source_path": source_path,
+                "file_name": "policy.txt",
+                "file_type": "text/plain",
+                "text_length": len(document_text),
+                "paragraph_count": 1,
+            },
+            "summary": "Fresh summary",
+            "guiding_prompt": guiding_prompt,
+            "demographic_context": demographic_focus,
+            "entity_nodes": [{"id": "node-new", "label": "Policy Change", "type": "policy"}],
+            "relationship_edges": [],
+            "entity_type_counts": {"policy": 1},
+            "graph_origin": "lightrag_native",
+            "processing_logs": ["rebuilt knowledge"],
+            "demographic_focus_summary": demographic_focus,
+        }
+
+    monkeypatch.setattr(LightRAGService, "process_document", fake_process_document)
+
+    payload = asyncio.run(
+        service.process_knowledge(
+            session_id,
+            document_text="Updated policy text.",
+            source_path="policy.txt",
+        )
+    )
+
+    assert payload["summary"] == "Fresh summary"
+    assert service.store.get_knowledge_artifact(session_id)["summary"] == "Fresh summary"
+    assert service.store.get_population_artifact(session_id) is None
+    assert service.store.get_simulation_state_snapshot(session_id) is None
+    assert service.store.get_report_state(session_id) is None
+    assert service.store.list_checkpoint_records(session_id) == []
+    assert service.store.get_interaction_transcripts(session_id) == []
+    assert service.store.get_memory_sync_state(session_id) is None
+
+    state = service.knowledge_streams.get_state(session_id)
+    assert state["status"] == "completed"
+    assert state["document_count"] == 1
+    assert state["total_nodes"] == 1
+    assert state["total_edges"] == 0
+
+
+def test_preview_population_uses_country_dataset_path_and_clears_downstream_artifacts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings = _make_settings(tmp_path)
+    service = ConsoleService(settings)
+    session_id = "session-preview"
+    service.create_v2_session(
+        country="usa",
+        use_case="public-policy-testing",
+        provider="google",
+        model="gemini-2.5-flash-lite",
+        api_key="test-key",
+        mode="live",
+        session_id=session_id,
+    )
+
+    service.store.save_knowledge_artifact(
+        session_id,
+        {
+            "session_id": session_id,
+            "summary": "USA policy summary",
+            "entity_nodes": [],
+            "relationship_edges": [],
+        },
+    )
+    service.store.save_population_artifact(session_id, {"session_id": session_id, "sample_count": 8})
+    service.store.save_simulation_state_snapshot(session_id, {"session_id": session_id, "status": "running"})
+    service.store.save_report_state(session_id, {"session_id": session_id, "status": "running"})
+    service.store.replace_checkpoint_records(
+        session_id,
+        "baseline",
+        [{"agent_id": "agent-old", "checkpoint_kind": "baseline"}],
+    )
+    service.store.append_interaction_transcript(session_id, "group_chat", "user", "stale transcript")
+    service.store.save_memory_sync_state(session_id, 15, 7, last_checkpoint_id=4)
+
+    captured: dict[str, object] = {}
+
+    def fake_query_candidates(*, dataset_path: str | None = None, **_kwargs) -> list[dict[str, object]]:
+        captured["dataset_path"] = dataset_path
+        return [
+            {
+                "state": "California",
+                "age": 32,
+                "sex": "female",
+                "occupation": "Teacher",
+                "industry": "Education",
+            }
+        ]
+
+    def fake_build_population_artifact(
+        self: PersonaRelevanceService,
+        session_id_arg: str,
+        *,
+        personas: list[dict[str, object]],
+        knowledge_artifact: dict[str, object],
+        filters: dict[str, object],
+        agent_count: int,
+        sample_mode: str = "affected_groups",
+        seed: int | None = None,
+        parsed_sampling_instructions: dict[str, object] | None = None,
+        live_mode: bool = False,
+        country: str | None = None,
+    ) -> dict[str, object]:
+        captured["country"] = country
+        captured["personas"] = personas
+        return {
+            "session_id": session_id_arg,
+            "candidate_count": len(personas),
+            "sample_count": 1,
+            "sample_mode": sample_mode,
+            "sample_seed": seed or 0,
+            "geography_field": "state",
+            "parsed_sampling_instructions": parsed_sampling_instructions or {},
+            "coverage": {
+                "planning_areas": ["California"],
+                "geographies": ["California"],
+                "geography_field": "state",
+                "age_buckets": {"30-39": 1},
+                "sex_distribution": {"female": 1},
+            },
+            "sampled_personas": [
+                {
+                    "agent_id": "agent-0001",
+                    "display_name": "Teacher (California)",
+                    "persona": {
+                        "state": "California",
+                        "planning_area": "California",
+                        "geography_field": "state",
+                        "geography_value": "California",
+                    },
+                    "selection_reason": {"score": 0.9},
+                }
+            ],
+            "agent_graph": {
+                "nodes": [
+                    {
+                        "id": "agent-0001",
+                        "label": "Teacher (California)",
+                        "subtitle": "California · Teacher",
+                        "planning_area": "California",
+                        "geography_field": "state",
+                        "geography_value": "California",
+                    }
+                ],
+                "links": [],
+            },
+            "representativeness": {
+                "status": "balanced",
+                "planning_area_distribution": {"California": 1},
+                "geography_distribution": {"California": 1},
+                "state_distribution": {"California": 1},
+                "sex_distribution": {"female": 1},
+                "geography_field": "state",
+            },
+            "selection_diagnostics": {"candidate_count": len(personas)},
+        }
+
+    monkeypatch.setattr(service.sampler, "query_candidates", fake_query_candidates)
+    monkeypatch.setattr(PersonaRelevanceService, "build_population_artifact", fake_build_population_artifact)
+
+    artifact = service.preview_population(
+        session_id,
+        PopulationPreviewRequest(agent_count=10, sample_mode="affected_groups", seed=42),
+    )
+
+    selected_dataset = str(captured["dataset_path"])
+    assert selected_dataset.endswith("usa_nemotron_cc.parquet") or "/backend/.cache/nemotron/data/train-" in selected_dataset
+    assert captured["country"] == "usa"
+    assert artifact["coverage"]["planning_areas"] == ["California"]
+    assert artifact["representativeness"]["state_distribution"] == {"California": 1}
+    assert service.store.get_population_artifact(session_id) == artifact
+    assert service.store.get_simulation_state_snapshot(session_id) is None
+    assert service.store.get_report_state(session_id) is None
+    assert service.store.list_checkpoint_records(session_id) == []
+    assert service.store.get_interaction_transcripts(session_id) == []
+    assert service.store.get_memory_sync_state(session_id) is None
+
+
+def test_update_v2_session_config_clears_derived_artifacts_when_country_changes(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    service = ConsoleService(settings)
+    session_id = "session-config-reset"
+    service.create_v2_session(
+        country="singapore",
+        use_case="public-policy-testing",
+        provider="google",
+        model="gemini-2.5-flash-lite",
+        api_key="test-key",
+        mode="live",
+        session_id=session_id,
+    )
+
+    service.store.save_knowledge_artifact(session_id, {"session_id": session_id, "summary": "old summary"})
+    service.store.save_population_artifact(session_id, {"session_id": session_id, "sample_count": 5})
+    service.store.save_simulation_state_snapshot(session_id, {"session_id": session_id, "status": "running"})
+    service.store.save_report_state(session_id, {"session_id": session_id, "status": "running"})
+    service.store.replace_checkpoint_records(
+        session_id,
+        "baseline",
+        [{"agent_id": "agent-old", "checkpoint_kind": "baseline"}],
+    )
+    service.store.append_interaction_transcript(session_id, "group_chat", "user", "stale transcript")
+    service.store.save_memory_sync_state(session_id, 6, 4, last_checkpoint_id=2)
+
+    service.update_v2_session_config(session_id, country="usa", use_case="public-policy-testing")
+
+    assert service.store.get_knowledge_artifact(session_id) is None
+    assert service.store.get_population_artifact(session_id) is None
+    assert service.store.get_simulation_state_snapshot(session_id) is None
+    assert service.store.get_report_state(session_id) is None
+    assert service.store.list_checkpoint_records(session_id) == []
+    assert service.store.get_interaction_transcripts(session_id) == []
+    assert service.store.get_memory_sync_state(session_id) is None
+    assert service.knowledge_streams.get_state(session_id)["status"] == "idle"

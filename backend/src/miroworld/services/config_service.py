@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import yaml
 
 from miroworld.config import BACKEND_DIR, Settings
@@ -84,6 +85,52 @@ class ConfigService:
         if isinstance(columns, list) and columns:
             return [item for item in columns if isinstance(item, dict)]
         return []
+
+    def get_country_dataset_config(self, country: str | dict[str, Any]) -> dict[str, Any]:
+        payload = country if isinstance(country, dict) else self.get_country(country)
+        raw = payload.get("dataset")
+        config = dict(raw) if isinstance(raw, dict) else {}
+
+        local_paths = config.get("local_paths")
+        if not isinstance(local_paths, list) or not local_paths:
+            local_path = config.get("local_path") or payload.get("dataset_path")
+            local_paths = [local_path] if str(local_path or "").strip() else []
+
+        download_dir = config.get("download_dir")
+        if not download_dir and local_paths:
+            first = Path(str(local_paths[0]))
+            if first.name.startswith("train-"):
+                download_dir = str(first.parent.parent)
+            else:
+                download_dir = str(first.parent)
+
+        required_columns = config.get("required_columns")
+        if not isinstance(required_columns, list) or not required_columns:
+            required_columns = []
+
+        country_values = config.get("country_values")
+        if not isinstance(country_values, list):
+            country_values = []
+
+        allow_patterns = config.get("allow_patterns")
+        if not isinstance(allow_patterns, list) or not allow_patterns:
+            allow_patterns = ["data/train-*", "README.md"]
+
+        return {
+            **config,
+            "local_paths": [str(item).strip() for item in local_paths if str(item).strip()],
+            "download_dir": str(download_dir).strip() if str(download_dir or "").strip() else "",
+            "required_columns": [str(item).strip() for item in required_columns if str(item).strip()],
+            "country_values": [str(item).strip() for item in country_values if str(item).strip()],
+            "allow_patterns": [str(item).strip() for item in allow_patterns if str(item).strip()],
+        }
+
+    def get_country_geography_config(self, country: str | dict[str, Any]) -> dict[str, Any]:
+        payload = country if isinstance(country, dict) else self.get_country(country)
+        raw = payload.get("geography")
+        if isinstance(raw, dict):
+            return raw
+        return {}
 
     # ── Use-case methods ──
 
@@ -203,7 +250,7 @@ class ConfigService:
             result.append(p)
         return result
 
-    def resolve_dataset_path(self, dataset_path: str) -> str:
+    def resolve_dataset_path(self, dataset_path: str, *, required_columns: list[str] | None = None) -> str:
         source = str(dataset_path or "").strip()
         if not source:
             raise FileNotFoundError(f"Dataset path not found for filter inference: {dataset_path}")
@@ -213,23 +260,37 @@ class ConfigService:
         if not path.is_absolute():
             candidates = [REPO_ROOT / path, BACKEND_DIR / path] + candidates
 
+        resolved_candidates: list[str] = []
         for candidate in candidates:
-            resolved = self._resolve_dataset_candidate(candidate)
-            if resolved is not None:
-                return resolved
+            resolved_candidates.extend(self._resolve_dataset_candidates(candidate))
+
+        deduped_candidates = list(dict.fromkeys(resolved_candidates))
+        if required_columns:
+            normalized_required = {self._normalize_required_column(column) for column in required_columns if str(column).strip()}
+            for candidate in deduped_candidates:
+                if self._dataset_has_columns(candidate, normalized_required):
+                    return candidate
+            raise FileNotFoundError(
+                f"Dataset path not found with required columns {sorted(normalized_required)}: {dataset_path}"
+            )
+
+        if deduped_candidates:
+            return deduped_candidates[0]
 
         raise FileNotFoundError(f"Dataset path not found for filter inference: {dataset_path}")
 
-    def _resolve_dataset_candidate(self, candidate: Path) -> str | None:
+    def _resolve_dataset_candidates(self, candidate: Path) -> list[str]:
+        resolved: list[str] = []
         if candidate.exists():
-            return str(candidate.resolve())
+            resolved.append(str(candidate.resolve()))
 
         if candidate.parent.exists():
             matches = sorted(candidate.parent.glob(candidate.name))
             if matches:
                 if len(matches) == 1:
-                    return str(matches[0].resolve())
-                return str((candidate.parent.resolve() / candidate.name))
+                    resolved.append(str(matches[0].resolve()))
+                else:
+                    resolved.append(str((candidate.parent.resolve() / candidate.name)))
 
         for directory in (candidate.parent / "data", candidate.parent):
             if not directory.exists():
@@ -239,10 +300,30 @@ class ConfigService:
                 if not matches:
                     continue
                 if len(matches) == 1:
-                    return str(matches[0].resolve())
-                return str(directory.resolve() / pattern)
+                    resolved.append(str(matches[0].resolve()))
+                else:
+                    resolved.append(str(directory.resolve() / pattern))
 
-        return None
+        return resolved
+
+    def _dataset_has_columns(self, parquet_source: str, required_columns: set[str]) -> bool:
+        if not required_columns:
+            return True
+        conn = duckdb.connect()
+        try:
+            rows = conn.execute(
+                f"DESCRIBE SELECT * FROM read_parquet('{parquet_source}')"
+            ).fetchall()
+        finally:
+            conn.close()
+        available = {self._normalize_required_column(row[0]) for row in rows}
+        return required_columns.issubset(available)
+
+    def _normalize_required_column(self, value: Any) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized == "gender":
+            return "sex"
+        return normalized
 
     def _safe_load_yaml(self, path: Path) -> dict[str, Any] | None:
         try:

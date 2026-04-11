@@ -833,13 +833,446 @@ Frontend: react-force-graph-2d receives deltas, animates new nodes appearing
 - [x] Add "Live Demo" badge/link to README
 - [x] Verify demo works: all screens navigable, knowledge graph renders, simulation feed shows, report displays, analytics charts work
 
+### Phase 3.5: Feature Polish, Bug Fixes & Rename (5–7 days)
+
+*Goal: Fix all user-reported bugs, add UX polish, externalize prompts, rename project, and regenerate GitHub Pages caches. Split into frontend (Agent1) and backend (Agent2) tracks for parallel work.*
+
+> **Agent Coordination:** See `/docs/v2/AGENT_COORDINATION.md` for worktree assignments, port allocation, and communication protocol between the two agents.
+
+---
+
+#### Phase 3.5-A: Backend Track (Agent2)
+
+**3.5-A1: Rename Project — McKAInsey → MiroWorld** *(2–3 hours)*
+
+> **WARNING:** This touches ~45+ backend files and the entire Python package namespace. Must be done FIRST before other backend work to avoid merge conflicts.
+
+| Task | Details |
+|:-----|:--------|
+| Rename directory | `backend/src/mckainsey/` → `backend/src/miroworld/` |
+| Update all imports | Every `from mckainsey.` and `import mckainsey.` across ~45 backend files |
+| Update `pyproject.toml` | Package name, entry points, any internal references |
+| Update `docker-compose.yml` | Service names, image names referencing `mckainsey` |
+| Update `Dockerfile` / `Dockerfile.oasis` | Any `COPY` or package references |
+| Update `quick_start.sh` | Any references to `mckainsey` |
+| Update config files | Check `/config/prompts/*.yaml` for "McKAInsey" in prompt text |
+| Search-and-replace strings | `"McKAInsey"` → `"MiroWorld"` in all UI-visible strings, system prompts, report headers |
+
+**Files with "McKAInsey" in visible strings (must change):**
+- `backend/src/mckainsey/services/report_service.py` — report headers, system prompts
+- `backend/src/mckainsey/services/console_service.py` — download filenames
+- `config/prompts/*.yaml` — system prompts
+
+**3.5-A2: Fix "Knowledge artifact not found" for USA dataset** *(2–3 hours)* `#High`
+
+**Root cause:** `console_service.py:1108–1110` raises `HTTPException(404)` when `storage.get_knowledge_artifact(session_id)` returns `None`. This happens when USA document processing fails silently during Screen 1 upload, so no knowledge artifact exists when Screen 2 tries to read it.
+
+**Investigation needed:**
+- Check `lightrag_service.py:360–410` — LightRAG initialization may fail for USA due to missing or misformatted data
+- Check `config/countries/usa.yaml` — may lack proper initialization config
+- Trace the full flow: upload → `lightrag_service.process_document()` → `storage.save_knowledge_artifact()` — find where it fails silently for USA
+
+**Fix approach:**
+1. Add proper error propagation (no silent failures) in the LightRAG processing chain
+2. If LightRAG fails, return a clear error to the frontend explaining what went wrong
+3. Verify USA config has all required fields matching Singapore's structure
+4. Add integration test: USA document upload → knowledge artifact creation
+
+**3.5-A3: Fix Agent Name Parsing** *(3–4 hours)* `#High`
+
+**Current state:** `persona_relevance_service.py:742–780` extracts names from persona text using 3 regex patterns. Falls back to `"Occupation (Planning Area)"` when all regexes fail.
+
+**Problems found:**
+1. Only searches `professional_persona`, `persona`, `cultural_background` columns — misses `travel_persona`, `sports_persona`, `arts_persona`
+2. `NAME_WITH_VERB_PATTERN` at line 110 only catches names followed by specific verbs — misses patterns like `"At 48, John is..."`
+3. `CAPITALIZED_NAME_PATTERN` grabs any capitalized words, including festival/place names
+4. Checkpoint interview `confirmed_name` field IS implemented in `simulation_service.py:800` but the extracted name may not propagate back to Screen 4/5 display
+
+**Fix — implement user's majority-vote approach:**
+```
+1. Extract candidate names from ALL persona columns:
+   travel_persona, sports_persona, persona, professional_persona, arts_persona
+2. For each column, apply improved regex:
+   - Match first 1-7 sequential capitalized words at sentence start
+   - Allow brackets for middle names: "Syed R. (Mogan) Lamaze"
+   - Skip leading age/detail phrases: "At 48, " prefix
+3. Take majority winner across columns
+4. Verify confirmed_name from checkpoint interview propagates to Screen 4/5
+```
+
+**Improved regex pattern:**
+```python
+# Skip leading "At \d+, " or "In \d{4}, " prefixes
+LEADING_NOISE = re.compile(r"^(?:At\s+\d+,?\s*|In\s+\d{4},?\s*)")
+# Match 1-7 capitalized words (allow brackets, periods, hyphens)
+NAME_PATTERN = re.compile(
+    r"([A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|\([A-Z][a-z]+\)|[A-Z]\.)){0,6})"
+)
+```
+
+**3.5-A4: Externalize ALL Prompts to Config Files** *(4–6 hours)* `#High`
+
+**Current state:** 3 prompts already in `/config/prompts/*.yaml`. 8+ remain hardcoded in Python.
+
+**Prompts to externalize:**
+
+| # | Current Location | Prompt Purpose | Target Config File |
+|:--|:-----------------|:---------------|:-------------------|
+| 1 | `lightrag_service.py:278–283` | Graph extraction system prompt | `/config/prompts/system/graph_extraction.yaml` |
+| 2 | `lightrag_service.py:512–524` | Document summarization (per-provider) | `/config/prompts/system/document_summary.yaml` |
+| 3 | `memory_service.py:138–155` | Sampling instruction parsing + memory context | `/config/prompts/system/memory_context.yaml` |
+| 4 | `report_service.py:110–111` | Report agent system prompt | `/config/prompts/system/report_agent.yaml` |
+| 5 | `report_service.py:260` | Report writing system prompt | (same file as #4) |
+| 6 | `report_service.py:298` | Report analysis system prompt | (same file as #4) |
+| 7 | `report_service.py:969` | Report editing system prompt | (same file as #4) |
+| 8 | `persona_relevance_service.py:145–146` | Sampling instruction parser system prompt | `/config/prompts/system/sampling_parser.yaml` |
+| 9 | `simulation_service.py:752–810` | Checkpoint interview prompt template | `/config/prompts/system/checkpoint_interview.yaml` |
+
+**Implementation pattern:**
+```python
+# config/prompts/system/report_agent.yaml
+description: "System prompt for the report generation agent"
+prompts:
+  report_writer:
+    description: "Main report writing prompt — generates structured analysis"
+    template: |
+      You are MiroWorld ReportAgent. Return a detailed, insightful strategic summary...
+  report_editor:
+    description: "Report editing prompt — rewrites sections for clarity"
+    template: |
+      You are a policy-report editor. Return only the rewritten text.
+```
+
+**Each config file must have:**
+- `description` field explaining what each prompt does
+- Descriptive key names
+- Comments/documentation for how the prompt is used
+
+**3.5-A5: Fix Fake Fallback Data in Live Mode** *(2–3 hours)* `#High`
+
+**Root cause:** User uploaded a URL to an AirBnB PDF but got "World Athletics Foundation" data. Investigation points:
+- `routes_console.py:234–249` — demo mode fallback for cached data may leak into live mode
+- `demo_service.py` — handles demo artifact retrieval
+- Search for hardcoded "World Athletics" or other sample data strings
+
+**Fix approach:**
+1. Audit all demo/fallback data paths — ensure they ONLY activate when `BOOT_MODE=demo`
+2. Add strict guards: `if boot_mode == "live" and data_source == "fallback": raise Error`
+3. When LightRAG/scraping fails in live mode, return the actual error message to the frontend, not fallback data
+4. Add logging to trace: URL received → scrape result → LightRAG input → output
+
+**3.5-A6: Integrate MarkItDown for Document Parsing** *(2–3 hours)* `#High`
+
+**Current state:** `document_parser.py:25–56` supports only PDF (pypdf), DOCX (python-docx), and text files. PPT, images, HTML are not supported.
+
+**Fix:**
+1. Add `markitdown` to `pyproject.toml` dependencies
+2. Replace custom parsers with MarkItDown unified interface:
+   ```python
+   from markitdown import MarkItDown
+   md = MarkItDown()
+   result = md.convert(file_path)
+   return result.text_content
+   ```
+3. Supported formats via MarkItDown: PDF, PPT, DOCX, XLSX, images (with OCR), HTML, CSV, JSON, XML, ZIP
+4. Update frontend upload card text to list all supported formats
+5. Add tests for each format
+
+**3.5-A7: Fix Strategic Parameters LLM Parsing** *(3–4 hours)* `#High`
+
+**Current state:** `persona_relevance_service.py:131–175` uses LLM to parse natural language filters. The system prompt says "Singapore population-sampling system" — hardcoded to Singapore.
+
+**Problems:**
+1. System prompt references Singapore specifically — won't work for USA/other countries
+2. `SUPPORTED_INSTRUCTION_FIELDS` at line 70–82 lists fields like `planning_area` which is Singapore-specific
+3. Each country's config should define its own filterable columns
+
+**Fix:**
+1. Move `SUPPORTED_INSTRUCTION_FIELDS` to `/config/countries/{country}.yaml`:
+   ```yaml
+   # config/countries/singapore.yaml
+   filterable_columns:
+     - field: planning_area
+       description: "Sub-region or planning area within Singapore"
+       type: categorical
+     - field: age
+       description: "Age of the person"
+       type: range
+     - field: occupation
+       type: categorical
+   ```
+2. Make the LLM parsing prompt country-aware — inject the country's available columns
+3. Update `_build_instruction_prompt()` to use country-specific column definitions
+4. Test with "more samples from planning area Bishan" (Singapore) and "more samples from state California" (USA)
+
+**3.5-A8: Fix Post Title Generation** *(1–2 hours)*
+
+**Problem:** Post titles are sometimes just the first sentence truncated.
+
+**Investigation:** Check the simulation agent prompt — confirm it asks for a `title` field in the JSON output. If it does, the issue is the LLM not consistently generating good titles. If it doesn't, add it.
+
+**Fix is part of prompt externalization (3.5-A4)** — ensure the checkpoint/post generation prompt explicitly requires: `"title": "A descriptive title summarizing the post's point"`
+
+**3.5-A9: Fix Screen 4 Analysis Write-ups — Too Short** *(2–3 hours)* `#High`
+
+**Root cause:** `report_service.py:1445–1448` truncates input data to the report LLM:
+- Population artifact: truncated to 6,000 chars
+- Checkpoint records: truncated to 12,000 chars
+- Influential posts: truncated to 6,000 chars
+
+These caps starve the LLM of evidence, resulting in shallow write-ups.
+
+**Fix:**
+1. Increase truncation limits (or remove them if model context window allows):
+   - With Gemini 2.5 Flash (1M context): increase to 50k chars each
+   - With GPT-4o (128k context): increase to 20k chars each
+2. Update the report prompt to explicitly ask for "detailed, evidence-rich analysis of 300–500 words per question"
+3. Include specific instructions: "Cite specific agent quotes, demographic patterns, and round-over-round opinion shifts."
+4. This is part of prompt externalization — the prompt in `/config/prompts/system/report_agent.yaml` will have a `min_words_per_question` parameter
+
+**3.5-A10: Fix Cost Estimation** *(1–2 hours)*
+
+**Current state:** `token_tracker.py:7–14` has hardcoded pricing that may be outdated.
+
+**Fix:**
+1. Move pricing table to `/config/llm_pricing.yaml`
+2. Update with current Gemini pricing (as of 2025-07):
+   - `gemini-2.5-flash-lite`: input $0.015/MTok, output $0.06/MTok (much cheaper than current values)
+3. Cost calculation already works (agents × rounds × tokens × price) — just needs accurate prices
+4. Add date field to pricing config so users know when it was last updated
+
+---
+
+#### Phase 3.5-B: Frontend Track (Agent1)
+
+**3.5-B1: Rename Project — McKAInsey → MiroWorld** *(1 hour)*
+
+| Task | Files |
+|:-----|:------|
+| UI strings | `Simulation.tsx:613`, `ReportChat.tsx:100,594`, `Analytics.tsx:258` |
+| Page titles | Any `<title>` or document title references |
+| Sidebar/branding | `AppSidebar.tsx` if branding text exists |
+| index.html | `<title>` tag |
+| `package.json` | `"name"` field |
+| README.md | All references |
+
+**3.5-B2: Light Mode / Dark Mode Toggle** *(3–4 hours)* `#High`
+
+**Current state:** Only dark mode CSS variables defined in `index.css:10–56`. `tailwind.config.ts` has `darkMode: ["class"]` but unused.
+
+**Implementation:**
+1. **index.css** — add `:root` (light) variables alongside existing `.dark` variables:
+   ```css
+   :root {
+     --background: 0 0% 98%;        /* Near-white */
+     --foreground: 0 0% 10%;        /* Near-black */
+     --primary: 357 79% 46%;        /* Keep red accent */
+     --muted-foreground: 0 0% 40%;  /* Darker muted for readability */
+     /* ... full light palette */
+   }
+   .dark {
+     --background: 0 0% 4%;         /* Current dark values */
+     --foreground: 0 0% 93%;
+     /* ... existing dark values moved here */
+   }
+   ```
+2. **ThemeContext** — create `frontend/src/contexts/ThemeContext.tsx`:
+   - `useTheme()` hook returning `{ theme, toggle }`
+   - Persist preference to `localStorage`
+   - Apply `.dark` class to `<html>` element
+3. **Toggle button** — add Sun/Moon icon to `AppSidebar.tsx` bottom-left corner
+4. **Audit all hardcoded colors** — any `bg-black`, `text-white`, `border-white/10` etc. must use CSS variables instead
+   - `Analytics.tsx` has many `text-white/80`, `bg-white/[0.02]` — these need to become `text-foreground/80`, `bg-foreground/[0.02]`
+   - Estimate: 50–100 hardcoded color references across 5 page files
+
+**3.5-B3: Font Size Standardization** *(2–3 hours)*
+
+**Problems found:**
+- Page titles: `text-lg` (Screen 1), `text-2xl` (Screen 2), `text-sm` (Screen 3), `text-lg` (Screen 4)
+- Body text: `text-xs` (10px) on Screen 3 posts/comments — too small
+- Report body: `label-meta` (10px custom class) — too small
+- Some titles uppercase, others not
+
+**Implement 4 font size presets via CSS variables:**
+```css
+/* index.css */
+:root {
+  --text-page-title: 1.5rem;       /* 24px — all page titles */
+  --text-section-header: 1.125rem; /* 18px — card headers */
+  --text-body: 0.875rem;           /* 14px — posts, comments, report text */
+  --text-caption: 0.75rem;         /* 12px — timestamps, labels, metadata */
+}
+```
+
+**Specific fixes:**
+| Element | Current | Target | File:Line |
+|:--------|:--------|:-------|:----------|
+| Screen 1 title | `text-lg uppercase` | `text-page-title` (no uppercase) | `PolicyUpload.tsx:1180` |
+| Screen 2 title | `text-2xl` | `text-page-title` | `AgentConfig.tsx:258` |
+| Screen 3 title | `text-sm` | `text-page-title` | `Simulation.tsx:643` |
+| Screen 4 title | `text-lg` | `text-page-title` | `ReportChat.tsx:687` |
+| Screen 3 post content | `text-xs` (10px) | `text-body` (14px) | `Simulation.tsx:782` |
+| Screen 3 comments | `text-xs` (10px) | `text-body` (14px) | `Simulation.tsx:803` |
+| Screen 4 report body | `label-meta` (10px) | `text-body` (14px) | `ReportChat.tsx:764,829` |
+| Title casing | Mixed | Consistent title case (no ALL CAPS) | All pages |
+
+**3.5-B4: Text Color Standardization** *(1 hour)*
+
+**Fix:** Change `label-meta` class from `hsl(var(--muted-foreground))` to `hsl(var(--foreground))` for section headers like "Analysis Questions", or create a `label-section` class with white/foreground color.
+
+**Audit all section labels** across screens for consistent color treatment.
+
+**3.5-B5: Agent & Round Slider Improvements** *(2–3 hours)*
+
+**Agent count slider** (`AgentConfig.tsx:305–306`):
+- Keep max at 500
+- Add color zones: green (50–300), yellow (300–400), red (400–500)
+- Show tooltip: "Recommended: 50–300 agents for best quality/speed balance"
+
+**Simulation rounds slider** (`Simulation.tsx:655–659`):
+- Change max from 8 to 50
+- Free tier: cap at 10 with upgrade prompt
+- Color zones: green (1–20), yellow (20–35), red (35–50)
+- Show estimated time: `~{agents × rounds × 0.1}min`
+
+**Implementation:** Custom slider component with gradient track:
+```tsx
+const getSliderColor = (value: number, max: number) => {
+  const ratio = value / max;
+  if (ratio <= 0.6) return 'hsl(142, 76%, 36%)'; // green
+  if (ratio <= 0.8) return 'hsl(38, 92%, 50%)';  // yellow
+  return 'hsl(0, 84%, 60%)';                      // red
+};
+```
+
+**3.5-B6: Screen 3 — Comment Likes/Dislikes + Button Standardization** *(2–3 hours)*
+
+**Problem 1:** `FeedComment` type (`Simulation.tsx:21–28`) has no `likes`/`dislikes` fields.
+
+**Fix:**
+1. Add `likes: number; dislikes: number;` to `FeedComment` type
+2. Parse like/dislike data from backend response (OASIS simulation already tracks this)
+3. Display like/dislike counts on each comment
+
+**Problem 2:** Like/dislike buttons differ between Screen 3 and Screen 5.
+
+**Fix:**
+1. Create shared `<ReactionButtons />` component using Screen 5's colorful style
+2. Use in both Screen 3 (`Simulation.tsx`) and Screen 5 (`Analytics.tsx`)
+
+**3.5-B7: Screen 5 — Fix Comment Likes Showing 0** *(1–2 hours)*
+
+**Root cause:** `ViralComment` type has `likes`/`dislikes` fields but the backend may return 0 or the data isn't being mapped correctly from the analytics API response.
+
+**Fix:** Trace the data flow: backend analytics response → frontend mapping → display. Ensure `likes` field is populated from the correct backend field.
+
+**3.5-B8: Tab Switching Reset Bug** *(2–3 hours)* `#High`
+
+**Root cause:** App state is in-memory React context only. When Chrome suspends the tab (or the WebSocket reconnects), the app may reset `sessionId` which triggers `AppContext.tsx:178–185` to reset ALL state to defaults, navigating back to onboarding.
+
+**Fix:**
+1. **Persist critical state to `sessionStorage`:**
+   - `sessionId`, `currentStep`, `bootMode`, `uploadedFiles` metadata, `knowledgeGraphReady`, `simulationComplete`
+2. **On app mount, hydrate from `sessionStorage`:**
+   ```typescript
+   const [state, setState] = useState<AppState>(() => {
+     const saved = sessionStorage.getItem('app-state');
+     return saved ? JSON.parse(saved) : defaultState;
+   });
+   ```
+3. **Sync state changes to `sessionStorage`:**
+   ```typescript
+   useEffect(() => {
+     sessionStorage.setItem('app-state', JSON.stringify(criticalState));
+   }, [criticalState]);
+   ```
+4. **Do NOT persist large data** (simPosts, full report) — only metadata and navigation state
+
+**3.5-B9: Screen 3 State Persistence** *(1–2 hours)*
+
+**Problem:** `controversyBoostEnabled` is local `useState` in `Simulation.tsx:190` — lost on navigation. `approvalRate` and `netSentiment` are in `simulationState` which may also reset.
+
+**Fix:**
+1. Move `controversyBoostEnabled` to AppContext (alongside other simulation state)
+2. Ensure `approvalRate` and `netSentiment` are included in the state that gets persisted to sessionStorage (from 3.5-B8)
+3. Verify `simulationState` in AppContext includes these metrics from the backend SSE events
+
+**3.5-B10: Update Upload Card Text for MarkItDown** *(0.5 hours)*
+
+After backend integrates MarkItDown (3.5-A6), update the Screen 1 upload card to list supported formats:
+- "Supports: PDF, PPT, DOCX, XLSX, images, HTML, CSV, MD, TXT"
+
+**3.5-B11: Remove Campaign Use Case from UI** *(1–2 hours)*
+
+**Decision: Remove campaign-content-testing entirely.**
+
+1. Remove from onboarding screen use case selector
+2. Remove `campaign-content-testing` option from any dropdowns/config
+3. Delete `/config/prompts/campaign-content-testing.yaml`
+4. Update any frontend routing that references the campaign use case
+5. Verify only 2 use cases remain: public-policy-testing, product-market-research
+
+---
+
+#### Phase 3.5-C: GitHub Pages Cache Rebuild (after A+B complete)
+
+**3.5-C1: Use-Case-Specific Demo Caches** *(1 day)*
+
+**Requirement:** Onboarding screen shows different cached data per use case selection.
+
+1. **Policy cache:** Use `/Sample_Inputs/Policy/README.md` point #1 as input, 100 agents, 20 rounds
+2. **Product cache:** Use `/Sample_Inputs/Policy/Airbnb_Pitch_Example.md` as input, 100 agents, 20 rounds
+3. Frontend loads `demo-cache-policy.json` or `demo-cache-product.json` based on use case selection
+4. Both caches include: knowledge graph, all simulation data, analytics, approval rate, net sentiment
+
+**3.5-C2: Fix Cache Data Gaps**
+- Ensure approval rate and net sentiment are included in cached data (backend script already has `_approval_rate()` function — verify it's being called)
+- Pre-load Screen 4 chat with question: "Did any post change your mind?"
+
+**3.5-C3: Regenerate & Deploy**
+- Run cache generation for both use cases
+- Build frontend with new caches
+- Push to `gh-pages` branch
+
+---
+
+#### Phase 3.5 Effort Estimate
+
+| Track | Tasks | Estimate |
+|:------|:------|:---------|
+| Backend (Agent2) | 3.5-A1 through A10 | 3–4 days |
+| Frontend (Agent1) | 3.5-B1 through B11 | 3–4 days |
+| Cache rebuild | 3.5-C1 through C3 | 1 day (after A+B) |
+| **Total (parallel)** | | **4–5 days** |
+
+#### Phase 3.5 Dependency Graph
+
+```
+3.5-A1 (Rename backend) ──────────┐
+                                   ├──→ All other A tasks
+3.5-B1 (Rename frontend) ─────────┤
+                                   ├──→ All other B tasks
+                                   │
+3.5-A4 (Prompts to config) ───────┼──→ 3.5-A8 (Post titles)
+                                   ├──→ 3.5-A9 (Report length)
+                                   ├──→ KOL viewpoint fix
+                                   │
+3.5-A6 (MarkItDown) ──────────────┼──→ 3.5-B10 (Upload card text)
+                                   │
+3.5-B8 (Tab persistence) ─────────┼──→ 3.5-B9 (Screen 3 persistence)
+                                   │
+All A + B tasks ───────────────────┴──→ 3.5-C (Cache rebuild)
+```
+
+---
+
 ### Phase 4: Cloud Hosting MVP — AWS (3–5 days)
 *Goal: Deploy a working BYOK instance with free + paid tiers.*
 
 **Infrastructure:**
 - [ ] Set up AWS account, configure `us-east-1` region
 - [ ] Create ECR repositories for backend + OASIS sidecar images
-- [ ] Set up RDS PostgreSQL (`db.t4g.micro`, ~$15/month)
+- [ ] Set up RDS PostgreSQL (`db.t4g.micro`, ~$15/month
 - [ ] Create S3 bucket for frontend static assets + uploaded documents
 - [ ] Set up CloudFront CDN pointing to S3 (frontend) + ALB (API)
 - [ ] Set up ECS Fargate cluster with backend + OASIS sidecar task definitions

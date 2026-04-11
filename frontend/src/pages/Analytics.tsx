@@ -607,7 +607,7 @@ export default function Analytics() {
     <div className="h-full overflow-y-auto scrollbar-thin bg-background">
       <div className="mx-auto flex w-full max-w-[1700px] flex-col gap-5 px-6 py-6">
         <header className="surface-card px-5 py-4">
-          <h2 className="text-xl font-semibold tracking-tight text-white">Simulation Analytics</h2>
+          <h2 className="text-xl font-semibold tracking-tight text-foreground">Simulation Analytics</h2>
           <p className="mt-1 text-[11px] font-mono uppercase tracking-[0.15em] text-muted-foreground">
             {formatCountry(country)} · {formatUseCase(useCase)} · {sourceAgents.length} agents · {simulationRounds} rounds
           </p>
@@ -635,8 +635,8 @@ export default function Analytics() {
 
         <section className="space-y-3">
           <div className="flex items-center gap-2 px-1">
-            <Activity className="h-4 w-4 text-white/70" />
-            <h3 className="text-xs font-mono uppercase tracking-[0.15em] text-white/80">Sentiment Dynamics</h3>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground">Sentiment Dynamics</h3>
           </div>
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
             <PolarizationCard data={polarizationData} loading={analyticsLoading} />
@@ -647,8 +647,8 @@ export default function Analytics() {
         <section className="surface-card p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Users2 className="h-4 w-4 text-white/70" />
-              <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-white">Demographic Sentiment Map</h3>
+              <Users2 className="h-4 w-4 text-muted-foreground" />
+              <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-foreground">Demographic Sentiment Map</h3>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {dimensionOptions.map((option) => (
@@ -658,8 +658,8 @@ export default function Analytics() {
                   onClick={() => setDimension(option.key)}
                   className={`rounded border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors ${
                     dimension === option.key
-                      ? "border-white/25 bg-white/10 text-white"
-                      : "border-white/10 text-muted-foreground hover:border-white/20 hover:text-white"
+                      ? "border-border bg-foreground/10 text-foreground"
+                      : "border-border text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground"
                   }`}
                 >
                   {option.label}
@@ -673,32 +673,32 @@ export default function Analytics() {
               {agentStancesError}
             </div>
           ) : demographicLoading ? (
-            <div className="flex min-h-[180px] items-center justify-center rounded border border-white/10 bg-white/[0.02] text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
+            <div className="flex min-h-[180px] items-center justify-center rounded border border-border bg-muted/20 text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
               Loading demographic data...
             </div>
           ) : showDemographicEmpty ? (
-            <div className="flex min-h-[180px] items-center justify-center rounded border border-white/10 bg-white/[0.02] text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
+            <div className="flex min-h-[180px] items-center justify-center rounded border border-border bg-muted/20 text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
               No demographic data yet.
             </div>
           ) : (
             <>
               <div className="mb-4 flex flex-wrap items-center gap-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
                 <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[hsl(var(--data-green))]" /> Supporter</span>
-                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-white/35" /> Neutral</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-muted-foreground/50" /> Neutral</span>
                 <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[hsl(var(--data-red))]" /> Dissenter</span>
               </div>
 
               <div className="flex flex-wrap gap-x-8 gap-y-10">
                 {demographicGroups.map((group) => (
                   <div key={group.name} className="flex min-w-[220px] max-w-[340px] shrink-0 flex-col">
-                    <div className="mb-3 flex w-full items-baseline justify-between border-b border-white/5 pb-1">
-                      <h4 className="max-w-[260px] truncate text-sm font-semibold text-white/90" title={group.name}>{group.name}</h4>
-                      <span className="ml-3 rounded bg-white/5 px-2 py-0.5 text-[11px] font-mono text-muted-foreground">{group.agents.length}</span>
+                    <div className="mb-3 flex w-full items-baseline justify-between border-b border-border pb-1">
+                      <h4 className="max-w-[260px] truncate text-sm font-semibold text-foreground" title={group.name}>{group.name}</h4>
+                      <span className="ml-3 rounded bg-muted px-2 py-0.5 text-[11px] font-mono text-muted-foreground">{group.agents.length}</span>
                     </div>
 
                     <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted-foreground">
                       <span className="text-[hsl(var(--data-green))]">{group.supporters}</span>
-                      <span className="text-white/35">{group.neutral}</span>
+                      <span className="text-muted-foreground/60">{group.neutral}</span>
                       <span className="text-[hsl(var(--data-red))]">{group.dissenters}</span>
                     </div>
 
@@ -769,10 +769,10 @@ function PolarizationTooltip({ active, label, payload }: PolarizationTooltipProp
   const severity = payload[0]?.payload?.severity ?? "moderate";
 
   return (
-    <div className="min-w-[140px] rounded-md border border-white/15 bg-[#101010] px-3 py-2 text-xs text-white shadow-xl">
-      <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/80">{label}</div>
+    <div className="min-w-[140px] rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-xl">
+      <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
       <div className="mt-1 flex items-center justify-between gap-3">
-        <span className="text-sm font-semibold text-white">{toPercent(rawValue)}</span>
+        <span className="text-sm font-semibold text-foreground">{toPercent(rawValue)}</span>
         <span className="text-[10px] font-mono uppercase" style={{ color: severityColor(severity) }}>
           {severity}
         </span>
@@ -857,14 +857,14 @@ function OpinionFlowCard({ data, loading }: { data: OpinionFlowData; loading: bo
   return (
     <section className="surface-card p-5">
       <div className="mb-4 flex items-center gap-2">
-        <GitBranch className="h-4 w-4 text-white/70" />
-        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-white">Opinion Flow</h3>
+        <GitBranch className="h-4 w-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-foreground">Opinion Flow</h3>
       </div>
 
       <div className="grid grid-cols-[94px_minmax(0,1fr)_94px] gap-3">
         <FlowDistributionColumn title="Initial" values={safeData.initial} total={total} />
 
-        <div className="h-[178px] rounded border border-white/10 bg-white/[0.02] p-2">
+        <div className="h-[178px] rounded border border-border bg-muted/20 p-2">
           <svg viewBox="0 0 220 172" className="h-full w-full" preserveAspectRatio="none">
             {safeData.flows.map((flow, index) => {
               const width = Math.max(2, (flow.count / maxFlow) * 14);
@@ -907,8 +907,8 @@ function FlowDistributionColumn({
   total: number;
 }) {
   return (
-    <div className="rounded border border-white/10 bg-white/[0.02] p-2">
-      <div className="mb-2 text-center text-[10px] font-mono uppercase tracking-[0.14em] text-white/70">{title}</div>
+    <div className="rounded border border-border bg-muted/20 p-2">
+      <div className="mb-2 text-center text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">{title}</div>
       <div className="space-y-1.5">
         {STANCE_ORDER.map((stance) => {
           const count = values[stance];
@@ -917,7 +917,7 @@ function FlowDistributionColumn({
           return (
             <div
               key={stance}
-              className="flex items-center justify-center rounded-sm text-[10px] font-mono text-white"
+              className="flex items-center justify-center rounded-sm text-[10px] font-mono text-foreground"
               style={{
                 height,
                 backgroundColor: stanceColor(stance),
@@ -971,11 +971,11 @@ function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loadin
       <div className="space-y-4">
         {sections.map((section) => (
           <div key={section.title} className="space-y-2.5">
-            <h4 className="text-[11px] font-mono uppercase tracking-[0.13em] text-white/75">{section.title}</h4>
+            <h4 className="text-[11px] font-mono uppercase tracking-[0.13em] text-muted-foreground">{section.title}</h4>
             {section.leaders.map((leader) => (
-              <article key={leader.name} className="rounded border border-white/10 bg-white/[0.02] p-3">
+              <article key={leader.name} className="rounded border border-border bg-card/50 p-3">
                 <div className="mb-1.5 flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-white">{leader.name}</span>
+                  <span className="text-sm font-semibold text-foreground">{leader.name}</span>
                   <span
                     className="rounded px-2 py-0.5 text-[10px] font-mono"
                     style={{ color: stanceColor(leader.stance), backgroundColor: `${stanceColor(leader.stance)}1f` }}
@@ -983,7 +983,7 @@ function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loadin
                     {Math.round(leader.influence * 100)}%
                   </span>
                 </div>
-                <p className="text-xs leading-relaxed text-white/80">{leader.topView || leader.topPost || "No viewpoint summary available."}</p>
+                <p className="text-xs leading-relaxed text-muted-foreground">{leader.topView || leader.topPost || "No viewpoint summary available."}</p>
               </article>
             ))}
           </div>
@@ -1022,10 +1022,10 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
           const expanded = expandedPosts.has(index);
           const visibleComments = expanded ? post.comments : post.comments.slice(0, 3);
           return (
-          <article key={`${post.author}-${index}`} className="rounded border border-white/10 bg-white/[0.02] p-4">
+          <article key={`${post.author}-${index}`} className="rounded border border-border bg-card/50 p-4">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-white">{post.author}</span>
+                <span className="text-sm font-semibold text-foreground">{post.author}</span>
                 <span
                   className="rounded px-2 py-0.5 text-[10px] font-mono uppercase"
                   style={{ color: stanceColor(post.stance), backgroundColor: `${stanceColor(post.stance)}1f` }}
@@ -1033,23 +1033,23 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
                   {post.stance}
                 </span>
               </div>
-              <span className="text-[10px] font-mono uppercase tracking-[0.12em] text-white/55">Post #{index + 1}</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground">Post #{index + 1}</span>
             </div>
 
-            <h4 className="text-sm font-semibold leading-snug text-white">{post.title}</h4>
-            <p className="mt-2 text-sm leading-relaxed text-white/80">{post.content}</p>
+            <h4 className="text-sm font-semibold leading-snug text-foreground">{post.title}</h4>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{post.content}</p>
 
             <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-mono text-muted-foreground">
               <span className="text-[hsl(var(--data-green))]">▲ {post.likes}</span>
               <span className="text-[hsl(var(--data-red))]">▼ {post.dislikes}</span>
-              <span className="text-white/70">💬 {post.comments.length} comments</span>
+              <span className="text-muted-foreground">💬 {post.comments.length} comments</span>
             </div>
 
-            <div className="mt-3 space-y-2 border-l border-white/10 pl-3">
+            <div className="mt-3 space-y-2 border-l border-border pl-3">
               {visibleComments.map((comment, commentIndex) => (
-                <div key={`${post.author}-comment-${commentIndex}`} className="rounded border border-white/10 bg-black/20 p-2.5">
+                <div key={`${post.author}-comment-${commentIndex}`} className="rounded border border-border bg-muted/30 p-2.5">
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-white/90">{comment.author}</span>
+                    <span className="text-xs font-medium text-foreground">{comment.author}</span>
                     <span
                       className="rounded px-1.5 py-0.5 text-[9px] font-mono uppercase"
                       style={{ color: stanceColor(comment.stance), backgroundColor: `${stanceColor(comment.stance)}1f` }}
@@ -1057,7 +1057,7 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
                       {comment.stance}
                     </span>
                   </div>
-                  <p className="text-xs leading-relaxed text-white/80">{comment.content}</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">{comment.content}</p>
                   {(comment.likes > 0 || comment.dislikes > 0) && (
                     <div className="mt-1.5 flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
                       <span className="text-[hsl(var(--data-green))]">▲ {comment.likes}</span>
@@ -1070,7 +1070,7 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
                 <button
                   type="button"
                   onClick={() => toggleExpand(index)}
-                  className="mt-1 text-[10px] font-mono uppercase tracking-wider text-white/50 hover:text-white/80 transition-colors"
+                  className="mt-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {expanded ? "Show fewer replies" : `Show all ${post.comments.length} replies`}
                 </button>
@@ -1088,10 +1088,10 @@ function LoadingAnalyticsCard({ title, label }: { title: string; label: string }
   return (
     <section className="surface-card p-5">
       <div className="mb-4 flex items-center gap-2">
-        <span className="h-4 w-4 rounded-full bg-white/10" />
-        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-white">{title}</h3>
+        <span className="h-4 w-4 rounded-full bg-muted/60" />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-foreground">{title}</h3>
       </div>
-      <div className="flex min-h-[180px] items-center justify-center rounded border border-white/10 bg-white/[0.02] text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
+      <div className="flex min-h-[180px] items-center justify-center rounded border border-border bg-muted/20 text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
     </section>
@@ -1102,10 +1102,10 @@ function EmptyAnalyticsCard({ title, label }: { title: string; label: string }) 
   return (
     <section className="surface-card p-5">
       <div className="mb-4 flex items-center gap-2">
-        <span className="h-4 w-4 rounded-full bg-white/10" />
-        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-white">{title}</h3>
+        <span className="h-4 w-4 rounded-full bg-muted/60" />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-foreground">{title}</h3>
       </div>
-      <div className="flex min-h-[180px] items-center justify-center rounded border border-white/10 bg-white/[0.02] text-xs text-muted-foreground">
+      <div className="flex min-h-[180px] items-center justify-center rounded border border-border bg-muted/20 text-xs text-muted-foreground">
         {label}
       </div>
     </section>

@@ -24,6 +24,7 @@ import {
   uploadKnowledgeFile,
   scrapeKnowledgeUrl,
 } from '@/lib/console-api';
+import { useTheme } from '@/contexts/ThemeContext';
 import { toast } from '@/hooks/use-toast';
 
 /* ─── Graph Display Constants ─── */
@@ -541,6 +542,7 @@ export default function PolicyUpload() {
     setCurrentStep,
   } = useApp();
 
+  const { theme } = useTheme();
   const [dragOver, setDragOver] = useState(false);
   const graphRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -788,7 +790,7 @@ export default function PolicyUpload() {
       setKnowledgeError(null);
       setKnowledgeStreamProgress(null);
 
-      const resolvedSessionId = await ensureSession();
+      let resolvedSessionId = await ensureSession();
       resetKnowledgeState();
       setKnowledgeLoading(true);
       const currentQuestions = analysisQuestionsRef.current;
@@ -903,6 +905,7 @@ export default function PolicyUpload() {
 
       const knowledgePromise = (async () => {
         const artifacts: KnowledgeArtifact[] = [];
+        let backendSessionId: string | null = null;
         const assertStreamHealthy = () => {
           if (streamFailureMessage) {
             throw new Error(streamFailureMessage);
@@ -925,6 +928,10 @@ export default function PolicyUpload() {
             documents,
             guiding_prompt: undefined,
           });
+          const artifactSessionId = String(artifact.session_id ?? '').trim();
+          if (artifactSessionId && artifactSessionId !== resolvedSessionId) {
+            backendSessionId = artifactSessionId;
+          }
           artifacts.push(artifact);
           commitKnowledgeArtifact(
             mergeKnowledgeArtifactSnapshot(knowledgeArtifactRef.current, artifact, resolvedSessionId),
@@ -945,6 +952,10 @@ export default function PolicyUpload() {
             file,
             undefined,
           );
+          const artifactSessionId = String(artifact.session_id ?? '').trim();
+          if (artifactSessionId && artifactSessionId !== resolvedSessionId) {
+            backendSessionId = artifactSessionId;
+          }
           artifacts.push(artifact);
           commitKnowledgeArtifact(
             mergeKnowledgeArtifactSnapshot(knowledgeArtifactRef.current, artifact, resolvedSessionId),
@@ -953,7 +964,11 @@ export default function PolicyUpload() {
         }
 
         assertStreamHealthy();
-        return mergeKnowledgeArtifacts(resolvedSessionId, artifacts, null);
+        const mergedArtifact = mergeKnowledgeArtifacts(resolvedSessionId, artifacts, null);
+        if (backendSessionId) {
+          mergedArtifact.session_id = backendSessionId;
+        }
+        return mergedArtifact;
       })();
 
       const [artifact] = await Promise.all([
@@ -963,6 +978,12 @@ export default function PolicyUpload() {
 
       if (streamFailureMessage) {
         throw new Error(streamFailureMessage);
+      }
+
+      const returnedSessionId = String(artifact.session_id ?? '').trim();
+      if (returnedSessionId && returnedSessionId !== resolvedSessionId) {
+        setSessionId(returnedSessionId);
+        resolvedSessionId = returnedSessionId;
       }
 
       commitKnowledgeArtifact(
@@ -1205,7 +1226,7 @@ export default function PolicyUpload() {
         <div className="p-5 border-b border-border">
           <label
             className={`flex flex-col items-center justify-center p-6 cursor-pointer transition-colors border border-dashed rounded-lg bg-transparent ${
-              dragOver ? 'border-white/40 bg-white/[0.03]' : uploadedFiles.length > 0 ? 'border-border' : 'border-border hover:border-white/25'
+              dragOver ? 'border-[hsl(var(--data-blue))] bg-muted/30' : uploadedFiles.length > 0 ? 'border-border' : 'border-border hover:border-muted-foreground/40'
             }`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
@@ -1215,7 +1236,7 @@ export default function PolicyUpload() {
             <Upload className="w-6 h-6 text-muted-foreground mb-2" />
             <span className="text-sm text-foreground">Drop documents here</span>
             <span className="text-[10px] text-muted-foreground mt-1 font-mono uppercase tracking-wider">
-              PDF · PPT · DOCX · XLSX · Images · HTML · CSV · MD · TXT
+              PDF · PPT · DOCX · XLSX · JPG · CSV · MD
             </span>
           </label>
 
@@ -1245,7 +1266,7 @@ export default function PolicyUpload() {
                       <Progress
                         value={resolveKnowledgeProgressValue(knowledgeStreamProgress)}
                         aria-label={`${file.name} extraction progress`}
-                        className="h-1.5 bg-white/5"
+                        className="h-1.5 bg-muted"
                       />
                     </div>
                   )}
@@ -1260,7 +1281,7 @@ export default function PolicyUpload() {
               type="button"
               onClick={() => setShowUrlInput(!showUrlInput)}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[10px] font-mono uppercase tracking-wider border transition-colors ${
-                showUrlInput ? 'border-white/20 bg-white/5 text-foreground' : 'border-border text-muted-foreground hover:text-foreground hover:border-white/15'
+                showUrlInput ? 'border-border bg-muted/50 text-foreground' : 'border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/40'
               }`}
             >
               <Link className="w-3 h-3" /> URL
@@ -1269,7 +1290,7 @@ export default function PolicyUpload() {
               type="button"
               onClick={() => setShowPasteArea(!showPasteArea)}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[10px] font-mono uppercase tracking-wider border transition-colors ${
-                showPasteArea ? 'border-white/20 bg-white/5 text-foreground' : 'border-border text-muted-foreground hover:text-foreground hover:border-white/15'
+                showPasteArea ? 'border-border bg-muted/50 text-foreground' : 'border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/40'
               }`}
             >
               <Type className="w-3 h-3" /> Paste
@@ -1319,7 +1340,7 @@ export default function PolicyUpload() {
             <button
               type="button"
               onClick={addNewAnalysisQuestion}
-              className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground transition-colors hover:border-white/15 hover:bg-white/[0.03] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground transition-colors hover:border-muted-foreground/40 hover:bg-muted/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               <Plus className="w-3 h-3" /> Add Question
             </button>
@@ -1350,10 +1371,10 @@ export default function PolicyUpload() {
                   ? 'bg-emerald-500/10 text-emerald-400'
                   : q.metadataStatus === 'error'
                     ? 'bg-red-500/10 text-red-400'
-                    : 'bg-white/5 text-muted-foreground';
+                    : 'bg-muted text-muted-foreground';
 
               return (
-                <div key={`${q.metric_name}-${index}`} className="group relative rounded-lg border border-border bg-card p-3 transition-colors hover:border-white/20">
+                <div key={`${q.metric_name}-${index}`} className="group relative rounded-lg border border-border bg-card p-3 transition-colors hover:border-muted-foreground/30">
                   <div className="flex items-start gap-3">
                     <div className="flex-1 min-w-0">
                       <Textarea
@@ -1366,7 +1387,7 @@ export default function PolicyUpload() {
                         <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
                           q.type === 'scale' ? 'bg-blue-500/10 text-blue-400' :
                           q.type === 'yes-no' ? 'bg-emerald-500/10 text-emerald-400' :
-                          'bg-white/5 text-muted-foreground'
+                          'bg-muted text-muted-foreground'
                         }`}>
                           {q.type}
                         </span>
@@ -1424,24 +1445,24 @@ export default function PolicyUpload() {
 
           {/* Fake Loading Log */}
           {knowledgeLoading && (
-            <div className="mt-4 p-3 border border-border bg-black rounded font-mono text-[10px] text-muted-foreground w-full space-y-1">
-              <div className="flex justify-between gap-3">
-                <span>
+            <div className="mt-4 p-3 border border-border bg-card rounded font-mono text-[10px] text-muted-foreground w-full space-y-1 overflow-hidden">
+              <div className="flex justify-between gap-3 min-w-0">
+                <span className="truncate min-w-0">
                   [{new Date().toLocaleTimeString('en-US', { hour12: false })}] {knowledgeStreamProgress?.message || 'Initializing graph builder...'}
                 </span>
-                <span className="text-success uppercase">{knowledgeStreamProgress?.stage || 'running'}</span>
+                <span className="text-success uppercase shrink-0">{knowledgeStreamProgress?.stage || 'running'}</span>
               </div>
               <Progress
                 value={resolveKnowledgeProgressValue(knowledgeStreamProgress)}
                 aria-label="Knowledge extraction progress"
-                className="h-1.5 bg-white/5"
+                className="h-1.5 bg-muted"
               />
               {(knowledgeStreamProgress?.chunkIndex != null || knowledgeStreamProgress?.chunkTotal != null || Boolean(knowledgeStreamProgress?.documentLabel)) && (
-                <div className="flex justify-between gap-3 text-[9px] uppercase tracking-wider text-muted-foreground/80">
-                  <span>
+                <div className="flex justify-between gap-3 text-[9px] uppercase tracking-wider text-muted-foreground/80 min-w-0">
+                  <span className="truncate min-w-0">
                     {knowledgeStreamProgress?.documentLabel ? `Document ${knowledgeStreamProgress.documentLabel}` : 'Streaming updates'}
                   </span>
-                  <span>
+                  <span className="shrink-0">
                     {knowledgeStreamProgress?.chunkIndex && knowledgeStreamProgress?.chunkTotal
                       ? `Chunk ${knowledgeStreamProgress.chunkIndex} / ${knowledgeStreamProgress.chunkTotal}`
                       : knowledgeStreamProgress?.chunkIndex
@@ -1467,7 +1488,7 @@ export default function PolicyUpload() {
 
         {/* Top Entities — collapsible */}
         {graphReady && (
-          <div className="p-5">
+          <div className="p-5 pb-8">
             <button
               type="button"
               onClick={() => setShowTopEntities(!showTopEntities)}
@@ -1526,8 +1547,8 @@ export default function PolicyUpload() {
                 onClick={() => setShowRelationshipLabels((current) => !current)}
                 className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors ${
                   showRelationshipLabels
-                    ? 'border-white/20 bg-white/5 text-foreground'
-                    : 'border-border text-muted-foreground hover:border-white/15 hover:text-foreground'
+                    ? 'border-border bg-muted/50 text-foreground'
+                    : 'border-border text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground'
                 }`}
               >
                 {showRelationshipLabels ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
@@ -1588,11 +1609,6 @@ export default function PolicyUpload() {
                 ctx.font = `${fontSize}px "Space Grotesk", sans-serif`;
                 const labelX = node.x + radius + NODE_LABEL_GAP;
                 const labelY = node.y;
-                const labelWidth = ctx.measureText(label).width;
-                const backgroundX = labelX - 4;
-                const backgroundY = labelY - fontSize / 2 - 3;
-                const backgroundWidth = labelWidth + 8;
-                const backgroundHeight = fontSize + 6;
 
                 ctx.save();
                 ctx.beginPath();
@@ -1601,15 +1617,12 @@ export default function PolicyUpload() {
                 ctx.fill();
 
                 ctx.lineWidth = 1;
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.strokeStyle = theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.12)';
                 ctx.stroke();
-
-                ctx.fillStyle = 'rgba(10, 10, 10, 0.85)';
-                ctx.fillRect(backgroundX, backgroundY, backgroundWidth, backgroundHeight);
 
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'middle';
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.fillStyle = theme === 'dark' ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.8)';
                 ctx.fillText(label, labelX, labelY);
                 ctx.restore();
               }}
@@ -1639,18 +1652,11 @@ export default function PolicyUpload() {
                 ctx.save();
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillStyle = 'rgba(10, 10, 10, 0.88)';
-                ctx.fillRect(
-                  midX + normalX * offset - boxWidth / 2,
-                  midY + normalY * offset - boxHeight / 2,
-                  boxWidth,
-                  boxHeight,
-                );
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.fillStyle = theme === 'dark' ? 'rgba(255, 255, 255, 0.55)' : 'rgba(0, 0, 0, 0.5)';
                 ctx.fillText(readableLabel, midX + normalX * offset, midY + normalY * offset);
                 ctx.restore();
               }}
-              linkColor={() => 'rgba(255, 255, 255, 0.08)'}
+              linkColor={() => theme === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.12)'}
               linkWidth={1}
               linkDirectionalArrowLength={4}
               linkDirectionalArrowRelPos={1}
@@ -1709,8 +1715,8 @@ function FilterChip({ active, label, onClick, accent }: { active: boolean; label
       onClick={onClick}
       className={`rounded border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors ${
         active
-          ? 'border-white/20 bg-white/8 text-foreground'
-          : 'border-border text-muted-foreground hover:border-white/15 hover:text-foreground'
+          ? 'border-border bg-foreground/[0.08] text-foreground'
+          : 'border-border text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground'
       }`}
     >
       <span className="flex items-center gap-1.5">

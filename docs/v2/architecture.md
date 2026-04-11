@@ -1,6 +1,6 @@
-# McKAInsey V2 — Architecture
+# MiroWorld V2 — Architecture
 
-> Living document for the current implemented V2 stack. Last updated 2026-04-09.
+> Living document for the current implemented V2 stack. Last updated 2026-04-12.
 
 ## 1. Runtime Topology
 
@@ -9,6 +9,8 @@ Browser
   └─ React/Vite frontend
       └─ FastAPI backend
           ├─ ConfigService
+          ├─ CountryMetadataService
+          ├─ CountryDatasetService
           ├─ ConsoleService
           ├─ LightRAGService
           ├─ SimulationService
@@ -32,9 +34,15 @@ Optional backing systems:
 
 ### Stage 0: Onboarding
 
+- frontend reads country readiness from `GET /api/v2/countries`
+- frontend can trigger country downloads through:
+  - `POST /api/v2/countries/{country}/download`
+  - `GET /api/v2/countries/{country}/download-status`
 - frontend creates a V2 session
+- launch is blocked in live mode until the selected country reports `dataset_ready=true`
 - backend normalizes provider/use-case ids
 - backend seeds `session_configs.analysis_questions` from YAML
+- backend rejects session creation or country changes when the selected country dataset is not ready
 
 ### Stage 1: Knowledge Extraction
 
@@ -46,6 +54,9 @@ Optional backing systems:
 ### Stage 2: Population Sampling
 
 - dynamic filters are inferred from the selected country dataset
+- geography field selection is country-specific and YAML-driven
+- Singapore uses `planning_area`; USA uses `state`
+- parser/sampler/relevance logic normalize geography through country metadata instead of hard-coded country lists
 - token estimates are computed from model/provider settings
 - sampled personas are stored as the cohort for the session
 
@@ -91,6 +102,7 @@ Optional backing systems:
 - sampled agents
 - simulation round count and feed posts
 - chat history
+- Screen 0 country/provider/model/use-case choices
 
 This is why navigating backward within the same session should no longer wipe the Screen 3 feed.
 
@@ -115,6 +127,20 @@ The backend stores:
 - report section generation
 - report metric cards
 
+Country dataset readiness is not persisted in `session_configs`; it is derived from selected-country YAML metadata plus the local/downloaded dataset state.
+
+### Country Readiness Payload
+
+`GET /api/v2/countries` returns the live Screen 0 contract:
+
+- `dataset_ready`
+- `download_required`
+- `download_status`
+- `download_error`
+- `missing_dependency`
+
+This payload is the source of truth for whether Screen 0 may create a live session.
+
 ### Report Payload
 
 The current Screen 4 payload contains:
@@ -132,7 +158,7 @@ The frontend expects normalized payloads for:
 
 - **polarization**: time series with `polarization_index`, `severity`, `by_group_means`, `group_sizes` per round
 - **opinion flow**: flow matrix with initial/final bucket counts and transition bands (supporter/neutral/dissenter)
-- **agent stances**: per-agent `{agent_id, score, planning_area, age_group, archetype}` array with `score_field` indicating data source (`checkpoint_{metric}` or `aggregate_avg`)
+- **agent stances**: per-agent `{agent_id, score, geography_value, age_group, archetype}`-style payloads with `score_field` indicating data source (`checkpoint_{metric}` or `aggregate_avg`), while preserving country-specific geography fields such as `planning_area` or `state`
 - **influence**: top influencers with `name`, `influence_score`, `top_view`, `top_post`
 - **cascades**: viral posts with `author_name`, `stance`, `content`, `comments`, `engagement_score`, `tree_size`
 
@@ -159,3 +185,15 @@ The legacy `opinion_pre`/`opinion_post` fields on the `agents` table are always 
 - `opinion_pre`/`opinion_post` fallback when no checkpoint records exist
 
 These exist to keep older flows from breaking, not to define new product behavior.
+
+## 7. Verification Notes
+
+Merged `main` was verified on 2026-04-12 with:
+
+- a full live browser run using `ollama` + `qwen3:4b-instruct-2507-q4_K_M`
+- a browser-level Screen 0 dataset-readiness/download verification with mocked country readiness transitions
+
+Observed provider caveat:
+
+- Gemini live extraction failed during verification because the configured Gemini key hit provider rate limits
+- treat that as an upstream provider/runtime issue, not as evidence that the Screen 0 country-dataset contract is broken

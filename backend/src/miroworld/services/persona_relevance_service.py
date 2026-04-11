@@ -11,6 +11,7 @@ from typing import Any
 
 from miroworld.config import Settings
 from miroworld.services.config_service import ConfigService
+from miroworld.services.country_metadata_service import CountryMetadataService, GENERIC_GEOGRAPHY_FIELDS
 from miroworld.services.lightrag_service import (
     AGE_COHORT_ALIASES,
     EDUCATION_LEVEL_ALIASES,
@@ -18,7 +19,6 @@ from miroworld.services.lightrag_service import (
     INDUSTRY_SLUGS,
     MARITAL_STATUS_ALIASES,
     OCCUPATION_SLUGS,
-    PLANNING_AREA_SLUGS,
     SEX_ALIASES,
     SKILL_SLUGS,
 )
@@ -71,6 +71,7 @@ EMPTY_PARSED_INSTRUCTIONS = {
 }
 SUPPORTED_INSTRUCTION_FIELDS = {
     "planning_area",
+    "state",
     "sex",
     "age_cohort",
     "min_age",
@@ -81,20 +82,6 @@ SUPPORTED_INSTRUCTION_FIELDS = {
     "industry",
     "hobby",
     "skill",
-}
-NORTH_EAST_PLANNING_AREAS = ["Hougang", "Punggol", "Sengkang", "Serangoon"]
-NORTH_PLANNING_AREAS = ["Sembawang", "Woodlands", "Yishun"]
-EAST_PLANNING_AREAS = ["Bedok", "Pasir Ris", "Tampines"]
-WEST_PLANNING_AREAS = ["Bukit Batok", "Bukit Panjang", "Choa Chu Kang", "Jurong East", "Jurong West", "Tengah"]
-CENTRAL_PLANNING_AREAS = ["Ang Mo Kio", "Bishan", "Bukit Merah", "Bukit Timah", "Clementi", "Kallang", "Marine Parade", "Queenstown", "Toa Payoh", "Geylang"]
-REGION_ALIASES = {
-    "north_east": NORTH_EAST_PLANNING_AREAS,
-    "northeast": NORTH_EAST_PLANNING_AREAS,
-    "north-east": NORTH_EAST_PLANNING_AREAS,
-    "north": NORTH_PLANNING_AREAS,
-    "east": EAST_PLANNING_AREAS,
-    "west": WEST_PLANNING_AREAS,
-    "central": CENTRAL_PLANNING_AREAS,
 }
 MAX_SHORTLIST_SIZE = 300
 MAX_SEMANTIC_RERANK_SIZE = 48
@@ -143,6 +130,55 @@ class PersonaRelevanceService:
         self.llm = GeminiChatClient(self.settings)
         self.embeddings = GeminiEmbeddingClient(self.settings)
         self.config = ConfigService(self.settings)
+        self.countries = CountryMetadataService(self.settings)
+
+    def _country_geography_field(self, country: str | None) -> str:
+        try:
+            return self.countries.geography_field(country)
+        except Exception:  # noqa: BLE001
+            return "planning_area"
+
+    def _persona_geography_value(
+        self,
+        persona: dict[str, Any],
+        geography_field: str | None = None,
+        *,
+        country: str | None = None,
+    ) -> str:
+        display_value = str(persona.get("geography_value") or "").strip()
+        if display_value:
+            return display_value
+
+        resolved_field = str(geography_field or persona.get("geography_field") or "").strip().lower()
+        if not resolved_field and country:
+            resolved_field = self._country_geography_field(country)
+
+        if resolved_field:
+            raw_value = persona.get(resolved_field)
+            text = str(raw_value or "").strip()
+            if text:
+                return self.countries.display_geography_value(country, text)
+
+        fallback = str(persona.get("planning_area") or "").strip()
+        if fallback:
+            return fallback
+        return "Unknown"
+
+    def _prepare_persona(self, persona: dict[str, Any], *, geography_field: str, country: str | None) -> dict[str, Any]:
+        payload = dict(persona)
+        payload["geography_field"] = geography_field
+
+        raw_value = payload.get(geography_field)
+        if raw_value is None:
+            raw_value = payload.get("geography_value") or payload.get("planning_area")
+            if raw_value is not None:
+                payload[geography_field] = raw_value
+
+        display_value = self.countries.display_geography_value(country, raw_value)
+        if display_value and display_value != "Unknown":
+            payload["geography_value"] = display_value
+            payload["planning_area"] = display_value
+        return payload
 
     def parse_sampling_instructions(
         self,
@@ -179,8 +215,9 @@ class PersonaRelevanceService:
                 raise RuntimeError("Live sampling instruction parsing returned invalid JSON.")
             fallback = self._augment_with_deterministic_constraints(
                 cleaned,
-                self._fallback_parse_sampling_instructions(cleaned),
+                self._fallback_parse_sampling_instructions(cleaned, country=country),
                 supported_fields=supported_fields,
+                country=country,
             )
             if not fallback.get("notes_for_ui"):
                 fallback["notes_for_ui"] = [cleaned]
@@ -190,11 +227,13 @@ class PersonaRelevanceService:
             parsed,
             source=self.llm.provider,
             supported_fields=supported_fields,
+            country=country,
         )
         normalized = self._augment_with_deterministic_constraints(
             cleaned,
             normalized,
             supported_fields=supported_fields,
+            country=country,
         )
         if self._has_actionable_instruction_signal(normalized):
             return normalized
@@ -405,7 +444,7 @@ class PersonaRelevanceService:
         for row in scored_personas:
             persona = row["persona"]
             key = (
-                str(persona.get("planning_area", "Unknown")),
+                self._persona_geography_value(persona),
                 str(persona.get("industry") or persona.get("occupation") or "Unknown"),
                 self._age_bucket(persona.get("age")),
             )
@@ -444,7 +483,7 @@ class PersonaRelevanceService:
         for row in scored_personas:
             persona = row["persona"]
             key = (
-                str(persona.get("planning_area", "Unknown")),
+                self._persona_geography_value(persona),
                 str(persona.get("sex", "Unknown")),
                 self._age_bucket(persona.get("age")),
             )
@@ -482,10 +521,20 @@ class PersonaRelevanceService:
         seed: int | None = None,
         parsed_sampling_instructions: dict[str, Any] | None = None,
         live_mode: bool = False,
+        country: str | None = None,
     ) -> dict[str, Any]:
-        parsed = self._normalize_parsed_instructions(parsed_sampling_instructions, source=(parsed_sampling_instructions or {}).get("source", "runtime"))
+        parsed = self._normalize_parsed_instructions(
+            parsed_sampling_instructions,
+            source=(parsed_sampling_instructions or {}).get("source", "runtime"),
+            country=country,
+        )
+        geography_field = self._country_geography_field(country)
+        prepared_personas = [
+            self._prepare_persona(persona, geography_field=geography_field, country=country)
+            for persona in personas
+        ]
         scored, diagnostics = self.rank_personas(
-            personas,
+            prepared_personas,
             knowledge_artifact=knowledge_artifact,
             filters=filters,
             parsed_sampling_instructions=parsed,
@@ -511,7 +560,8 @@ class PersonaRelevanceService:
 
         sampled_personas: list[dict[str, Any]] = []
         for index, row in enumerate(sampled):
-            persona_payload = dict(row["persona"])
+            persona_payload = self._prepare_persona(row["persona"], geography_field=geography_field, country=country)
+            geography_value = self._persona_geography_value(persona_payload, geography_field, country=country)
             display_name = self._extract_persona_display_name(persona_payload)
             persona_payload["display_name"] = display_name
             sampled_personas.append(
@@ -532,7 +582,7 @@ class PersonaRelevanceService:
                 }
             )
 
-        area_counts = Counter(str(row["persona"].get("planning_area", "Unknown")) for row in sampled)
+        area_counts = Counter(self._persona_geography_value(row["persona"], geography_field, country=country) for row in sampled)
         bucket_counts = Counter(self._age_bucket(row["persona"].get("age")) for row in sampled)
         sex_counts = Counter(str(row["persona"].get("sex", "Unknown")) for row in sampled)
 
@@ -542,18 +592,24 @@ class PersonaRelevanceService:
             "sample_count": len(sampled_personas),
             "sample_mode": sample_mode,
             "sample_seed": effective_seed,
+            "geography_field": geography_field,
             "parsed_sampling_instructions": parsed,
             "coverage": {
                 "planning_areas": sorted(area_counts.keys()),
+                "geographies": sorted(area_counts.keys()),
                 "age_buckets": dict(bucket_counts),
                 "sex_distribution": dict(sex_counts),
+                "geography_field": geography_field,
             },
             "sampled_personas": sampled_personas,
-            "agent_graph": self._build_agent_graph(sampled_personas),
+            "agent_graph": self._build_agent_graph(sampled_personas, geography_field=geography_field),
             "representativeness": {
                 "status": "balanced" if len(area_counts) > 1 else "narrow",
                 "planning_area_distribution": dict(area_counts),
+                "geography_distribution": dict(area_counts),
                 "sex_distribution": dict(sex_counts),
+                f"{geography_field}_distribution": dict(area_counts),
+                "geography_field": geography_field,
             },
             "selection_diagnostics": diagnostics,
         }
@@ -665,12 +721,13 @@ class PersonaRelevanceService:
             return [self._semantic_rerank_fallback(query_text, persona) for persona in personas]
 
     def _geographic_relevance(self, issue_profile: dict[str, Any], persona: dict[str, Any]) -> float:
-        area = str(persona.get("planning_area", "")).strip().lower()
+        area = self._persona_geography_value(persona).strip().lower()
         if not area:
             return 0.0
-        planning_areas = issue_profile["facets"].get("planning_area", set())
-        if planning_areas:
-            return 1.0 if self._slug(area) in planning_areas else 0.05
+        geography_field = str(persona.get("geography_field") or "planning_area").strip().lower()
+        geography_targets = issue_profile["facets"].get(geography_field, set()) or issue_profile["facets"].get("planning_area", set())
+        if geography_targets:
+            return 1.0 if self._slug(area) in geography_targets else 0.05
         return 1.0 if area and area in issue_profile["text_lower"] else 0.2
 
     def _socioeconomic_relevance(self, issue_profile: dict[str, Any], persona: dict[str, Any]) -> float:
@@ -718,8 +775,12 @@ class PersonaRelevanceService:
 
     def _filter_alignment(self, filters: dict[str, Any], persona: dict[str, Any]) -> float:
         score = 1.0
-        planning_areas = filters.get("planning_areas") or []
-        if planning_areas and persona.get("planning_area") not in planning_areas:
+        geography_values = filters.get("geography_values") or filters.get("planning_areas") or []
+        persona_geo_candidates = {
+            self._persona_geography_value(persona),
+            str(persona.get(str(persona.get("geography_field") or "")) or "").strip(),
+        }
+        if geography_values and not any(candidate in geography_values for candidate in persona_geo_candidates if candidate):
             score -= 0.5
         min_age = filters.get("min_age")
         max_age = filters.get("max_age")
@@ -730,19 +791,22 @@ class PersonaRelevanceService:
             score -= 0.2
         return max(0.0, round(score, 4))
 
-    def _build_agent_graph(self, sampled_personas: list[dict[str, Any]]) -> dict[str, Any]:
+    def _build_agent_graph(self, sampled_personas: list[dict[str, Any]], *, geography_field: str = "planning_area") -> dict[str, Any]:
         nodes: list[dict[str, Any]] = []
         links: list[dict[str, Any]] = []
         for row in sampled_personas:
             persona = row["persona"]
             agent_id = row["agent_id"]
             display_name = str(row.get("display_name") or persona.get("display_name") or agent_id)
+            geography_value = self._persona_geography_value(persona, geography_field)
             nodes.append(
                 {
                     "id": agent_id,
                     "label": display_name,
-                    "subtitle": f"{persona.get('planning_area', 'Unknown')} · {persona.get('occupation', 'Resident')}",
-                    "planning_area": str(persona.get("planning_area", "Unknown")),
+                    "subtitle": f"{geography_value} · {persona.get('occupation', 'Resident')}",
+                    "planning_area": geography_value,
+                    "geography_field": geography_field,
+                    "geography_value": geography_value,
                     "industry": str(persona.get("industry", "Unknown")),
                     "node_type": "sampled_persona",
                     "score": row["selection_reason"]["score"],
@@ -756,7 +820,7 @@ class PersonaRelevanceService:
                 reasons: list[str] = []
                 left_persona = left["persona"]
                 right_persona = right["persona"]
-                if left_persona.get("planning_area") == right_persona.get("planning_area"):
+                if self._persona_geography_value(left_persona, geography_field) == self._persona_geography_value(right_persona, geography_field):
                     reasons.append("shared_planning_area")
                 if left_persona.get("industry") and left_persona.get("industry") == right_persona.get("industry"):
                     reasons.append("shared_industry")
@@ -823,8 +887,8 @@ class PersonaRelevanceService:
                     return normalized
 
         occupation = str(persona.get("occupation") or "Resident").strip().title()
-        planning_area = str(persona.get("planning_area") or "Singapore").strip().title()
-        return f"{occupation} ({planning_area})"
+        geography = self._persona_geography_value(persona).strip().title()
+        return f"{occupation} ({geography})"
 
     def _extract_name_candidate_from_text(self, text: str) -> str | None:
         cleaned = LEADING_NOISE_PATTERN.sub("", str(text or "").strip())
@@ -959,6 +1023,12 @@ class PersonaRelevanceService:
         if field_name == "age_cohort":
             cohort = self._persona_age_cohort(persona.get("age"))
             return cohort in normalized_values
+        if field_name == str(persona.get("geography_field") or "") or field_name in GENERIC_GEOGRAPHY_FIELDS:
+            candidate_values = {
+                self._slug(self._persona_geography_value(persona, field_name or None)),
+                self._slug(persona.get(field_name)),
+            }
+            return bool({value for value in candidate_values if value} & normalized_values)
         if field_name in {"hobby", "skill"}:
             field_map = {
                 "hobby": "hobbies_and_interests_list",
@@ -979,6 +1049,8 @@ class PersonaRelevanceService:
         if facet_kind == "age_cohort":
             cohort = self._persona_age_cohort(persona.get("age"))
             return {cohort} if cohort else set()
+        if facet_kind == str(persona.get("geography_field") or "") or facet_kind in GENERIC_GEOGRAPHY_FIELDS:
+            return {self._slug(self._persona_geography_value(persona, facet_kind or None))}
         if facet_kind in {"hobby", "skill"}:
             field_name = "hobbies_and_interests_list" if facet_kind == "hobby" else "skills_and_expertise_list"
             return {self._slug(value) for value in self._parse_list_field(persona.get(field_name, ""))}
@@ -1050,7 +1122,12 @@ class PersonaRelevanceService:
         remainders: list[tuple[float, float, tuple[str, str, str]]] = []
         used = 0
         distribution_targets = distribution_targets or {}
-        target_planning_areas = {self._slug(value) for value in distribution_targets.get("planning_area", []) if value}
+        target_planning_areas = {
+            self._slug(value)
+            for field_name in ("planning_area", "state", "province", "region", "district", "county")
+            for value in distribution_targets.get(field_name, [])
+            if value
+        }
         target_age_cohorts = {self._slug(value) for value in distribution_targets.get("age_cohort", []) if value}
         target_sexes = {self._slug(value) for value in distribution_targets.get("sex", []) if value}
 
@@ -1205,6 +1282,7 @@ class PersonaRelevanceService:
         *,
         source: str,
         supported_fields: set[str] | None = None,
+        country: str | None = None,
     ) -> dict[str, Any]:
         base = dict(EMPTY_PARSED_INSTRUCTIONS)
         base["source"] = source
@@ -1217,7 +1295,7 @@ class PersonaRelevanceService:
             value = parsed.get(key, {})
             if isinstance(value, dict):
                 normalized[key] = {
-                    self._slug(field_name): self._normalize_instruction_values(field_name, field_value)
+                    self._slug(field_name): self._normalize_instruction_values(field_name, field_value, country=country)
                     for field_name, field_value in value.items()
                     if self._slug(field_name) in allowed_fields
                     if field_value not in (None, "", [], {})
@@ -1228,9 +1306,12 @@ class PersonaRelevanceService:
         normalized["notes_for_ui"] = [str(item).strip() for item in notes if str(item).strip()]
         return normalized
 
-    def _normalize_instruction_values(self, field_name: str, values: Any) -> list[str]:
+    def _normalize_instruction_values(self, field_name: str, values: Any, *, country: str | None = None) -> list[str]:
         if not isinstance(values, list):
             values = [values]
+        geography_field = self._country_geography_field(country)
+        if field_name == geography_field:
+            return [self._slug(value) for value in self.countries.normalize_geography_values(country, values)]
         normalized: list[str] = []
         for value in values:
             if value is None:
@@ -1244,10 +1325,6 @@ class PersonaRelevanceService:
                     continue
                 normalized.append(str(age_value))
                 continue
-            if field_name == "planning_area":
-                if region_values := REGION_ALIASES.get(self._slug(text)):
-                    normalized.extend(self._slug(item) for item in region_values)
-                    continue
             normalized.append(self._slug(text))
         return sorted(dict.fromkeys(normalized))
 
@@ -1265,11 +1342,13 @@ class PersonaRelevanceService:
         parsed: dict[str, Any],
         *,
         supported_fields: set[str] | None = None,
+        country: str | None = None,
     ) -> dict[str, Any]:
         normalized = self._normalize_parsed_instructions(
             parsed,
             source=str(parsed.get("source", "runtime")),
             supported_fields=supported_fields,
+            country=country,
         )
         hard_filters = dict(normalized.get("hard_filters") or {})
         notes = list(normalized.get("notes_for_ui") or [])
@@ -1370,24 +1449,49 @@ class PersonaRelevanceService:
                 return True
         return False
 
-    def _fallback_parse_sampling_instructions(self, instructions: str) -> dict[str, Any]:
+    def _country_geography_aliases(self, country: str | None) -> list[tuple[str, list[str]]]:
+        aliases: list[tuple[str, list[str]]] = []
+        field_name = self._country_geography_field(country)
+        for row in self.countries.geography_values(country):
+            raw_aliases = [row.get("code"), row.get("label"), *((row.get("aliases") or []))]
+            aliases.append(
+                (
+                    field_name,
+                    [str(alias).strip() for alias in raw_aliases if str(alias or "").strip()],
+                )
+            )
+        for row in self.countries.geography_groups(country):
+            raw_aliases = [row.get("code"), row.get("label"), *((row.get("aliases") or []))]
+            aliases.append(
+                (
+                    field_name,
+                    [str(alias).strip() for alias in raw_aliases if str(alias or "").strip()],
+                )
+            )
+        return aliases
+
+    def _fallback_parse_sampling_instructions(self, instructions: str, *, country: str | None = None) -> dict[str, Any]:
         lower = instructions.lower()
         parsed = dict(EMPTY_PARSED_INSTRUCTIONS)
         parsed["source"] = "fallback"
         soft_boosts: dict[str, list[str]] = defaultdict(list)
         hard_filters: dict[str, list[str]] = defaultdict(list)
         notes: list[str] = []
+        geography_field = self._country_geography_field(country)
 
         restrictive = any(marker in lower for marker in ("only ", "must include", "strictly", "limit to"))
         target = hard_filters if restrictive else soft_boosts
 
-        for label, canonical in PLANNING_AREA_SLUGS.items():
-            if label.replace("_", " ") in lower:
-                target["planning_area"].append(self._slug(canonical))
-        for alias, areas in REGION_ALIASES.items():
-            if alias.replace("_", " ") in lower:
-                target["planning_area"].extend(self._slug(area) for area in areas)
-                notes.append(f"Regional planning-area bias detected: {alias.replace('_', ' ')}.")
+        for _field_name, aliases in self._country_geography_aliases(country):
+            for alias in aliases:
+                candidate = str(alias).strip().lower()
+                if candidate and candidate in lower:
+                    target[geography_field].extend(
+                        self._slug(value)
+                        for value in self.countries.normalize_geography_values(country, [alias])
+                    )
+                    if geography_field == "planning_area":
+                        notes.append(f"Regional {self.countries.geography_label(country).lower()} bias detected: {candidate}.")
         for label, canonical in OCCUPATION_SLUGS.items():
             if label.replace("_", " ") in lower:
                 target["occupation"].append(self._slug(canonical))
@@ -1471,8 +1575,14 @@ class PersonaRelevanceService:
         normalized = self._slug(label).replace("_", " ")
         combined = " ".join(part for part in [label.lower(), str(node.get("description", "")).lower()] if part)
 
-        if planning_area := self._match_from_catalog(normalized, PLANNING_AREA_SLUGS):
-            return "planning_area", planning_area
+        for country_cfg in self.config.list_countries():
+            geography_field = self.countries.geography_field(country_cfg)
+            geography_catalog = {
+                self._slug(row.get("label") or row.get("code")).replace("_", " "): self._slug(row.get("label") or row.get("code"))
+                for row in self.countries.geography_values(country_cfg)
+            }
+            if geography_match := self._match_from_catalog(normalized, geography_catalog):
+                return geography_field, geography_match
         if age_cohort := AGE_COHORT_ALIASES.get(normalized) or self._phrase_match(combined, AGE_COHORT_ALIASES):
             return "age_cohort", self._slug(age_cohort)
         if sex := SEX_ALIASES.get(normalized):

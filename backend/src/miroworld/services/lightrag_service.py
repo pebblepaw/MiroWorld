@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 import re
 import uuid
@@ -18,6 +19,10 @@ from lightrag.utils import EmbeddingFunc
 
 from miroworld.config import Settings
 from miroworld.services.config_service import ConfigService
+from miroworld.services.embedding_fallback_service import arun_with_embedding_model_fallback
+
+
+logger = logging.getLogger(__name__)
 
 
 def _constant_slugify(value: str) -> str:
@@ -367,14 +372,33 @@ class LightRAGService:
             if not api_key:
                 raise RuntimeError("A provider API key is required for LightRAG operations.")
 
+            active_embed_model_name = self._settings.gemini_embed_model
+
             async def embedding_func(texts: list[str]) -> np.ndarray:
+                nonlocal active_embed_model_name
                 sanitized_texts = [text[:EMBEDDING_TEXT_MAX_CHARS] for text in texts]
-                return await openai_embed.func(
-                    sanitized_texts,
-                    model=self._settings.gemini_embed_model,
-                    api_key=api_key,
-                    base_url=self._settings.gemini_openai_base_url,
+                previous_model_name = active_embed_model_name
+                resolved_model_name, embedding = await arun_with_embedding_model_fallback(
+                    self._settings,
+                    provider=self._settings.llm_provider,
+                    preferred_model=active_embed_model_name,
+                    runner=lambda model_name: openai_embed.func(
+                        sanitized_texts,
+                        model=model_name,
+                        api_key=api_key,
+                        base_url=self._settings.gemini_openai_base_url,
+                    ),
                 )
+                active_embed_model_name = resolved_model_name
+                self._settings.gemini_embed_model = resolved_model_name
+                self._settings.llm_embed_model = resolved_model_name
+                if resolved_model_name != previous_model_name:
+                    logger.warning(
+                        "Google embedding model '%s' was rate-limited; switching to '%s' for LightRAG.",
+                        previous_model_name,
+                        resolved_model_name,
+                    )
+                return embedding
 
             test_embedding = await embedding_func(["embedding_probe"])
             embedding_dim = int(test_embedding.shape[1])

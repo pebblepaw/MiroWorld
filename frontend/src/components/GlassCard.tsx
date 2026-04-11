@@ -17,7 +17,7 @@ export function GlassCard({ children, className, glow = 'none' }: GlassCardProps
     <div
       className={cn(
         'rounded-lg border bg-card',
-        glow === 'primary' ? 'border-white/20' : 'border-border',
+        glow === 'primary' ? 'border-primary/30' : 'border-border',
         className
       )}
     >

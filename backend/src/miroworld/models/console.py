@@ -306,6 +306,21 @@ class V2CountryResponse(BaseModel):
     flag_emoji: str
     dataset_path: str
     available: bool = True
+    dataset_ready: bool = False
+    download_required: bool = False
+    download_status: str = "missing"
+    download_error: str | None = None
+    missing_dependency: str | None = None
+
+
+class CountryDatasetStatusResponse(BaseModel):
+    country: str
+    dataset_ready: bool = False
+    download_required: bool = False
+    download_status: str = "missing"
+    download_error: str | None = None
+    missing_dependency: str | None = None
+    resolved_dataset_path: str | None = None
 
 
 class V2ProviderResponse(BaseModel):

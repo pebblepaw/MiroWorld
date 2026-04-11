@@ -28,3 +28,21 @@ def test_extract_document_text_preserves_text_like_normalization() -> None:
     text = document_parser.extract_document_text("policy.html", b"<h1>Policy</h1><p>Line 1</p>")
 
     assert text == "Policy Line 1"
+
+
+def test_extract_document_text_falls_back_when_markitdown_returns_repr_like_result(monkeypatch) -> None:
+    class _Result:
+        def __str__(self) -> str:
+            return "DocumentConverterResult(markitdown)"
+
+    class _Client:
+        def convert(self, path: str) -> _Result:
+            del path
+            return _Result()
+
+    monkeypatch.setattr(document_parser, "_get_markitdown_client", lambda: _Client())
+    monkeypatch.setattr(document_parser, "_parse_pdf", lambda payload: "PDF fallback text")
+
+    text = document_parser.extract_document_text("policy.pdf", b"fake-pdf")
+
+    assert text == "PDF fallback text"

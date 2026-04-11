@@ -5,6 +5,7 @@ from typing import Any
 from openai import OpenAI
 
 from miroworld.config import Settings
+from miroworld.services.embedding_fallback_service import run_with_embedding_model_fallback
 from miroworld.services.model_provider_service import ResolvedModelSelection, resolve_model_selection
 
 
@@ -128,19 +129,26 @@ class GeminiEmbeddingClient:
         if not texts:
             return []
 
+        current_model = self._selection.embed_model_name
         try:
-            response = self._client.embeddings.create(
-                model=self._selection.embed_model_name,
-                input=texts,
-                timeout=self._selection.timeout_seconds,
+            resolved_model_name, response = run_with_embedding_model_fallback(
+                self._settings,
+                provider=self._selection.provider,
+                preferred_model=current_model,
+                runner=lambda model_name: self._client.embeddings.create(
+                    model=model_name,
+                    input=texts,
+                    timeout=self._selection.timeout_seconds,
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 "Embedding request failed for "
                 f"provider '{self._selection.provider}' "
-                f"model '{self._selection.embed_model_name}' "
+                f"model '{current_model}' "
                 f"base_url '{self._selection.base_url}' "
                 f"timeout_seconds={self._selection.timeout_seconds}: {exc}"
             ) from exc
 
+        self._selection.embed_model_name = resolved_model_name
         return [list(item.embedding) for item in response.data]

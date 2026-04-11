@@ -10,6 +10,7 @@ from miroworld.config import Settings, get_settings
 from miroworld.models.console import (
     ConsoleAgentChatRequest,
     ConsoleAgentChatResponse,
+    CountryDatasetStatusResponse,
     ConsoleDynamicFiltersResponse,
     ConsoleKnowledgeProcessRequest,
     ConsoleModelProviderCatalogResponse,
@@ -48,6 +49,7 @@ from miroworld.models.console import (
 )
 from miroworld.services.config_service import ConfigService
 from miroworld.services.console_service import ConsoleService
+from miroworld.services.country_dataset_service import CountryDatasetService
 from miroworld.services.demo_service import DemoService
 from miroworld.services.knowledge_stream_service import KnowledgeStreamService
 from miroworld.services.scrape_service import ScrapeService
@@ -103,19 +105,45 @@ def _parse_group_chat_request(body: dict[str, Any]) -> V2GroupChatRequest:
 
 @compat_router.get("/countries", response_model=list[V2CountryResponse])
 def v2_countries(settings: Settings = Depends(get_settings)) -> list[V2CountryResponse]:
-    service = ConfigService(settings)
+    config_service = ConfigService(settings)
+    dataset_service = CountryDatasetService(settings)
     rows = []
-    for country in service.list_countries():
+    for country in config_service.list_countries():
+        code = str(country.get("code", "")).strip().lower()
+        status = dataset_service.country_status(code) if code else {}
         rows.append(
             V2CountryResponse(
                 name=str(country.get("name", "")),
-                code=str(country.get("code", "")).lower(),
+                code=code,
                 flag_emoji=str(country.get("flag_emoji", "")),
                 dataset_path=str(country.get("dataset_path", "")),
                 available=bool(country.get("available", True)),
+                dataset_ready=bool(status.get("dataset_ready", False)),
+                download_required=bool(status.get("download_required", False)),
+                download_status=str(status.get("download_status", "missing")),
+                download_error=status.get("download_error"),
+                missing_dependency=status.get("missing_dependency"),
             )
         )
     return rows
+
+
+@compat_router.post("/countries/{country}/download", response_model=CountryDatasetStatusResponse)
+def v2_country_download(
+    country: str,
+    settings: Settings = Depends(get_settings),
+) -> CountryDatasetStatusResponse:
+    payload = CountryDatasetService(settings).start_download(country)
+    return CountryDatasetStatusResponse(country=country, **payload)
+
+
+@compat_router.get("/countries/{country}/download-status", response_model=CountryDatasetStatusResponse)
+def v2_country_download_status(
+    country: str,
+    settings: Settings = Depends(get_settings),
+) -> CountryDatasetStatusResponse:
+    payload = CountryDatasetService(settings).download_status(country)
+    return CountryDatasetStatusResponse(country=country, **payload)
 
 
 @compat_router.get("/providers", response_model=list[V2ProviderResponse])

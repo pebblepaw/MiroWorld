@@ -1,8 +1,193 @@
 name: "Singapore"
 code: "sg"
 flag_emoji: "🇸🇬"
-dataset_path: "backend/data/nemotron/singapore_nemotron_cc.parquet"
+dataset_path: "backend/data/nemotron/singapore/data/train-*.parquet"
 available: true
+
+dataset:
+  local_paths:
+    - "backend/data/nemotron/singapore/data/train-*.parquet"
+    - "backend/data/nemotron/data/train-*.parquet"
+  download_dir: "backend/data/nemotron/singapore"
+  repo_id: "nvidia/Nemotron-Personas-Singapore"
+  allow_patterns:
+    - "data/train-*"
+    - "README.md"
+  required_columns:
+    - "planning_area"
+  country_values:
+    - "singapore"
+    - "sg"
+
+geography:
+  field: "planning_area"
+  label: "Planning Area"
+  values:
+    - code: "Ang Mo Kio"
+      label: "Ang Mo Kio"
+      aliases: ["ang mo kio"]
+    - code: "Bedok"
+      label: "Bedok"
+      aliases: ["bedok"]
+    - code: "Bishan"
+      label: "Bishan"
+      aliases: ["bishan"]
+    - code: "Boon Lay"
+      label: "Boon Lay"
+      aliases: ["boon lay"]
+    - code: "Bukit Batok"
+      label: "Bukit Batok"
+      aliases: ["bukit batok"]
+    - code: "Bukit Merah"
+      label: "Bukit Merah"
+      aliases: ["bukit merah"]
+    - code: "Bukit Panjang"
+      label: "Bukit Panjang"
+      aliases: ["bukit panjang"]
+    - code: "Bukit Timah"
+      label: "Bukit Timah"
+      aliases: ["bukit timah"]
+    - code: "Changi"
+      label: "Changi"
+      aliases: ["changi"]
+    - code: "Choa Chu Kang"
+      label: "Choa Chu Kang"
+      aliases: ["choa chu kang"]
+    - code: "Clementi"
+      label: "Clementi"
+      aliases: ["clementi"]
+    - code: "Downtown Core"
+      label: "Downtown Core"
+      aliases: ["downtown core"]
+    - code: "Geylang"
+      label: "Geylang"
+      aliases: ["geylang"]
+    - code: "Hougang"
+      label: "Hougang"
+      aliases: ["hougang"]
+    - code: "Jurong East"
+      label: "Jurong East"
+      aliases: ["jurong east"]
+    - code: "Jurong West"
+      label: "Jurong West"
+      aliases: ["jurong west"]
+    - code: "Kallang"
+      label: "Kallang"
+      aliases: ["kallang"]
+    - code: "Lim Chu Kang"
+      label: "Lim Chu Kang"
+      aliases: ["lim chu kang"]
+    - code: "Mandai"
+      label: "Mandai"
+      aliases: ["mandai"]
+    - code: "Marine Parade"
+      label: "Marine Parade"
+      aliases: ["marine parade"]
+    - code: "Museum"
+      label: "Museum"
+      aliases: ["museum"]
+    - code: "Newton"
+      label: "Newton"
+      aliases: ["newton"]
+    - code: "North-Eastern Islands"
+      label: "North-Eastern Islands"
+      aliases: ["north-eastern islands", "north eastern islands"]
+    - code: "Novena"
+      label: "Novena"
+      aliases: ["novena"]
+    - code: "Orchard"
+      label: "Orchard"
+      aliases: ["orchard"]
+    - code: "Outram"
+      label: "Outram"
+      aliases: ["outram"]
+    - code: "Pasir Ris"
+      label: "Pasir Ris"
+      aliases: ["pasir ris"]
+    - code: "Paya Lebar"
+      label: "Paya Lebar"
+      aliases: ["paya lebar"]
+    - code: "Pioneer"
+      label: "Pioneer"
+      aliases: ["pioneer"]
+    - code: "Punggol"
+      label: "Punggol"
+      aliases: ["punggol"]
+    - code: "Queenstown"
+      label: "Queenstown"
+      aliases: ["queenstown"]
+    - code: "River Valley"
+      label: "River Valley"
+      aliases: ["river valley"]
+    - code: "Rochor"
+      label: "Rochor"
+      aliases: ["rochor"]
+    - code: "Seletar"
+      label: "Seletar"
+      aliases: ["seletar"]
+    - code: "Sembawang"
+      label: "Sembawang"
+      aliases: ["sembawang"]
+    - code: "Sengkang"
+      label: "Sengkang"
+      aliases: ["sengkang"]
+    - code: "Serangoon"
+      label: "Serangoon"
+      aliases: ["serangoon"]
+    - code: "Singapore River"
+      label: "Singapore River"
+      aliases: ["singapore river"]
+    - code: "Southern Islands"
+      label: "Southern Islands"
+      aliases: ["southern islands"]
+    - code: "Sungei Kadut"
+      label: "Sungei Kadut"
+      aliases: ["sungei kadut"]
+    - code: "Tampines"
+      label: "Tampines"
+      aliases: ["tampines"]
+    - code: "Tanglin"
+      label: "Tanglin"
+      aliases: ["tanglin"]
+    - code: "Tengah"
+      label: "Tengah"
+      aliases: ["tengah"]
+    - code: "Toa Payoh"
+      label: "Toa Payoh"
+      aliases: ["toa payoh"]
+    - code: "Tuas"
+      label: "Tuas"
+      aliases: ["tuas"]
+    - code: "Western Water Catchment"
+      label: "Western Water Catchment"
+      aliases: ["western water catchment"]
+    - code: "Woodlands"
+      label: "Woodlands"
+      aliases: ["woodlands"]
+    - code: "Yishun"
+      label: "Yishun"
+      aliases: ["yishun"]
+  groups:
+    - code: "north-east"
+      label: "North-East"
+      aliases: ["north-east", "north east", "northeast", "north_east"]
+      members: ["Hougang", "Punggol", "Sengkang", "Serangoon"]
+    - code: "north"
+      label: "North"
+      aliases: ["north"]
+      members: ["Sembawang", "Woodlands", "Yishun"]
+    - code: "east"
+      label: "East"
+      aliases: ["east"]
+      members: ["Bedok", "Pasir Ris", "Tampines"]
+    - code: "west"
+      label: "West"
+      aliases: ["west"]
+      members: ["Bukit Batok", "Bukit Panjang", "Choa Chu Kang", "Jurong East", "Jurong West", "Tengah"]
+    - code: "central"
+      label: "Central"
+      aliases: ["central"]
+      members: ["Ang Mo Kio", "Bishan", "Bukit Merah", "Bukit Timah", "Clementi", "Geylang", "Kallang", "Marine Parade", "Queenstown", "Toa Payoh"]
 
 filter_fields:
   - field: "age"

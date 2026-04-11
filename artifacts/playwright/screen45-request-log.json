@@ -1,0 +1,56 @@
+{
+  "requestLog": [
+    "GET /api/v2/countries",
+    "GET /api/v2/countries",
+    "GET /api/v2/providers",
+    "GET /api/v2/providers",
+    "POST /api/v2/session/create",
+    "GET /api/v2/session/pw-session/analysis-questions",
+    "POST /api/v2/console/session/pw-session/knowledge/process",
+    "POST /api/v2/console/session/pw-session/sampling/preview",
+    "POST /api/v2/console/session/pw-session/simulate",
+    "GET /api/v2/console/session/pw-session/simulation/stream",
+    "GET /api/v2/session/pw-session/analysis-questions",
+    "GET /api/v2/console/session/pw-session/chat/group/agents?segment=dissenter",
+    "GET /api/v2/session/pw-session/analysis-questions",
+    "GET /api/v2/console/session/pw-session/chat/group/agents?segment=dissenter",
+    "POST /api/v2/console/session/pw-session/chat/group",
+    "GET /api/v2/console/session/pw-session/chat/group/agents?segment=dissenter&metric_name=approval_rate",
+    "POST /api/v2/console/session/pw-session/chat/group",
+    "GET /api/v2/console/session/pw-session/chat/group/agents?segment=supporter&metric_name=approval_rate",
+    "POST /api/v2/console/session/pw-session/chat/group",
+    "GET /api/v2/session/pw-session/analysis-questions",
+    "GET /api/v2/console/session/pw-session/analytics/polarization",
+    "GET /api/v2/console/session/pw-session/analytics/opinion-flow",
+    "GET /api/v2/console/session/pw-session/analytics/influence",
+    "GET /api/v2/console/session/pw-session/analytics/cascades",
+    "GET /api/v2/console/session/pw-session/analytics/agent-stances",
+    "GET /api/v2/session/pw-session/analysis-questions",
+    "GET /api/v2/console/session/pw-session/analytics/polarization",
+    "GET /api/v2/console/session/pw-session/analytics/opinion-flow",
+    "GET /api/v2/console/session/pw-session/analytics/influence",
+    "GET /api/v2/console/session/pw-session/analytics/cascades",
+    "GET /api/v2/console/session/pw-session/analytics/agent-stances",
+    "GET /api/v2/console/session/pw-session/analytics/polarization?metric_name=approval_rate",
+    "GET /api/v2/console/session/pw-session/analytics/opinion-flow?metric_name=approval_rate",
+    "GET /api/v2/console/session/pw-session/analytics/influence",
+    "GET /api/v2/console/session/pw-session/analytics/cascades",
+    "GET /api/v2/console/session/pw-session/analytics/agent-stances?metric_name=approval_rate"
+  ],
+  "chatPayloads": [
+    {
+      "segment": "dissenter",
+      "message": "What concerns you most in aggregate?"
+    },
+    {
+      "segment": "dissenter",
+      "message": "What lowers approval on this specific metric?",
+      "metric_name": "approval_rate"
+    },
+    {
+      "segment": "supporter",
+      "message": "Why do supporters still back this policy?",
+      "metric_name": "approval_rate"
+    }
+  ]
+}

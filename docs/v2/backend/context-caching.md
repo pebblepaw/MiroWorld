@@ -6,6 +6,7 @@ This document covers two similarly named but different backend concerns:
 
 1. Provider token/context caching (cost optimization)
 2. SQLite temporal memory retrieval (chat grounding)
+3. LightRAG session workspaces and internal response caches during knowledge extraction
 
 Both are active in V2 and should be debugged separately.
 
@@ -70,3 +71,30 @@ Session isolation comes from filtering everything by `session_id`.
 3. live 1:1 chat returns grounded memory results from the current session.
 4. report chat remains grounded without any external memory service.
 5. non-live/demo mode still degrades gracefully to demo responses when applicable.
+
+## C. LightRAG Session Caching (Knowledge Extraction Layer)
+
+### Purpose
+
+Keep knowledge extraction session-scoped while still allowing LightRAG to reuse its own internal artifacts within a single session workspace.
+
+### Working-directory contract
+
+`ConsoleService` builds a session-specific LightRAG workspace under:
+
+- `backend/data/lightrag/sessions/{session_id}/{provider}_{embed_model}`
+
+The backend clears that workspace when knowledge is reset for the same session.
+
+### Why this matters
+
+This layer is separate from:
+
+- provider token caching
+- SQLite chat-memory retrieval
+
+If Screen 1 shows entities that do not belong to the current document, the correct place to investigate is the LightRAG/session-workdir path and its internal caches, not `MemoryService`.
+
+### Current investigation note
+
+During 2026-04-12 verification, a pasted-text live run produced a clean session-scoped knowledge artifact, but a separate Ollama/default-document run still showed signs of stale LightRAG cache contamination in backend logs. Treat this as a known diagnostic area, not as expected product behavior.

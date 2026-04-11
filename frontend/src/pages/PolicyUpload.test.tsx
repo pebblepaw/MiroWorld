@@ -151,7 +151,7 @@ describe("PolicyUpload", () => {
     expect(within(topEntitiesCard as HTMLElement).getByText("Transport Authority")).toBeInTheDocument();
   });
 
-  it("loads preset analysis questions as soon as a V2 session exists", async () => {
+  it("loads preset analysis questions as soon as a session exists", async () => {
     function SeedAnalysisSession() {
       const { setSessionId, setUseCase, analysisQuestions } = useApp();
 
@@ -368,6 +368,116 @@ describe("PolicyUpload", () => {
     await waitFor(() => expect(screen.getAllByText("Ready").length).toBeGreaterThan(1));
   });
 
+  it("syncs the active session id to the backend-returned knowledge artifact session", async () => {
+    function SessionEcho() {
+      const { sessionId } = useApp();
+
+      return <span data-testid="session-id">{sessionId ?? ""}</span>;
+    }
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith("/api/v2/console/session")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1-initial",
+            mode: "live",
+            status: "created",
+            model_provider: "ollama",
+            model_name: "qwen3:4b-instruct-2507-q4_K_M",
+            embed_model_name: "nomic-embed-text",
+            base_url: "http://127.0.0.1:11434/v1/",
+            api_key_configured: true,
+            api_key_masked: "ol...ama",
+          }),
+        } as Response;
+      }
+
+      if (url.endsWith("/api/v2/session/session-screen1-initial/analysis-questions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1-initial",
+            use_case: "public-policy-testing",
+            questions: [],
+          }),
+        } as Response;
+      }
+
+      if (url.endsWith("/api/v2/session/session-screen1-returned/analysis-questions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1-returned",
+            use_case: "public-policy-testing",
+            questions: [],
+          }),
+        } as Response;
+      }
+
+      if (url.endsWith("/api/v2/console/session/session-screen1-initial/config")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1-initial",
+            country: "singapore",
+            use_case: "public-policy-testing",
+            provider: "ollama",
+            model: "qwen3:4b-instruct-2507-q4_K_M",
+            api_key_configured: true,
+            guiding_prompt: null,
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/knowledge/process")) {
+        return {
+          ok: true,
+          json: async () => ({
+            ...baseKnowledgeArtifact(),
+            session_id: "session-screen1-returned",
+          }),
+        } as Response;
+      }
+
+      if (url.endsWith("/demo-output.json")) {
+        return {
+          ok: true,
+          json: async () => ({ knowledge: { ...baseKnowledgeArtifact(), session_id: "demo-session" } }),
+        } as Response;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ detail: `Unhandled fetch: ${url}` }),
+      } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SessionEcho />
+        <PolicyUpload />
+      </AppProvider>,
+    );
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["customer feedback"], "brief.txt", { type: "text/plain" })],
+      },
+    });
+    await screen.findByText("brief.txt");
+
+    fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
+
+    await waitFor(() => expect(screen.getByTestId("session-id")).toHaveTextContent("session-screen1-returned"));
+    expect(screen.getAllByText("Transport Subsidy").length).toBeGreaterThan(0);
+  });
+
   it("accepts drag-and-drop uploads into the file list", async () => {
     render(
       <AppProvider>
@@ -504,7 +614,6 @@ describe("PolicyUpload", () => {
 
     await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
     await waitFor(() => expect(callOrder).toContain("process"));
-    expect(callOrder).toContain("session");
     expect(MockEventSource.instances[0].url).toContain("/knowledge/stream");
 
     const source = MockEventSource.instances[0];

@@ -21,6 +21,8 @@ The config system externalizes country metadata and use-case prompt definitions 
 
 - list countries
 - load a country config by canonical id or common alias
+- expose declared dataset metadata for a country
+- expose declared geography metadata for a country
 - list use cases
 - load use-case YAML
 - expose:
@@ -30,7 +32,50 @@ The config system externalizes country metadata and use-case prompt definitions 
   - `preset_sections`
   - `agent_personality_modifiers`
 - resolve legacy use-case aliases to canonical V2 ids
-- resolve dataset paths for filter discovery
+- expose YAML-declared dataset paths instead of guessing from generic cache roots
+
+## Country YAML Contract
+
+Each country YAML now acts as the source of truth for:
+
+- `dataset.local_paths`
+- `dataset.download_dir`
+- `dataset.repo_id`
+- `dataset.allow_patterns`
+- `dataset.required_columns`
+- `dataset.country_values`
+- `geography.field`
+- `geography.label`
+- `geography.values`
+- `geography.groups` where relevant
+
+This is what allows Singapore and USA geography/filter logic to remain separated without hard-coding country lists in backend service code.
+
+## Country Dataset Readiness Contract
+
+The backend now derives live country readiness from declared YAML metadata plus the local filesystem.
+
+Primary APIs:
+
+- `GET /api/v2/countries`
+- `POST /api/v2/countries/{country}/download`
+- `GET /api/v2/countries/{country}/download-status`
+
+Live response fields:
+
+- `dataset_ready`
+- `download_required`
+- `download_status`
+- `download_error`
+- `missing_dependency`
+
+Live error codes:
+
+- `country_dataset_missing`
+- `country_dataset_invalid`
+- `huggingface_api_key_missing`
+
+`CountryDatasetService` owns this runtime contract. `ConsoleService` enforces it during session creation and country changes.
 
 ## Alias Policy
 
@@ -124,4 +169,5 @@ Expected fields include:
 - if a use-case YAML has no explicit `analysis_questions`, compatibility fallbacks still exist for older `checkpoint_questions` layouts
 - report configuration is currently derived from `analysis_questions` plus `preset_sections`
 - no external memory host/port is required for the current local runtime
+- geography normalization should always go through country metadata, not direct `if field == "planning_area"` / `if field == "state"` branches scattered across generic logic
 - `opinion_pre`/`opinion_post` on the `agents` table are always 10.0 in current simulations — analytics and chat scoring now use checkpoint-based `metric_answers` from `simulation_checkpoints` instead. See `backend/metrics-heuristics.md` for scoring details.

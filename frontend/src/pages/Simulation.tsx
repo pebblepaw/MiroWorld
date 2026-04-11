@@ -58,9 +58,9 @@ const POSITIVE_TONE: ActorTone = {
 };
 
 const DEFAULT_TONE: ActorTone = {
-  avatarBg: "bg-white/10",
+  avatarBg: "bg-muted/70",
   avatarText: "text-foreground/80",
-  avatarBorder: "border-white/15",
+  avatarBorder: "border-border",
   nameText: "text-foreground/85",
 };
 
@@ -116,15 +116,33 @@ type ProcessStage = {
 
 // Custom styled slider with marks
 function RoundSlider({ value, onChange, min = 1, max = 50 }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) {
-  // Show every mark when max ≤ 10; every 5 otherwise
-  const step = max > 10 ? 5 : 1;
+  // Fixed increments: 1, 5, 10, 15, ..., max
   const marks = useMemo(() => {
-    const result = [];
-    for (let i = min; i <= max; i += step) result.push(i);
+    const result = [min];
+    const step = 5;
+    for (let i = step; i <= max; i += step) {
+      if (i !== min) result.push(i);
+    }
     if (result[result.length - 1] !== max) result.push(max);
     return result;
-  }, [min, max, step]);
-  const percentage = ((value - min) / (max - min)) * 100;
+  }, [min, max]);
+
+  // Snap to nearest allowed mark
+  const snapToMark = (v: number) => {
+    let closest = marks[0];
+    let closestDist = Math.abs(v - closest);
+    for (const m of marks) {
+      const dist = Math.abs(v - m);
+      if (dist < closestDist) {
+        closest = m;
+        closestDist = dist;
+      }
+    }
+    return closest;
+  };
+
+  const markIndex = marks.indexOf(value);
+  const percentage = markIndex >= 0 ? (markIndex / (marks.length - 1)) * 100 : 0;
 
   // Color zone: green ≤60%, amber ≤80%, red >80%
   const getFillColor = (val: number) => {
@@ -139,7 +157,7 @@ function RoundSlider({ value, onChange, min = 1, max = 50 }: { value: number; on
   return (
     <div className="relative w-full pt-2 pb-9">
       <div className="relative h-8">
-        <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/5">
+        <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-muted">
           <div
             className="h-full transition-all duration-300 ease-out"
             style={{ width: `${percentage}%`, background: fillColor }}
@@ -157,13 +175,13 @@ function RoundSlider({ value, onChange, min = 1, max = 50 }: { value: number; on
             >
               <div
                 className={`h-2.5 w-2.5 rounded-full transition-all duration-300 ${
-                  value >= mark ? "shadow-lg" : "bg-white/20 group-hover:bg-white/35"
+                  value >= mark ? "shadow-lg" : "bg-muted-foreground/25 group-hover:bg-muted-foreground/40"
                 } ${value === mark ? "scale-150" : ""}`}
                 style={value >= mark ? { background: fillColor } : undefined}
               />
               <span
                 className={`absolute top-8 text-xs font-mono transition-all duration-300 ${
-                  value === mark ? "font-bold" : "text-white/35 group-hover:text-white/60"
+                  value === mark ? "font-bold" : "text-muted-foreground/50 group-hover:text-muted-foreground/80"
                 }`}
                 style={value === mark ? { color: fillColor } : undefined}
               >
@@ -176,11 +194,11 @@ function RoundSlider({ value, onChange, min = 1, max = 50 }: { value: number; on
 
       <input
         type="range"
-        min={min}
-        max={max}
+        min={0}
+        max={marks.length - 1}
         step={1}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        value={marks.indexOf(value) >= 0 ? marks.indexOf(value) : 0}
+        onChange={(e) => onChange(marks[Number(e.target.value)])}
         className="absolute left-0 right-0 top-2 h-8 cursor-pointer opacity-0"
       />
 
@@ -693,7 +711,7 @@ export default function Simulation() {
                     <span className="font-mono font-semibold text-foreground">
                       ~{formatSeconds(estimatedTime)}
                     </span>
-                    <span className="text-white/20">|</span>
+                    <span className="text-border">|</span>
                     <span className="text-muted-foreground font-mono">{populationArtifact?.sample_count ?? 250} agents × {simulationRounds} rounds</span>
                   </div>
                   <div className="justify-self-start lg:justify-self-end font-mono text-primary/85 bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
@@ -725,7 +743,7 @@ export default function Simulation() {
 
             {/* Feed - takes remaining space */}
             <GlassCard className="p-0 min-h-0 flex flex-col overflow-hidden flex-1">
-              <div className="p-4 border-b border-white/5 bg-white/[0.02]">
+              <div className="p-4 border-b border-border bg-card/50">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <MessageSquare className="w-4 h-4 text-muted-foreground" />
@@ -734,7 +752,7 @@ export default function Simulation() {
                       <p className="text-[11px] text-muted-foreground">Live discourse feed</p>
                     </div>
                   </div>
-                  <div className="px-2 py-1 rounded-md bg-white/5 border border-white/10">
+                  <div className="px-2 py-1 rounded-md bg-muted border border-border">
                     <span className="text-sm font-mono font-bold text-primary">{simulationState?.current_round ?? 0}</span>
                     <span className="text-xs text-muted-foreground">/{simulationRounds}</span>
                   </div>
@@ -749,7 +767,7 @@ export default function Simulation() {
                     <select
                       value={selectedRound === "all" ? "all" : String(selectedRound)}
                       onChange={(e) => setSelectedRound(e.target.value === "all" ? "all" : Number(e.target.value))}
-                      className="bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 pr-8 text-xs text-foreground focus:outline-none focus:border-primary/30 appearance-none cursor-pointer min-w-[100px]"
+                      className="bg-input border border-border rounded-lg px-3 py-2 pr-8 text-xs text-foreground focus:outline-none focus:border-primary/30 appearance-none cursor-pointer min-w-[100px]"
                       style={{ 
                         backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239CA3AF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
                         backgroundRepeat: 'no-repeat',
@@ -763,12 +781,12 @@ export default function Simulation() {
                     </select>
                   </div>
                   
-                  <div className="flex items-center gap-1 bg-white/[0.03] rounded-lg p-1 border border-white/5">
+                  <div className="flex items-center gap-1 bg-muted rounded-lg p-1 border border-border">
                     <button
                       onClick={() => setSortBy("new")}
                       className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5
                         ${sortBy === "new" 
-                          ? 'bg-white/10 text-foreground border border-white/10' 
+                          ? 'bg-card text-foreground border border-border' 
                           : 'text-muted-foreground hover:text-foreground'
                         }`}
                     >
@@ -778,7 +796,7 @@ export default function Simulation() {
                       onClick={() => setSortBy("popular")}
                       className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5
                         ${sortBy === "popular" 
-                          ? 'bg-white/10 text-foreground border border-white/10' 
+                          ? 'bg-card text-foreground border border-border' 
                           : 'text-muted-foreground hover:text-foreground'
                         }`}
                     >
@@ -794,7 +812,7 @@ export default function Simulation() {
                   const isExpanded = Boolean(expandedReplies[thread.id]);
                   const visibleComments = isExpanded ? thread.comments : thread.comments.slice(0, 3);
                   return (
-                    <GlassCard key={thread.id} className="p-4 bg-white/[0.02] border border-white/10 hover:bg-white/[0.04] transition-all duration-200 group">
+                    <GlassCard key={thread.id} className="p-4 bg-card/50 border border-border hover:border-muted-foreground/30 transition-all duration-200 group">
                       <div className="flex items-start justify-between gap-4 mb-3">
                         <div className="flex items-center gap-3">
                           <div className={`w-10 h-10 rounded-full ${tone.avatarBg} flex items-center justify-center text-sm font-bold ${tone.avatarText} border ${tone.avatarBorder}`}>
@@ -809,7 +827,7 @@ export default function Simulation() {
                             </div>
                           </div>
                         </div>
-                        <div className="px-2 py-1 rounded-full text-[10px] font-medium bg-white/5 text-muted-foreground border border-white/10">
+                        <div className="px-2 py-1 rounded-full text-[10px] font-medium bg-muted text-muted-foreground border border-border">
                           {thread.actorOccupation || "Agent"}
                         </div>
                       </div>
@@ -834,7 +852,7 @@ export default function Simulation() {
                       </div>
                       
                       {thread.comments.length > 0 && (
-                        <div className="mt-4 space-y-2.5 border-l-2 border-white/[0.08] pl-3">
+                        <div className="mt-4 space-y-2.5 border-l-2 border-border pl-3">
                           {visibleComments.map((comment) => (
                             <div key={comment.id} className="text-body flex items-start gap-2">
                               <div className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-[9px] font-bold text-white/40 flex-shrink-0">
@@ -999,19 +1017,19 @@ export default function Simulation() {
               </div>
               
               <div className="grid grid-cols-2 gap-3 mb-4">
-                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/5">
+                <div className="p-3 rounded-lg bg-muted/40 border border-border">
                   <div className="text-xs text-muted-foreground mb-1">Posts</div>
                   <div className="text-2xl font-mono font-bold text-foreground">{counters.posts}</div>
                 </div>
-                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/5">
+                <div className="p-3 rounded-lg bg-muted/40 border border-border">
                   <div className="text-xs text-muted-foreground mb-1">Comments</div>
                   <div className="text-2xl font-mono font-bold text-foreground">{counters.comments}</div>
                 </div>
-                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/5">
+                <div className="p-3 rounded-lg bg-muted/40 border border-border">
                   <div className="text-xs text-muted-foreground mb-1">Reactions</div>
                   <div className="text-2xl font-mono font-bold text-foreground">{counters.reactions}</div>
                 </div>
-                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/5">
+                <div className="p-3 rounded-lg bg-muted/40 border border-border">
                   <div className="text-xs text-muted-foreground mb-1">Authors</div>
                   <div className="text-2xl font-mono font-bold text-foreground">{counters.active_authors}</div>
                 </div>
@@ -1021,14 +1039,14 @@ export default function Simulation() {
                 {metricCards.map((card) => (
                   <Tooltip key={card.label}>
                     <TooltipTrigger asChild>
-                      <div className="flex flex-col gap-1 px-3 py-2 bg-white/[0.02] border border-white/5 rounded-lg cursor-help" title={card.description}>
+                      <div className="flex flex-col gap-1 px-3 py-2 bg-muted/40 border border-border rounded-lg cursor-help" title={card.description}>
                         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{card.label}</span>
                         <span className="text-xl font-mono font-bold text-success/90">
                           {formatMetricValue(readLatestMetric(simulationState, card.keys, card.fallback), card.kind)}
                         </span>
                       </div>
                     </TooltipTrigger>
-                    <TooltipContent className="max-w-[220px] text-xs leading-relaxed bg-[#1A1A1A] text-white/90 border-white/10">
+                    <TooltipContent className="max-w-[220px] text-xs leading-relaxed bg-popover text-popover-foreground border-border">
                       {card.description}
                     </TooltipContent>
                   </Tooltip>
@@ -1052,7 +1070,7 @@ export default function Simulation() {
 
 function StatusBadge({ status }: { status: string }) {
   const styles = {
-    pending: "bg-white/5 text-white/40 border-white/10",
+    pending: "bg-muted text-muted-foreground border-border",
     running: "bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse",
     completed: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
     failed: "bg-rose-500/10 text-rose-400 border-rose-500/20",
@@ -1072,7 +1090,7 @@ function stageStatusClass(status: StageStatus): string {
   if (status === "running") {
     return "bg-amber-500/10 text-amber-400 border-amber-500/20";
   }
-  return "bg-white/5 text-white/40 border-white/10";
+  return "bg-muted text-muted-foreground border-border";
 }
 
 function formatSeconds(value: number | null | undefined): string {

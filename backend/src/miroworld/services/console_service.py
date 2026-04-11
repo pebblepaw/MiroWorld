@@ -5,6 +5,7 @@ import threading
 import time
 import uuid
 import re
+import shutil
 import sqlite3
 import json
 from pathlib import Path
@@ -17,9 +18,11 @@ from fastapi import UploadFile
 
 from miroworld.config import Settings
 from miroworld.services.config_service import ConfigService
+from miroworld.services.country_dataset_service import CountryDatasetService
+from miroworld.services.country_metadata_service import CountryMetadataService
 from miroworld.services.demo_service import DemoService
 from miroworld.services.document_parser import extract_document_text
-from miroworld.services.lightrag_service import LightRAGService, OCCUPATION_NAMES, PLANNING_AREA_NAMES
+from miroworld.services.lightrag_service import LightRAGService, OCCUPATION_NAMES
 from miroworld.services.knowledge_stream_service import KnowledgeStreamService
 from miroworld.services.memory_service import MemoryService
 from miroworld.services.metrics_service import MetricsService
@@ -61,6 +64,8 @@ class ConsoleService:
         self.streams = SimulationStreamService(settings)
         self.knowledge_streams = KnowledgeStreamService(settings)
         self.demo = DemoService(settings)
+        self.country_datasets = CountryDatasetService(settings)
+        self.country_metadata = CountryMetadataService(settings)
         self._ensure_session_config_table()
         self._ensure_session_token_usage_table()
 
@@ -170,6 +175,46 @@ class ConsoleService:
             "api_key_configured": selection.api_key_configured,
             "api_key_masked": mask_api_key(selection.api_key),
         }
+
+    def _session_country(self, session_id: str) -> str:
+        session_cfg = self._read_session_config(session_id)
+        return str(session_cfg.get("country") or "singapore").strip().lower() or "singapore"
+
+    def _country_geography_field(self, country_cfg: dict[str, Any]) -> str:
+        return self.country_metadata.geography_field(country_cfg)
+
+    def _session_country_config(self, session_id: str) -> tuple[str, dict[str, Any], str]:
+        country = self._session_country(session_id)
+        config_service = ConfigService(self.settings)
+        country_cfg = config_service.get_country(country)
+        dataset_path = self.country_datasets.ensure_country_ready(country)
+        return country, country_cfg, dataset_path
+
+    def _clear_population_downstream_artifacts(self, session_id: str) -> None:
+        self.store.clear_population_artifact(session_id)
+        self.store.clear_simulation_events(session_id)
+        self.store.clear_simulation_state_snapshot(session_id)
+        self.store.clear_report_cache(session_id)
+        self.store.clear_report_state(session_id)
+        self.store.clear_checkpoint_records(session_id)
+        self.store.clear_interaction_transcripts(session_id)
+        self.store.reset_memory_sync_state(session_id)
+
+    def _clear_knowledge_downstream_artifacts(self, session_id: str) -> None:
+        self.store.clear_knowledge_artifact(session_id)
+        self._clear_lightrag_workspace(session_id)
+        self.knowledge_streams.reset(session_id)
+        self._clear_population_downstream_artifacts(session_id)
+
+    def _clear_lightrag_workspace(self, session_id: str) -> None:
+        try:
+            runtime_settings = self._runtime_settings_for_session(session_id)
+        except Exception:  # noqa: BLE001
+            return
+        workdir = Path(str(runtime_settings.lightrag_workdir or "")).expanduser()
+        if not workdir.exists():
+            return
+        shutil.rmtree(workdir, ignore_errors=True)
 
     def _format_runtime_failure_detail(self, session_id: str, exc: Exception, *, action: str) -> str:
         try:
@@ -384,13 +429,15 @@ class ConsoleService:
         session = self._session_record(session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+        existing_cfg = self._read_session_config(session_id)
 
         patch: dict[str, Any] = {}
         config_service = ConfigService(self.settings)
 
         if country is not None:
-            config_service.get_country(country)
-            patch["country"] = str(country).strip().lower()
+            country_payload = config_service.get_country(country)
+            patch["country"] = str(country_payload.get("code") or country).strip().lower()
+            self.country_datasets.ensure_country_ready(patch["country"])
 
         if use_case is not None:
             use_case_payload = config_service.get_use_case(use_case)
@@ -417,6 +464,15 @@ class ConsoleService:
             patch["analysis_questions"] = [item for item in analysis_questions if isinstance(item, dict)]
 
         merged_cfg = self._upsert_session_config(session_id, patch)
+
+        existing_questions = [item for item in (existing_cfg.get("analysis_questions") or []) if isinstance(item, dict)]
+        merged_questions = [item for item in (merged_cfg.get("analysis_questions") or []) if isinstance(item, dict)]
+        scope_changed = any(
+            merged_cfg.get(field) != existing_cfg.get(field)
+            for field in ("country", "use_case", "guiding_prompt")
+        ) or existing_questions != merged_questions
+        if scope_changed:
+            self._clear_knowledge_downstream_artifacts(session_id)
 
         if provider is not None or model is not None or api_key is not None:
             resolved_provider = normalize_provider(provider or session.get("model_provider"))
@@ -458,7 +514,9 @@ class ConsoleService:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         config = ConfigService(self.settings)
-        _ = config.get_country(country)
+        country_payload = config.get_country(country)
+        selected_country = str(country_payload.get("code") or country).strip().lower()
+        self.country_datasets.ensure_country_ready(selected_country)
         _ = config.get_use_case(use_case)
 
         resolved_provider = normalize_provider(provider)
@@ -479,7 +537,7 @@ class ConsoleService:
         self._upsert_session_config(
             payload["session_id"],
             {
-                "country": str(country).strip().lower(),
+                "country": selected_country,
                 "use_case": str(use_case_payload.get("code", use_case)).strip().lower(),
                 "provider": "gemini" if resolved_provider == "google" else resolved_provider,
                 "model": model,
@@ -523,23 +581,16 @@ class ConsoleService:
         filter_fields = list(country_cfg.get("filter_fields") or [])
         live_mode = self._is_live_session(session_id)
 
-        dataset_path = str(country_cfg.get("dataset_path") or "").strip()
-        if not dataset_path:
-            raise HTTPException(status_code=422, detail=f"Country config missing dataset_path for {country}.")
-
         try:
-            dataset_path = config_service.resolve_dataset_path(dataset_path)
+            dataset_path = self.country_datasets.ensure_country_ready(country)
             schema_rows = self.sampler.infer_filter_schema(
                 dataset_path=dataset_path,
                 filter_fields=filter_fields,
             )
-        except FileNotFoundError as exc:
+        except HTTPException as exc:
             if live_mode:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Live dynamic filter discovery failed for country '{country}': {exc}",
-                ) from exc
-            schema_rows = self._fallback_dynamic_filters(filter_fields)
+                raise exc
+            schema_rows = self._fallback_dynamic_filters(country_cfg, filter_fields)
         return {
             "session_id": session_id,
             "country": country,
@@ -547,7 +598,7 @@ class ConsoleService:
             "filters": schema_rows,
         }
 
-    def _fallback_dynamic_filters(self, filter_fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _fallback_dynamic_filters(self, country_cfg: dict[str, Any], filter_fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
         fallback_rows: list[dict[str, Any]] = []
         for field_cfg in filter_fields:
             field_name = str(field_cfg.get("field", "")).strip()
@@ -569,33 +620,26 @@ class ConsoleService:
                 payload["min"] = field_cfg.get("default_min", 0)
                 payload["max"] = field_cfg.get("default_max", 100)
             else:
-                payload["options"] = self._fallback_filter_options(field_name, field_cfg)
+                payload["options"] = self._fallback_filter_options(country_cfg, field_name, field_cfg)
                 if "default" in field_cfg:
                     payload["default"] = field_cfg.get("default")
             fallback_rows.append(payload)
         return fallback_rows
 
-    def _fallback_filter_options(self, field_name: str, field_cfg: dict[str, Any]) -> list[str]:
+    def _fallback_filter_options(self, country_cfg: dict[str, Any], field_name: str, field_cfg: dict[str, Any]) -> list[str]:
         explicit_options = field_cfg.get("options")
         if isinstance(explicit_options, list) and explicit_options:
             return [str(option) for option in explicit_options if str(option).strip()]
 
         normalized = str(field_name).strip().lower()
-        if normalized == "planning_area":
-            return list(PLANNING_AREA_NAMES)
+        if normalized == self.country_metadata.geography_field(country_cfg):
+            return self.country_metadata.geography_options(country_cfg)
         if normalized == "occupation":
             return list(OCCUPATION_NAMES)
         if normalized in {"sex", "gender"}:
             return ["Male", "Female"]
         if normalized == "ethnicity":
             return ["Asian", "Black", "Hispanic", "White", "Other"]
-        if normalized == "state":
-            return [
-                "California",
-                "Florida",
-                "New York",
-                "Texas",
-            ]
         return []
 
     def estimate_token_usage(self, session_id: str, *, agents: int, rounds: int) -> dict[str, Any]:
@@ -820,7 +864,7 @@ class ConsoleService:
                 detail="Provide document_text/documents or set use_default_demo_document=true.",
             )
 
-        self.knowledge_streams.reset(session_id)
+        self._clear_knowledge_downstream_artifacts(session_id)
         self.knowledge_streams.append_events(
             session_id,
             [
@@ -1115,6 +1159,13 @@ class ConsoleService:
                     raise HTTPException(status_code=502, detail=detail)
             raise HTTPException(status_code=404, detail=f"Knowledge artifact not found for session {session_id}")
 
+        self._clear_population_downstream_artifacts(session_id)
+        country, country_cfg, dataset_path = self._session_country_config(session_id)
+        country_aliases = [
+            country,
+            str(country_cfg.get("code") or "").strip().lower(),
+            str(country_cfg.get("name") or "").strip(),
+        ]
         runtime_settings = self._runtime_settings_for_session(session_id)
         relevance = PersonaRelevanceService(runtime_settings)
         live_mode = self._is_live_session(session_id)
@@ -1124,7 +1175,7 @@ class ConsoleService:
                 request.sampling_instructions,
                 knowledge_artifact=knowledge,
                 live_mode=live_mode,
-                country=str(self._read_session_config(session_id).get("country") or "singapore"),
+                country=country,
             )
         except HTTPException:
             raise
@@ -1146,13 +1197,16 @@ class ConsoleService:
                 max(request.agent_count * 2, MIN_AFFECTED_GROUPS_CANDIDATES),
                 MAX_AFFECTED_GROUPS_CANDIDATES,
             )
-        merged_filters = self._merge_population_filters(request, parsed_instructions)
+        merged_filters = self._merge_population_filters(request, parsed_instructions, country=country)
         personas = self.sampler.query_candidates(
             limit=candidate_limit,
             seed=effective_seed,
+            dataset_path=dataset_path,
+            country_values=country_aliases,
+            geography_field=merged_filters["geography_field"],
+            geography_values=merged_filters["geography_values"],
             min_age=merged_filters["min_age"],
             max_age=merged_filters["max_age"],
-            planning_areas=merged_filters["planning_areas"],
             sexes=merged_filters["sexes"],
             marital_statuses=merged_filters["marital_statuses"],
             education_levels=merged_filters["education_levels"],
@@ -1176,6 +1230,7 @@ class ConsoleService:
             seed=effective_seed,
             parsed_sampling_instructions=parsed_instructions,
             live_mode=live_mode,
+            country=country,
         )
         self.store.save_population_artifact(session_id, artifact)
         return artifact
@@ -2355,8 +2410,10 @@ class ConsoleService:
             failed["error"] = str(exc)
             self.store.save_report_state(session_id, failed)
 
-    def _merge_population_filters(self, request: Any, parsed_instructions: dict[str, Any]) -> dict[str, Any]:
+    def _merge_population_filters(self, request: Any, parsed_instructions: dict[str, Any], *, country: str) -> dict[str, Any]:
         hard_filters = parsed_instructions.get("hard_filters", {})
+        selected_country = str(country or "singapore").strip().lower() or "singapore"
+        geography_field = self.country_metadata.geography_field(selected_country)
 
         min_age = request.min_age
         max_age = request.max_age
@@ -2384,12 +2441,19 @@ class ConsoleService:
         dynamic_filters = self._merge_dynamic_filters(
             request_dynamic_filters=getattr(request, "dynamic_filters", {}) or {},
             hard_filters=hard_filters,
+            geography_field=geography_field,
+        )
+
+        geography_values = self.country_metadata.normalize_geography_values(
+            selected_country,
+            [*(getattr(request, "planning_areas", []) or []), *(hard_filters.get(geography_field, []) or [])],
         )
 
         return {
             "min_age": min_age,
             "max_age": max_age,
-            "planning_areas": self._merge_unique_values(request.planning_areas, hard_filters.get("planning_area", []), title_case=True),
+            "geography_field": geography_field,
+            "geography_values": geography_values,
             "sexes": self._merge_unique_values([], hard_filters.get("sex", []), title_case=True),
             "marital_statuses": self._merge_unique_values([], hard_filters.get("marital_status", [])),
             "education_levels": self._merge_unique_values([], hard_filters.get("education_level", [])),
@@ -2420,12 +2484,13 @@ class ConsoleService:
         *,
         request_dynamic_filters: dict[str, Any],
         hard_filters: dict[str, Any],
+        geography_field: str,
     ) -> dict[str, Any]:
         supported_keys = {
             "min_age",
             "max_age",
             "age_cohort",
-            "planning_area",
+            geography_field,
             "sex",
             "marital_status",
             "education_level",

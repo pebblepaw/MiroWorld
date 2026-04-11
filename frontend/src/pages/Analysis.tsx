@@ -208,7 +208,7 @@ export default function Analysis() {
             }}
             disabled={!sessionId || loading}
             variant="outline"
-            className="border-white/12 text-foreground hover:bg-white/6"
+            className="border-border text-foreground hover:bg-muted/50"
           >
             {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</> : <><RefreshCw className="w-4 h-4" /> Rebuild Report</>}
           </Button>
@@ -216,7 +216,7 @@ export default function Analysis() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col gap-4">
-        <TabsList className="w-fit bg-white/[0.04] border border-white/10">
+        <TabsList className="w-fit bg-muted/40 border border-border">
           <TabsTrigger value="report">Reports &amp; Insights</TabsTrigger>
           <TabsTrigger value="opinions">Opinions Feed</TabsTrigger>
           <TabsTrigger value="friction">Friction Map</TabsTrigger>
@@ -277,7 +277,7 @@ export default function Analysis() {
                       </p>
                       
                       {/* Quick Stats Row */}
-                      <div className="flex items-center gap-6 mt-6 pt-6 border-t border-white/5">
+                      <div className="flex items-center gap-6 mt-6 pt-6 border-t border-border/40">
                         <div className="flex items-center gap-2">
                           <div className="text-2xl font-mono font-bold text-emerald-400">97.6%</div>
                           <div className="text-xs text-muted-foreground">Initial Approval</div>
@@ -309,7 +309,7 @@ export default function Analysis() {
                       </div>
                       
                       {/* Filter Tabs */}
-                      <div className="flex items-center gap-1 bg-white/[0.03] rounded-lg p-1 border border-white/5">
+                      <div className="flex items-center gap-1 bg-muted/30 rounded-lg p-1 border border-border">
                         {[
                           { key: "all", label: "Overall" },
                           { key: "occupation", label: "Occupation" },
@@ -322,8 +322,8 @@ export default function Analysis() {
                             onClick={() => { setCohortFilter(filter.key as CohortFilter); setSelectedSegment(null); }}
                             className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all
                               ${cohortFilter === filter.key 
-                                ? 'bg-white/10 text-foreground border border-white/10' 
-                                : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+                                ? 'bg-foreground/[0.08] text-foreground border border-border' 
+                                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                               }`}
                           >
                             {filter.label}

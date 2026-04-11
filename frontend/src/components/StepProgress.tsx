@@ -18,10 +18,10 @@ export function StepProgress() {
               <div
                 className={`w-5 h-5 rounded flex items-center justify-center text-[9px] font-mono font-bold flex-shrink-0 transition-colors ${
                   active
-                    ? 'bg-white text-black'
+                    ? 'bg-foreground text-background'
                     : completed
-                    ? 'bg-white/15 text-white/60'
-                    : 'bg-white/5 text-muted-foreground'
+                    ? 'bg-foreground/15 text-foreground/60'
+                    : 'bg-muted text-muted-foreground'
                 }`}
               >
                 {step}
@@ -33,7 +33,7 @@ export function StepProgress() {
               </span>
             </div>
             {i < stepLabels.length - 1 && (
-              <div className={`h-px flex-1 min-w-4 mx-2 ${completed ? 'bg-white/20' : 'bg-border'}`} />
+              <div className={`h-px flex-1 min-w-4 mx-2 ${completed ? 'bg-border' : 'bg-border/40'}`} />
             )}
           </React.Fragment>
         );

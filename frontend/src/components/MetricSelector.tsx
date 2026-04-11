@@ -41,7 +41,7 @@ export function MetricSelector({ sessionId, value, onChange, className }: Metric
       <select
         value={value ?? "__all__"}
         onChange={(e) => onChange(e.target.value === "__all__" ? null : e.target.value)}
-        className="rounded border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-foreground"
+        className="rounded border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-foreground"
       >
         <option value="__all__">All (Aggregate)</option>
         {questions.map((q) => (

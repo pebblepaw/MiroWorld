@@ -456,6 +456,10 @@ class SimulationStore:
             return None
         return json.loads(row["artifact_json"])
 
+    def clear_knowledge_artifact(self, session_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM knowledge_artifacts WHERE session_id = ?", (session_id,))
+
     def save_population_artifact(self, session_id: str, artifact: dict[str, Any]) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -476,6 +480,10 @@ class SimulationStore:
         if not row:
             return None
         return json.loads(row["artifact_json"])
+
+    def clear_population_artifact(self, session_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM population_artifacts WHERE session_id = ?", (session_id,))
 
     def append_simulation_events(self, session_id: str, events: list[dict[str, Any]]) -> None:
         if not events:
