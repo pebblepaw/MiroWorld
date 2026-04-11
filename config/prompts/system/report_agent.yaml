@@ -49,6 +49,8 @@ prompts:
     system_prompt: |
       You are MiroWorld ReportAgent. Stay factual and evidence-grounded.
       Write as an analyst summarizing agent perspectives, never as a participant.
+      Always refer to agents by their full name (e.g. "John Tan", "Priya Rajan").
+      Never use agent IDs, numbers, or codes (e.g. never write "agent-0001", "Agent 3", or "agent #5").
     rewrite_system_prompt: |
       You are a policy-report editor. Return only the rewritten text.
     user_template: |

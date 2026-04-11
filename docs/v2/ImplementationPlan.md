@@ -1266,6 +1266,164 @@ All A + B tasks ───────────────────┴─�
 
 ---
 
+### Phase 3.6: Cross-Screen Polish & Backend Country Fix (2–3 days)
+
+*Goal: Fix all user-reported issues from manual QA — light mode regressions, broken data pipelines, markdown rendering, color standardization, and USA country context in simulation agents.*
+
+> **Single agent (Agent1) handles both frontend and backend** — the backend agent has exhausted credits.
+
+---
+
+#### 3.6-F1: Screen 2 — USA Map Light Mode & Zoom *(1–2 hours)* `#High`
+
+**Root cause:** `SingaporeMap.tsx` is entirely dark-mode hardcoded. Container uses `background: '#0A0A0A'`, tile layer is `cartocdn.com/dark_nolabels`, GeoJSON fills are dark-range HSL, and stroke colors are barely visible. No `useTheme()` hook.
+
+| Task | Details |
+|:-----|:--------|
+| Add theme awareness | Import `useTheme()`, switch tile layer between `dark_nolabels` / `light_nolabels` |
+| Light mode container | `background: theme === 'dark' ? '#0A0A0A' : '#f8f9fa'` |
+| Light mode GeoJSON fills | Adjust HSL lightness ranges and stroke colors per theme |
+| USA zoom & viewport | Current zoom `4` may clip Alaska/Hawaii; verify all 48 contiguous states visible, adjust center/zoom if needed |
+| Tooltip theming | Switch tooltip bg between dark/light |
+
+---
+
+#### 3.6-F2: Screen 2 — Standardize Chart Color Palette *(1 hour)* `#Medium`
+
+**Root cause:** `AgentConfig.tsx` uses `INDUSTRY_COLORS` array with `hsl(193, 100%, 50%)` (bright cyan) that clashes with the app's red/green theme. Chart axis ticks and tooltips are hardcoded dark-mode colors. CSS variables `--data-red`, `--data-green`, `--data-amber`, `--data-blue` exist but are unused in charts.
+
+| Task | Details |
+|:-----|:--------|
+| Build harmonized palette | Keep `--data-red` and `--data-green` as anchors. Regenerate blue, amber, purple, gray-blue using a 60° hue-wheel spacing (HSL harmonics) |
+| Replace `INDUSTRY_COLORS` | Use CSS variable-based colors: `hsl(var(--data-green))`, `hsl(var(--data-red))`, `hsl(var(--data-amber))`, `hsl(var(--data-blue))`, plus 1–2 new vars |
+| Age Stratification bar | Replace hardcoded cyan `hsl(193,100%,50%)` with `hsl(var(--data-blue))` |
+| Theme-aware axis ticks | Use `text-muted-foreground` or CSS vars instead of hardcoded `hsl(215,20%,55%)` |
+| Tooltip theming | Replace dark-only tooltip styling with theme-aware colors |
+
+**New CSS variables to add in `index.css`:**
+```
+--data-purple: 280 60% 55%   (light) / 280 60% 65%   (dark)
+--data-cyan:   193 80% 40%   (light) / 193 80% 55%   (dark)
+```
+
+---
+
+#### 3.6-F3: Screen 3 — Fix Likes/Dislikes on Comments & Posts *(2–3 hours)* `#High`
+
+**Root causes (3 separate issues):**
+
+1. **Comments missing likes/dislikes in live mode:** SSE `comment_created` handler at `Simulation.tsx:539` creates comments without `likes`/`dislikes` fields — defaults to `0`/`undefined`.
+2. **Posts stuck at 0 likes/dislikes:** The OASIS backend either never emits `reaction_added` events, or emits them under a different event type.
+3. **Approval Rate & Net Sentiment showing `—`:** Frontend looks for `approval_rate`/`net_sentiment` keys; backend sends `checkpoint_approval_rate`/`checkpoint_net_sentiment` which only appear after checkpoint processing, not in `latest_metrics`.
+
+| Task | Details |
+|:-----|:--------|
+| Comment `likes`/`dislikes` defaults | Add `likes: 0, dislikes: 0` to the comment object in SSE handler |
+| Investigate backend reactions | Check OASIS DB schema for reactions table; verify `reaction_added` events are emitted; trace the full pipeline |
+| Fix metric key mapping | In `readLatestMetric`, add fallback keys: `checkpoint_approval_rate` → `approval_rate`, plus any `approval_pre`/`approval_post` keys the backend emits |
+| Display likes unconditionally | Change conditional `{(comment.likes > 0 \|\| comment.dislikes > 0) && ...}` to always show likes/dislikes (even if 0) for less visual jumping |
+
+---
+
+#### 3.6-F4: Screen 3 — Fix Post Content Truncation *(1 hour)* `#High`
+
+**Root cause:** OASIS LLM calls via `ModelFactory.create()` in `oasis_reddit_runner.py` don't set `max_tokens`. Provider defaults (often 128–256 tokens) cut output mid-sentence. No content truncation exists anywhere in the backend pipeline or frontend rendering.
+
+| Task | Details |
+|:-----|:--------|
+| Set explicit `max_tokens` | Pass `model_config_dict={"max_tokens": 1024}` (or configurable via country YAML) to `ModelFactory.create()` in `oasis_reddit_runner.py` |
+| Verify no CSS truncation | Confirm `text-body` class has no line-clamp; `whitespace-pre-wrap` is present |
+
+---
+
+#### 3.6-F5: Screen 4 — Scrollbar Light Mode *(15 min)* `#Low`
+
+**Root cause:** `.scrollbar-thin::-webkit-scrollbar-thumb` in `index.css:195` is hardcoded to `hsl(0 0% 20%)`. No `.dark` variant.
+
+| Task | Details |
+|:-----|:--------|
+| Add light/dark scrollbar | Light: `hsl(0 0% 75%)` thumb, `hsl(0 0% 90%)` hover. Scope current dark color under `.dark` |
+
+---
+
+#### 3.6-F6: Screen 3, 4, 5 — Markdown Rendering *(2–3 hours)* `#High`
+
+**Root cause:** No markdown renderer exists in the frontend. `react-markdown` is not installed. Report content uses `formatPlainText()` which actively **strips** all markdown formatting. Posts on Screens 3 and 5 render raw text via `<p>` tags.
+
+| Task | Details |
+|:-----|:--------|
+| Install `react-markdown` | `npm install react-markdown` in frontend |
+| Create `<MarkdownContent>` component | Shared component using `react-markdown` with Tailwind prose styling (`@tailwindcss/typography` already installed) |
+| Screen 4 report sections | Replace `formatPlainText(section.answer)` with `<MarkdownContent>` — renders `###` as headings, `**` as bold, `*` as bullets |
+| Screen 4 chat bubbles | Render chat message content with `<MarkdownContent>` |
+| Screen 3 post content | Replace `<p>{thread.content}</p>` with `<MarkdownContent>` |
+| Screen 3 comment content | Replace `<span>{comment.content}</span>` with `<MarkdownContent>` |
+| Screen 5 post/comment content | Same treatment in Analytics.tsx |
+| Remove `formatPlainText()` | Delete the stripping function (or keep only for plain-text contexts like tooltips) |
+
+---
+
+#### 3.6-F7: Screen 4 — Agent References by Name *(1–2 hours)* `#Medium`
+
+**Root cause (dual):**
+1. **LLM prompt** (`report_agent.yaml`) doesn't instruct the LLM to use agent names instead of IDs.
+2. **Post-processing** only handles `post id #X` / `post #X` patterns, not `agent #X` patterns.
+
+| Task | Details |
+|:-----|:--------|
+| Update LLM prompt | Add to `report_agent.yaml`: "Always refer to agents by their full name, never by agent ID or number" |
+| Pre-process interaction data | In `report_service.py`, replace `actor_agent_id` with agent names in the JSON payload before sending to the LLM |
+| Post-process `_replace_agent_id_references()` | Add a new function similar to `_replace_post_id_references()` that catches `Agent #007`, `agent 007`, `Agent-007` patterns |
+
+---
+
+#### 3.6-F8: Screen 5 — Fix White-on-Grey Title Colors *(15 min)* `#Low`
+
+**Root cause:** Hardcoded `text-white` on Polarization Index, KOL, and Viral Posts section headers in `Analytics.tsx`. 8 instances total.
+
+| Task | Details |
+|:-----|:--------|
+| Replace `text-white` → `text-foreground` | Lines: 798, 799, 728, 727, 967, 968, 1017, 1018 |
+| Replace `text-white/70` → `text-muted-foreground` | For icon colors in same sections |
+
+---
+
+#### 3.6-B1: Backend — Fix USA Country Context in Simulation *(2–3 hours)* `#Critical`
+
+**Root cause:** `oasis_reddit_runner.py` hardcodes `"Singapore"` in two places:
+- Line 122: `"broader Singapore-wide implications"` in the low-relevance agent cue
+- Line 141: `"country": "Singapore"` in every agent profile dict
+
+The session's `country` config is used for dataset selection but **never injected into agent persona prompts**. Additionally, `config.py:18` defaults `nemotron_dataset` to `"nvidia/Nemotron-Personas-Singapore"`.
+
+| Task | Details |
+|:-----|:--------|
+| Pass country to OASIS runner | Thread the session `country` config through to `oasis_reddit_runner.py`'s `_to_profile()` function |
+| Dynamic country in agent profiles | Replace `"country": "Singapore"` with `"country": country_name` from session config |
+| Dynamic country in prompts | Replace hardcoded `"Singapore-wide implications"` with `f"{country_name}-wide implications"` |
+| Country YAML display name | Add a `display_name` field to country YAMLs (e.g., `"United States"`, `"Singapore"`) used in prompts |
+| Verify dataset resolution | Ensure USA sessions load the USA Nemotron dataset (via `config_service.py` → `usa.yaml:dataset_path`), not the default Singapore one |
+
+---
+
+#### Phase 3.6 Dependency Graph
+
+```
+3.6-F1 (Map) ────────────┐
+3.6-F2 (Colors) ──────────┤
+3.6-F5 (Scrollbar) ───────┤── All independent, can be done in any order
+3.6-F8 (White titles) ────┤
+                           │
+3.6-F3 (Likes/metrics) ───┤── Requires backend investigation
+3.6-F4 (Post truncation) ─┤── Backend change (max_tokens)
+3.6-B1 (USA country) ─────┤── Backend change (oasis_reddit_runner)
+                           │
+3.6-F6 (Markdown) ────────┤── npm install + new component
+3.6-F7 (Agent names) ─────┘── Backend prompt + post-processing
+```
+
+---
+
 ### Phase 4: Cloud Hosting MVP — AWS (3–5 days)
 *Goal: Deploy a working BYOK instance with free + paid tiers.*
 

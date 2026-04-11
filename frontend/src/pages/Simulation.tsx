@@ -27,6 +27,15 @@ type FeedComment = {
   dislikes: number;
 };
 
+/** Replace underscores and title-case a label string (e.g. "not_in_workforce" → "Not In Workforce"). */
+function _humanizeLabel(raw: string): string {
+  return raw
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 type FeedThread = {
   id: string;
   postId: string | number;
@@ -505,7 +514,7 @@ export default function Simulation() {
         const content = String(payload.content ?? "").trim();
         const title = String(payload.title ?? (content.slice(0, 72) || "New discussion thread"));
         const actorName = String(payload.actor_name ?? payload.actor_agent_id ?? "Agent");
-        const actorOccupation = String(payload.actor_occupation ?? "");
+        const actorOccupation = _humanizeLabel(String(payload.actor_occupation ?? ""));
         const actorAge = payload.actor_age ? Number(payload.actor_age) : undefined;
         const roundNo = Number(payload.round_no ?? 0);
         const actorSubtitle = actorOccupation && actorAge 
@@ -550,6 +559,8 @@ export default function Simulation() {
                       actorName: String(payload.actor_name ?? payload.actor_agent_id ?? "Agent"),
                       content: String(payload.content ?? ""),
                       roundNo: eventRound,
+                      likes: Number(payload.likes ?? 0),
+                      dislikes: Number(payload.dislikes ?? 0),
                     },
                   ],
                 };
@@ -571,6 +582,28 @@ export default function Simulation() {
             activityRounds: mergeRoundActivity(thread.activityRounds, eventRound),
             likes: thread.likes + (reaction === "like" ? 1 : 0),
             dislikes: thread.dislikes + (reaction === "dislike" ? 1 : 0),
+          };
+        }),
+      );
+      return;
+    }
+
+    if (eventType === "comment_reaction_added") {
+      setFeedThreads((previous) =>
+        previous.map((thread) => {
+          if (!isSamePostId(thread.postId, payload.post_id)) return thread;
+          const commentId = String(payload.comment_id ?? "");
+          const reaction = String(payload.reaction ?? "");
+          return {
+            ...thread,
+            comments: thread.comments.map((c) => {
+              if (c.id !== commentId) return c;
+              return {
+                ...c,
+                likes: c.likes + (reaction === "like" ? 1 : 0),
+                dislikes: c.dislikes + (reaction === "dislike" ? 1 : 0),
+              };
+            }),
           };
         }),
       );
@@ -600,6 +633,7 @@ export default function Simulation() {
       "post_created",
       "comment_created",
       "reaction_added",
+      "comment_reaction_added",
       "metrics_updated",
       "round_completed",
       "run_completed",

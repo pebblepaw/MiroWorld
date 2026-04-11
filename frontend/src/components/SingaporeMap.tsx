@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { MapContainer, TileLayer, GeoJSON, Tooltip } from 'react-leaflet';
 import type { FeatureCollection, Geometry, Feature } from 'geojson';
+import { useTheme } from '@/contexts/ThemeContext';
 import 'leaflet/dist/leaflet.css';
 
 interface SingaporeMapProps {
@@ -31,6 +32,8 @@ const MAP_CONFIG = {
 
 export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapProps) {
   const [geoData, setGeoData] = useState<FeatureCollection | null>(null);
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const mapConfig = MAP_CONFIG[country];
 
   useEffect(() => {
@@ -80,14 +83,31 @@ export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapPr
 
     const intensity = count > 0 ? 0.3 + (count / maxCount) * 0.7 : 0.05;
     
+    const fillColor = count > 0
+      ? isDark
+        ? `hsl(38, 92%, ${15 + intensity * 40}%)`
+        : `hsl(38, 80%, ${40 + intensity * 30}%)`
+      : isDark
+        ? 'hsl(215, 20%, 30%)'
+        : 'hsl(215, 15%, 85%)';
+
     return {
-      fillColor: count > 0 ? `hsl(38, 92%, ${15 + intensity * 40}%)` : 'hsl(215, 20%, 30%)',
+      fillColor,
       weight: 1,
       opacity: 0.6,
-      color: 'rgba(100,100,100,0.3)',
-      fillOpacity: intensity > 0.1 ? 0.8 : 0.1,
+      color: isDark ? 'rgba(100,100,100,0.3)' : 'rgba(120,120,120,0.4)',
+      fillOpacity: intensity > 0.1 ? 0.8 : (isDark ? 0.1 : 0.3),
     };
   };
+
+  const tileUrl = isDark
+    ? 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
+    : 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
+  const containerBg = isDark ? '#0A0A0A' : '#f5f5f5';
+  const tooltipBg = isDark ? 'hsl(225,40%,8%)' : 'hsl(0,0%,100%)';
+  const tooltipBorder = isDark ? 'hsl(225,20%,18%)' : 'hsl(0,0%,85%)';
+  const tooltipText = isDark ? 'hsl(210,40%,93%)' : 'hsl(0,0%,15%)';
+  const tooltipAccent = isDark ? 'hsl(38, 92%, 50%)' : 'hsl(38, 80%, 40%)';
 
   return (
     <div className="w-full h-[160px] rounded-md overflow-hidden bg-card relative isolate">
@@ -100,10 +120,10 @@ export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapPr
         doubleClickZoom={false}
         attributionControl={false}
         className="w-full h-full z-0"
-        style={{ background: '#0A0A0A' }}
+        style={{ background: containerBg }}
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
+          url={tileUrl}
           opacity={0.6}
         />
         <GeoJSON
@@ -125,9 +145,9 @@ export function SingaporeMap({ areaData, country = 'singapore' }: SingaporeMapPr
             }
 
             layer.bindTooltip(
-              `<div style="background: hsl(225,40%,8%); border: 1px solid hsl(225,20%,18%); border-radius: 6px; padding: 6px 10px; color: hsl(210,40%,93%); font-family: Inter, sans-serif; font-size: 11px;">
+              `<div style="background: ${tooltipBg}; border: 1px solid ${tooltipBorder}; border-radius: 6px; padding: 6px 10px; color: ${tooltipText}; font-family: Inter, sans-serif; font-size: 11px;">
                 <div style="font-weight: 600; margin-bottom: 2px;">${name.replace(/_/g, ' ')}</div>
-                <div style="color: hsl(38, 92%, 50%);">${count} Agents</div>
+                <div style="color: ${tooltipAccent};">${count} Agents</div>
               </div>`,
               { sticky: true, className: 'custom-leaflet-tooltip' }
             );

@@ -128,6 +128,19 @@ def v2_countries(settings: Settings = Depends(get_settings)) -> list[V2CountryRe
     return rows
 
 
+@compat_router.get("/countries/{country}/ui-config")
+def v2_country_ui_config(
+    country: str,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    config_service = ConfigService(settings)
+    try:
+        payload = config_service.get_country(country)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Country not found: {country}")
+    return dict(payload.get("ui") or {})
+
+
 @compat_router.post("/countries/{country}/download", response_model=CountryDatasetStatusResponse)
 def v2_country_download(
     country: str,

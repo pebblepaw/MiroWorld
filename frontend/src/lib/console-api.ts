@@ -1143,6 +1143,81 @@ export async function getCountryDownloadStatus(countryId: string): Promise<V2Cou
   return parseJson(response);
 }
 
+// ── Country UI Config ──
+
+export interface CountryUiCohortDimension {
+  key: string;
+  label: string;
+  persona_field?: string;
+  type?: "age_bucket" | "geography";
+}
+
+export interface CountryUiTooltipField {
+  field: string;
+  label: string;
+  section: "header" | "grid";
+  type?: "geography";
+  fallback_fields?: string[];
+}
+
+export interface CountryUiConfig {
+  cohort_dimensions?: CountryUiCohortDimension[];
+  tooltip_fields?: CountryUiTooltipField[];
+}
+
+const STATIC_UI_CONFIGS: Record<string, CountryUiConfig> = {
+  sg: {
+    cohort_dimensions: [
+      { key: "industry", label: "Industry", persona_field: "industry" },
+      { key: "ageBucket", label: "Age", type: "age_bucket" },
+      { key: "geography", label: "Geography", type: "geography" },
+      { key: "occupation", label: "Occupation", persona_field: "occupation" },
+      { key: "sex", label: "Gender", persona_field: "sex" },
+    ],
+    tooltip_fields: [
+      { field: "occupation", label: "Occupation", section: "header" },
+      { field: "planning_area", label: "Geography", section: "grid", type: "geography" },
+      { field: "education_level", label: "Education", section: "grid" },
+      { field: "industry", label: "Industry", section: "grid" },
+      { field: "cultural_background", label: "Culture", section: "grid" },
+      { field: "income_bracket", label: "Salary", section: "grid", fallback_fields: ["salary", "household_income"] },
+    ],
+  },
+  usa: {
+    cohort_dimensions: [
+      { key: "occupation", label: "Occupation", persona_field: "occupation" },
+      { key: "ageBucket", label: "Age", type: "age_bucket" },
+      { key: "geography", label: "Geography", type: "geography" },
+      { key: "sex", label: "Gender", persona_field: "gender" },
+      { key: "ethnicity", label: "Ethnicity", persona_field: "ethnicity" },
+    ],
+    tooltip_fields: [
+      { field: "occupation", label: "Occupation", section: "header" },
+      { field: "state", label: "State", section: "grid", type: "geography" },
+      { field: "city", label: "City", section: "grid" },
+      { field: "education_level", label: "Education", section: "grid" },
+      { field: "ethnicity", label: "Ethnicity", section: "grid" },
+      { field: "marital_status", label: "Marital Status", section: "grid" },
+      { field: "bachelors_field", label: "Bachelors Field", section: "grid" },
+      { field: "income_bracket", label: "Income", section: "grid", fallback_fields: ["salary", "household_income"] },
+    ],
+  },
+};
+
+export async function getCountryUiConfig(countryCode: string): Promise<CountryUiConfig> {
+  if (isStaticDemoBootMode()) {
+    const normalized = countryCode.trim().toLowerCase();
+    return STATIC_UI_CONFIGS[normalized] ?? STATIC_UI_CONFIGS["sg"] ?? {};
+  }
+  try {
+    const response = await fetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryCode)}/ui-config`);
+    return parseJson(response);
+  } catch {
+    const normalized = countryCode.trim().toLowerCase();
+    return STATIC_UI_CONFIGS[normalized] ?? {};
+  }
+}
+
 export async function getV2Providers(): Promise<V2ProviderResponse[]> {
   if (isStaticDemoBootMode()) {
     return STATIC_V2_PROVIDERS.map((provider) => ({ ...provider, models: [...provider.models] }));

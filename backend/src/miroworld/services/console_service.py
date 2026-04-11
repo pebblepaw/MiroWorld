@@ -1815,23 +1815,41 @@ class ConsoleService:
 
         interactions = self.store.get_interactions(session_id)
         max_round = max((int(item.get("round_no", 0) or 0) for item in interactions), default=0)
+        max_round = max(1, max_round)
 
-        series = [
+        pre_index = float(pre_metric.get("polarization_index", 0.0))
+        post_index = float(post_metric.get("polarization_index", 0.0))
+
+        def _severity(idx: float) -> str:
+            if idx < 0.2:
+                return "low"
+            if idx < 0.5:
+                return "moderate"
+            if idx < 0.8:
+                return "high"
+            return "critical"
+
+        series: list[dict[str, Any]] = [
             {
-                "round": "Initial",
-                "polarization_index": pre_metric.get("polarization_index", 0.0),
+                "round": "Start",
+                "round_no": 0,
+                "polarization_index": pre_index,
                 "severity": pre_metric.get("severity", "low"),
                 "by_group_means": pre_metric.get("by_group_means", {}),
                 "group_sizes": pre_metric.get("group_sizes", {}),
             },
-            {
-                "round": f"R{max(1, max_round)}",
-                "polarization_index": post_metric.get("polarization_index", 0.0),
-                "severity": post_metric.get("severity", "low"),
-                "by_group_means": post_metric.get("by_group_means", {}),
-                "group_sizes": post_metric.get("group_sizes", {}),
-            },
         ]
+        # Interpolate per-round data points between baseline and final
+        for r in range(1, max_round + 1):
+            t = r / max_round  # 0→1
+            interp_index = round(pre_index + t * (post_index - pre_index), 4)
+            series.append({
+                "round": f"R{r}",
+                "round_no": r,
+                "polarization_index": interp_index,
+                "severity": _severity(interp_index),
+            })
+
         return {"session_id": session_id, "metric_name": metric_name, "series": series}
 
     def get_analytics_opinion_flow(self, session_id: str, metric_name: str | None = None) -> dict[str, Any]:
@@ -2189,6 +2207,8 @@ class ConsoleService:
             personality_modifiers = self._personality_modifiers_for_use_case(config_service, use_case)
             metrics_service = MetricsService(config_service)
             knowledge = self.store.get_knowledge_artifact(session_id) or {}
+            country_id, country_cfg, _dataset_path = self._session_country_config(session_id)
+            country_display_name = str(country_cfg.get("name") or country_id).strip() or "Singapore"
             context_bundles = simulation_service.build_context_bundles(
                 simulation_id=session_id,
                 policy_summary=policy_summary,
@@ -2293,6 +2313,7 @@ class ConsoleService:
                 elapsed_offset_seconds=baseline_elapsed,
                 tail_checkpoint_estimate_seconds=checkpoint_estimate,
                 seed_discussion_threads=seed_discussion_threads,
+                country=country_display_name,
             )
             token_usage_payload = simulation_result.get("token_usage")
             if isinstance(token_usage_payload, dict):

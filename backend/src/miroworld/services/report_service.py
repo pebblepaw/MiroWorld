@@ -437,6 +437,7 @@ class ReportService:
                 limit=4,
             )
             answer = self._replace_post_id_references(answer, section_evidence or evidence_pool)
+            answer = self._replace_agent_id_references(answer, section_evidence or evidence_pool)
 
             section: dict[str, Any] = {
                 "question": question_text,
@@ -489,6 +490,7 @@ class ReportService:
             else:
                 answer = ""
             clean_answer = self._replace_post_id_references(_clean_report_text(answer), evidence_pool)
+            clean_answer = self._replace_agent_id_references(clean_answer, evidence_pool)
             preset_sections.append({"title": title, "answer": clean_answer})
 
         # ── Executive summary ──
@@ -916,6 +918,50 @@ class ReportService:
                 selected.append(item)
 
         return selected[:limit]
+
+    def _replace_agent_id_references(self, text: str, evidence: list[dict[str, Any]]) -> str:
+        """Replace bare agent-ID tokens (e.g. agent-0003, Agent 3) with display names."""
+        if not text:
+            return text
+
+        # Build ID → display name map from evidence
+        agent_names: dict[str, str] = {}
+        for item in evidence:
+            agent_id = str(item.get("agent_id") or "").strip()
+            agent_name = _clean_report_text(item.get("agent_name"))
+            if agent_id and agent_name:
+                agent_names[agent_id] = agent_name
+
+        if not agent_names:
+            return text
+
+        def _name_for(raw_id: str) -> str:
+            return agent_names.get(raw_id, raw_id)
+
+        # Replace "agent-0003" style IDs
+        def _replace_dash_id(m: re.Match[str]) -> str:
+            return _name_for(m.group(0).lower())
+
+        rewritten = re.sub(
+            r"\bagent-\d{1,6}\b",
+            _replace_dash_id,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        # Replace "agent #3", "agent 3" style references
+        def _replace_hash_id(m: re.Match[str]) -> str:
+            num = int(m.group(1))
+            padded = f"agent-{num:04d}"
+            return agent_names.get(padded, m.group(0))
+
+        rewritten = re.sub(
+            r"\bagent\s*#?\s*(\d{1,6})\b",
+            _replace_hash_id,
+            rewritten,
+            flags=re.IGNORECASE,
+        )
+        return rewritten
 
     def _replace_post_id_references(self, text: str, evidence: list[dict[str, Any]]) -> str:
         cleaned = _clean_report_text(text)

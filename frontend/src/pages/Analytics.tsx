@@ -724,8 +724,8 @@ export default function Analytics() {
 
         <section className="space-y-3">
           <div className="flex items-center gap-2 px-1">
-            <Megaphone className="h-4 w-4 text-white/70" />
-            <h3 className="text-xs font-mono uppercase tracking-[0.15em] text-white/80">KOL & Viral Posts</h3>
+            <Megaphone className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-xs font-mono uppercase tracking-[0.15em] text-foreground/80">KOL & Viral Posts</h3>
           </div>
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
             <KeyOpinionLeadersCard leaders={leaderData} loading={analyticsLoading} />
@@ -751,7 +751,7 @@ function PolarizationDot({ cx, cy, payload }: PolarizationDotProps) {
       cy={cy}
       r={5}
       fill={severityColor(payload.severity)}
-      stroke="hsl(0 0% 15%)"
+      stroke="hsl(var(--border))"
       strokeWidth={2}
     />
   );
@@ -795,8 +795,8 @@ function PolarizationCard({ data, loading }: { data: PolarizationPoint[]; loadin
     <section className="surface-card p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Activity className="h-4 w-4 text-white/70" />
-          <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-white">Polarization Index</h3>
+          <Activity className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-foreground">Polarization Index</h3>
         </div>
         <span
           className="rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wider"
@@ -809,23 +809,23 @@ function PolarizationCard({ data, loading }: { data: PolarizationPoint[]; loadin
       <div className="h-[210px]">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={safeData} margin={{ top: 8, right: 16, left: -16, bottom: 4 }}>
-            <CartesianGrid stroke="hsl(0 0% 16%)" strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="round" tick={{ fill: "hsl(0 0% 72%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+            <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="round" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis
               domain={[0, 1]}
               tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`}
-              tick={{ fill: "hsl(0 0% 55%)", fontSize: 10 }}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
               axisLine={false}
               tickLine={false}
             />
-            <Tooltip content={<PolarizationTooltip />} cursor={{ stroke: "hsl(0 0% 34%)", strokeWidth: 1 }} />
+            <Tooltip content={<PolarizationTooltip />} cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }} />
             <Line
               type="monotone"
               dataKey="index"
-              stroke="hsl(0 0% 75%)"
+              stroke="hsl(var(--foreground) / 0.6)"
               strokeWidth={2}
               dot={<PolarizationDot />}
-              activeDot={{ r: 6, stroke: "hsl(0 0% 36%)", strokeWidth: 2, fill: "hsl(0 0% 14%)" }}
+              activeDot={{ r: 6, stroke: "hsl(var(--border))", strokeWidth: 2, fill: "hsl(var(--card))" }}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -964,8 +964,8 @@ function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loadin
   return (
     <section className="surface-card p-5">
       <div className="mb-4 flex items-center gap-2">
-        <Megaphone className="h-4 w-4 text-white/70" />
-        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-white">Key Opinion Leaders</h3>
+        <Megaphone className="h-4 w-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-foreground">Key Opinion Leaders</h3>
       </div>
 
       <div className="space-y-4">
@@ -1013,8 +1013,8 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
   return (
     <section className="surface-card p-5">
       <div className="mb-4 flex items-center gap-2">
-        <Flame className="h-4 w-4 text-white/70" />
-        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-white">Viral Posts</h3>
+        <Flame className="h-4 w-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-foreground">Viral Posts</h3>
       </div>
 
       <div className="space-y-4">

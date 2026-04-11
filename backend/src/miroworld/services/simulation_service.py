@@ -108,6 +108,7 @@ class SimulationService:
         elapsed_offset_seconds: int = 0,
         tail_checkpoint_estimate_seconds: int = 0,
         seed_discussion_threads: list[str] | None = None,
+        country: str = "Singapore",
     ) -> dict[str, Any]:
         resolved_seed_threads = [
             str(item).strip()
@@ -127,6 +128,7 @@ class SimulationService:
                 elapsed_offset_seconds=elapsed_offset_seconds,
                 tail_checkpoint_estimate_seconds=tail_checkpoint_estimate_seconds,
                 seed_discussion_threads=resolved_seed_threads,
+                country=country,
             )
             agents = result["agents"]
             interactions = result["interactions"]
@@ -416,6 +418,7 @@ class SimulationService:
         elapsed_offset_seconds: int = 0,
         tail_checkpoint_estimate_seconds: int = 0,
         seed_discussion_threads: list[str] | None = None,
+        country: str = "Singapore",
     ) -> dict[str, Any]:
         provider_key = self.settings.resolved_gemini_key
         if not provider_key:
@@ -451,6 +454,7 @@ class SimulationService:
             "tail_checkpoint_estimate_seconds": tail_checkpoint_estimate_seconds,
             "oasis_semaphore": oasis_semaphore,
             "seed_discussion_threads": [item for item in (seed_discussion_threads or []) if str(item).strip()],
+            "country": country,
         }
 
         if sidecar_host:

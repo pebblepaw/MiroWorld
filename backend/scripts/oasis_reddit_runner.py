@@ -31,6 +31,7 @@ class RunnerInput:
     tail_checkpoint_estimate_seconds: int = 0
     oasis_semaphore: int = 128
     seed_discussion_threads: list[str] | None = None
+    country: str = "Singapore"
 
 
 NAME_FIELD_PATTERN = re.compile(r"(?:^|\b)(?:name|full name|persona)\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})")
@@ -78,11 +79,11 @@ VOICE_STYLE_CUES = [
 ]
 
 
-def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
+def _to_profile(persona: dict[str, Any], idx: int, country: str = "Singapore") -> dict[str, Any]:
     age = int(persona.get("age") or random.randint(21, 70))
     username = f"sg_agent_{idx + 1}"
     name = _extract_persona_display_name(persona, idx)
-    planning_area = str(persona.get("planning_area") or "Singapore")
+    planning_area = str(persona.get("planning_area") or country)
     occupation = str(persona.get("occupation") or "Resident")
     industry = str(persona.get("industry") or "")
     household_type = str(persona.get("household_type") or "").strip()
@@ -118,7 +119,7 @@ def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
     elif relevance >= 0.45:
         persona_text += " This issue is moderately relevant to you, so you should engage when the discussion touches your situation."
     else:
-        persona_text += " You may not be directly affected, but you should still react when community discussion surfaces broader Singapore-wide implications."
+        persona_text += f" You may not be directly affected, but you should still react when community discussion surfaces broader {country}-wide implications."
     style_cue = VOICE_STYLE_CUES[idx % len(VOICE_STYLE_CUES)]
     persona_text += f" Writing cue: {style_cue}"
     persona_text += " Never claim to be an AI. Never reuse another user's wording verbatim."
@@ -137,7 +138,7 @@ def _to_profile(persona: dict[str, Any], idx: int) -> dict[str, Any]:
         "age": age,
         "gender": str(persona.get("sex") or persona.get("gender") or "unknown"),
         "mbti": str(persona.get("mbti") or "ISFJ"),
-        "country": "Singapore",
+        "country": country,
         "karma": int(persona.get("karma") or random.randint(20, 5000)),
         "created_at": "2024-01-01",
     }
@@ -199,10 +200,10 @@ def _extract_title(content: str) -> str:
     return title[:1].upper() + title[1:84]
 
 
-def _build_seed_post_content(policy_summary: str, index: int) -> str:
+def _build_seed_post_content(policy_summary: str, index: int, country: str = "Singapore") -> str:
     summary_excerpt = _sanitize_policy_context(policy_summary)[:220]
     if not summary_excerpt:
-        summary_excerpt = "Discuss the policy and how it may affect different Singapore households."
+        summary_excerpt = f"Discuss the policy and how it may affect different {country} households."
     return f"Policy brief: {summary_excerpt}\nWhat impacts stand out most for your own situation?"
 
 
@@ -232,14 +233,14 @@ def _sanitize_policy_context(text: str) -> str:
     return filtered
 
 
-def _resolve_seed_posts(policy_summary: str, seed_discussion_threads: list[str] | None) -> list[str]:
+def _resolve_seed_posts(policy_summary: str, seed_discussion_threads: list[str] | None, country: str = "Singapore") -> list[str]:
     seed_posts: list[str] = []
     for index, question_text in enumerate(seed_discussion_threads or []):
         question = str(question_text or "").strip()
         if not question:
             continue
         seed_posts.append(_build_analysis_seed_post_content(policy_summary, question, index))
-    return [post for post in seed_posts if str(post).strip()] or [_build_seed_post_content(policy_summary, 0)]
+    return [post for post in seed_posts if str(post).strip()] or [_build_seed_post_content(policy_summary, 0, country)]
 
 
 def _determine_batch_size(active_agent_count: int, round_no: int) -> int:
@@ -498,7 +499,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
 
     profiles_path = Path(payload.oasis_db_path).with_suffix(".profiles.json")
     profiles_path.parent.mkdir(parents=True, exist_ok=True)
-    profiles = [_to_profile(p, idx) for idx, p in enumerate(ordered_personas)]
+    profiles = [_to_profile(p, idx, payload.country) for idx, p in enumerate(ordered_personas)]
     activity_profiles = {
         int(profile["user_id"]): _build_activity_profile(ordered_personas[int(profile["user_id"])], int(profile["user_id"]))
         for profile in profiles
@@ -518,6 +519,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
     model = ModelFactory.create(
         model_platform=ModelPlatformType.OPENAI,
         model_type=payload.model_name,
+        model_config_dict={"max_tokens": 1024},
     )
 
     available_actions = [
@@ -560,7 +562,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
     # Seed the policy into the discussion thread before autonomous rounds.
     seed_actions: dict[Any, Any] = {}
     all_seed_agents = [agent for _, agent in env.agent_graph.get_agents()]
-    seed_posts = _resolve_seed_posts(payload.policy_summary, payload.seed_discussion_threads)
+    seed_posts = _resolve_seed_posts(payload.policy_summary, payload.seed_discussion_threads, payload.country)
     for i, post_content in enumerate(seed_posts):
         if not all_seed_agents:
             break
@@ -577,7 +579,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
-    last_seen = {"post": 0, "comment": 0, "like": 0, "dislike": 0}
+    last_seen = {"post": 0, "comment": 0, "like": 0, "dislike": 0, "comment_like": 0, "comment_dislike": 0}
     _emit_incremental_db_events(
         conn,
         profile_lookup=profile_lookup,
@@ -925,6 +927,52 @@ def _emit_incremental_db_events(
             actor_age=profile.get("age", 0),
             reaction="dislike",
             post_id=int(row["post_id"]),
+        )
+
+    # --- Comment likes ---
+    comment_like_rows = conn.execute(
+        "SELECT comment_like_id, user_id, comment_id FROM comment_like WHERE comment_like_id > ? ORDER BY comment_like_id",
+        (last_seen["comment_like"],),
+    ).fetchall()
+    for row in comment_like_rows:
+        user_id = int(row["user_id"])
+        comment_id = int(row["comment_id"])
+        last_seen["comment_like"] = max(last_seen["comment_like"], int(row["comment_like_id"]))
+        comment_row = conn.execute("SELECT post_id FROM comment WHERE comment_id = ?", (comment_id,)).fetchone()
+        if not comment_row:
+            continue
+        profile = profile_lookup.get(user_id, {})
+        emit_event(
+            "comment_reaction_added",
+            round_no=round_no,
+            comment_id=comment_id,
+            post_id=int(comment_row["post_id"]),
+            reaction="like",
+            actor_agent_id=resolved_user_map.get(user_id, f"agent-{user_id + 1:04d}"),
+            actor_name=profile.get("display_name", f"Agent {user_id + 1}"),
+        )
+
+    # --- Comment dislikes ---
+    comment_dislike_rows = conn.execute(
+        "SELECT comment_dislike_id, user_id, comment_id FROM comment_dislike WHERE comment_dislike_id > ? ORDER BY comment_dislike_id",
+        (last_seen["comment_dislike"],),
+    ).fetchall()
+    for row in comment_dislike_rows:
+        user_id = int(row["user_id"])
+        comment_id = int(row["comment_id"])
+        last_seen["comment_dislike"] = max(last_seen["comment_dislike"], int(row["comment_dislike_id"]))
+        comment_row = conn.execute("SELECT post_id FROM comment WHERE comment_id = ?", (comment_id,)).fetchone()
+        if not comment_row:
+            continue
+        profile = profile_lookup.get(user_id, {})
+        emit_event(
+            "comment_reaction_added",
+            round_no=round_no,
+            comment_id=comment_id,
+            post_id=int(comment_row["post_id"]),
+            reaction="dislike",
+            actor_agent_id=resolved_user_map.get(user_id, f"agent-{user_id + 1:04d}"),
+            actor_name=profile.get("display_name", f"Agent {user_id + 1}"),
         )
 
     comment_like_count = _count_table(conn, "comment_like")

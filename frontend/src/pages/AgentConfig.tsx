@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Loader2, Shuffle, Sparkles, Users, Info } from 'lucide-react';
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts';
 
@@ -9,23 +9,24 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useApp } from '@/contexts/AppContext';
 import {
   getBundledDemoOutput,
+  getCountryUiConfig,
   isLiveBootMode,
   previewPopulation,
 } from '@/lib/console-api';
+import type { CountryUiConfig, CountryUiCohortDimension, CountryUiTooltipField } from '@/lib/console-api';
 import { toast } from '@/hooks/use-toast';
 import { SingaporeMap } from '@/components/SingaporeMap';
 
-const INDUSTRY_COLORS = [
-  'hsl(193, 100%, 50%)',
-  'hsl(38, 92%, 50%)',
-  'hsl(160, 84%, 39%)',
-  'hsl(280, 70%, 60%)',
-  'hsl(0, 72%, 51%)',
-  'hsl(215, 20%, 55%)',
+const CHART_COLORS = [
+  'hsl(var(--data-green))',
+  'hsl(var(--data-amber))',
+  'hsl(var(--data-blue))',
+  'hsl(var(--data-red))',
+  'hsl(var(--data-purple))',
+  'hsl(var(--data-cyan))',
 ];
 
 type SampleMode = 'affected_groups' | 'population_baseline';
-type GroupDimension = 'industry' | 'ageBucket' | 'planningArea' | 'sex' | 'occupation';
 
 export default function AgentConfig() {
   const {
@@ -56,8 +57,48 @@ export default function AgentConfig() {
     modelProvider,
   } = useApp();
 
-  const [groupCategory, setGroupCategory] = useState<string>('industry');
+  const [groupCategory, setGroupCategory] = useState<string>('');
+  const [uiConfig, setUiConfig] = useState<CountryUiConfig | null>(null);
   const normalizedCountry = String(country || '').trim().toLowerCase();
+
+  // Fetch UI config from YAML-driven backend endpoint
+  useEffect(() => {
+    if (!normalizedCountry) return;
+    let cancelled = false;
+    getCountryUiConfig(normalizedCountry).then((cfg) => {
+      if (cancelled) return;
+      setUiConfig(cfg);
+      // Set default group category to first dimension
+      const dims = cfg.cohort_dimensions;
+      if (dims?.length && !groupCategory) {
+        setGroupCategory(dims[0].key);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [normalizedCountry]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const cohortDimensions: CountryUiCohortDimension[] = useMemo(
+    () => uiConfig?.cohort_dimensions ?? [
+      { key: 'industry', label: 'Industry', persona_field: 'industry' },
+      { key: 'ageBucket', label: 'Age', type: 'age_bucket' as const },
+      { key: 'geography', label: 'Geography', type: 'geography' as const },
+      { key: 'occupation', label: 'Occupation', persona_field: 'occupation' },
+      { key: 'sex', label: 'Gender', persona_field: 'sex' },
+    ],
+    [uiConfig],
+  );
+
+  const tooltipFields: CountryUiTooltipField[] = useMemo(
+    () => uiConfig?.tooltip_fields ?? [
+      { field: 'occupation', label: 'Occupation', section: 'header' as const },
+      { field: 'planning_area', label: 'Geography', section: 'grid' as const, type: 'geography' as const },
+      { field: 'education_level', label: 'Education', section: 'grid' as const },
+      { field: 'industry', label: 'Industry', section: 'grid' as const },
+      { field: 'cultural_background', label: 'Culture', section: 'grid' as const },
+      { field: 'income_bracket', label: 'Salary', section: 'grid' as const, fallback_fields: ['salary', 'household_income'] },
+    ],
+    [uiConfig],
+  );
 
   const resetPopulationPreview = useCallback(() => {
     setPopulationArtifact(null);
@@ -209,16 +250,21 @@ export default function AgentConfig() {
   const waffleGroups = useMemo(() => {
     if (!sampledPersonas.length) return [];
     
+    // Find the active dimension config from YAML-driven cohort dimensions
+    const activeDim = cohortDimensions.find(d => d.key === groupCategory);
+    
     const resolveKey = (row: any, dim: string) => {
-      if (dim === 'industry') return formatLabel(String(row.persona.industry ?? 'Other'));
-      if (dim === 'planningArea') return formatLabel(resolvePersonaGeographyValue(row.persona, country));
-      if (dim === 'sex') return formatLabel(String(row.persona.sex ?? 'Unknown'));
-      if (dim === 'occupation') return formatLabel(String(row.persona.occupation ?? 'Unknown'));
-      if (dim === 'ageBucket') {
+      // Special built-in types
+      if (activeDim?.type === 'age_bucket' || dim === 'ageBucket') {
         const age = Number(row.persona.age ?? 0);
         return age <= 24 ? '18-24' : age <= 34 ? '25-34' : age <= 49 ? '35-49' : '50+';
       }
-      return 'Other';
+      if (activeDim?.type === 'geography' || dim === 'planningArea' || dim === 'geography') {
+        return formatLabel(resolvePersonaGeographyValue(row.persona, country));
+      }
+      // Dynamic persona field from config
+      const field = activeDim?.persona_field ?? dim;
+      return formatLabel(String(row.persona[field] ?? 'Other'));
     };
 
     const grouped = new Map<string, any[]>();
@@ -253,7 +299,7 @@ export default function AgentConfig() {
     }
 
     return finalGroups.map(([name, agents]) => ({ name, agents }));
-  }, [country, groupCategory, sampledPersonas]);
+  }, [cohortDimensions, country, groupCategory, sampledPersonas]);
 
   const generationDisabled = populationLoading || !sessionId || !knowledgeArtifact;
 
@@ -391,10 +437,10 @@ export default function AgentConfig() {
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Age Stratification</h4>
               <ResponsiveContainer width="100%" height={160}>
                 <BarChart data={ageBuckets} margin={{ top: 0, right: 0, left: -25, bottom: 0 }}>
-                  <XAxis dataKey="name" tick={{ fill: 'hsl(215,20%,55%)', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: 'hsl(215,20%,40%)', fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.02)' }} content={<CustomBarTooltip />} />
-                  <Bar dataKey="count" fill="hsl(193, 100%, 50%)" radius={[2, 2, 0, 0]} maxBarSize={48} />
+                  <XAxis dataKey="name" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <RechartsTooltip cursor={{ fill: 'hsl(var(--foreground) / 0.04)' }} content={<CustomBarTooltip />} />
+                  <Bar dataKey="count" fill="hsl(var(--data-blue))" radius={[2, 2, 0, 0]} maxBarSize={48} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -409,13 +455,13 @@ export default function AgentConfig() {
                     dataKey="name"
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fill: 'hsl(215,20%,55%)', fontSize: 11 }}
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
                     width={110}
                   />
-                  <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.02)' }} content={<CustomBarTooltip />} />
+                  <RechartsTooltip cursor={{ fill: 'hsl(var(--foreground) / 0.04)' }} content={<CustomBarTooltip />} />
                   <Bar dataKey="value" radius={[0, 2, 2, 0]} maxBarSize={20}>
                     {occupationData.map((entry, index) => (
-                      <Cell key={entry.name} fill={INDUSTRY_COLORS[index % INDUSTRY_COLORS.length]} />
+                      <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -443,11 +489,14 @@ export default function AgentConfig() {
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-muted-foreground/50 uppercase tracking-widest font-semibold mr-1">Sort By</span>
                   <div className="flex flex-wrap gap-1.5">
-                    <MetricToggle active={groupCategory === 'industry'} onClick={() => setGroupCategory('industry')} label="Industry" />
-                    <MetricToggle active={groupCategory === 'ageBucket'} onClick={() => setGroupCategory('ageBucket')} label="Age" />
-                    <MetricToggle active={groupCategory === 'planningArea'} onClick={() => setGroupCategory('planningArea')} label="Geography" />
-                    <MetricToggle active={groupCategory === 'occupation'} onClick={() => setGroupCategory('occupation')} label="Occupation" />
-                    <MetricToggle active={groupCategory === 'sex'} onClick={() => setGroupCategory('sex')} label="Gender" />
+                    {cohortDimensions.map((dim) => (
+                      <MetricToggle
+                        key={dim.key}
+                        active={groupCategory === dim.key}
+                        onClick={() => setGroupCategory(dim.key)}
+                        label={dim.label}
+                      />
+                    ))}
                   </div>
                 </div>
               </div>
@@ -468,7 +517,7 @@ export default function AgentConfig() {
                             <TooltipTrigger asChild>
                               <div 
                                 className="w-3.5 h-3.5 rounded-[2px] transition-transform hover:scale-125 hover:z-10 cursor-crosshair border border-black/20"
-                                style={{ backgroundColor: INDUSTRY_COLORS[groupIndex % INDUSTRY_COLORS.length] }}
+                                style={{ backgroundColor: CHART_COLORS[groupIndex % CHART_COLORS.length] }}
                                 aria-label={`Persona ${agent.id}`}
                               />
                             </TooltipTrigger>
@@ -478,7 +527,7 @@ export default function AgentConfig() {
                               align="center"
                               sideOffset={6}
                             >
-                               <WaffleTooltipContent data={agent} />
+                               <WaffleTooltipContent data={agent} tooltipFields={tooltipFields} country={normalizedCountry} />
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -583,7 +632,7 @@ const CustomBarTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-function WaffleTooltipContent({ data }: { data: any }) {
+function WaffleTooltipContent({ data, tooltipFields, country }: { data: any; tooltipFields: CountryUiTooltipField[]; country: string }) {
   const persona = data.persona;
   const displayName = resolvePersonaDisplayName(data);
   
@@ -593,6 +642,23 @@ function WaffleTooltipContent({ data }: { data: any }) {
   
   const rawHobbies = String(persona.hobbies_and_interests_list || persona.hobbies_and_interests || '');
   const hobbies = rawHobbies.split('\\n').filter(Boolean).map(s => s.replace(/^- /, ''));
+
+  const headerField = tooltipFields.find(f => f.section === 'header');
+  const gridFields = tooltipFields.filter(f => f.section === 'grid');
+
+  const resolveFieldValue = (field: CountryUiTooltipField): string => {
+    if (field.type === 'geography') {
+      return formatLabel(resolvePersonaGeographyValue(persona, country));
+    }
+    let val = persona[field.field];
+    if ((val === undefined || val === null || val === '') && field.fallback_fields) {
+      for (const fb of field.fallback_fields) {
+        val = persona[fb];
+        if (val !== undefined && val !== null && val !== '') break;
+      }
+    }
+    return formatLabel(String(val ?? 'Not specified'));
+  };
 
   return (
     <div className="flex flex-col text-left">
@@ -606,29 +672,25 @@ function WaffleTooltipContent({ data }: { data: any }) {
           </span>
         </div>
         <div className="text-[11px] text-muted-foreground">
-          {formatLabel(String(persona.occupation ?? 'Resident'))}
+          {headerField ? resolveFieldValue(headerField) : formatLabel(String(persona.occupation ?? 'Resident'))}
         </div>
         <div className="text-[11px] text-muted-foreground mt-1">
-          {persona.age} yrs • {persona.sex} • {formatLabel(String(persona.marital_status ?? 'Single'))}
+          {persona.age} yrs • {formatLabel(String(persona.sex ?? persona.gender ?? ''))} • {formatLabel(String(persona.marital_status ?? 'Single'))}
         </div>
       </div>
       
       <div className="p-4 space-y-3 surface-card">
         <div className="grid grid-cols-[80px_1fr] gap-x-2 gap-y-2 text-[11px]">
-          <span className="text-muted-foreground/60">Geography</span>
-          <span className="text-foreground truncate">{formatLabel(resolvePersonaGeographyValue(persona, String(persona.country ?? '')))}</span>
-          
-          <span className="text-muted-foreground/60">Education</span>
-          <span className="text-foreground truncate">{formatLabel(String(persona.education_level ?? ''))}</span>
-          
-          <span className="text-muted-foreground/60">Industry</span>
-          <span className="text-foreground truncate">{formatLabel(String(persona.industry ?? ''))}</span>
-          
-          <span className="text-muted-foreground/60">Culture</span>
-          <span className="text-foreground truncate">{formatLabel(String(persona.cultural_background ?? ''))}</span>
-          
-          <span className="text-muted-foreground/60" title="Salary Range (Mock)">Salary</span>
-          <span className="text-foreground truncate">{formatLabel(String(persona.income_bracket ?? persona.salary ?? persona.household_income ?? 'Not specified'))}</span>
+          {gridFields.map((field) => {
+            const val = resolveFieldValue(field);
+            if (val === 'Not specified' || val === '') return null;
+            return (
+              <React.Fragment key={field.field}>
+                <span className="text-muted-foreground/60">{field.label}</span>
+                <span className="text-foreground truncate">{val}</span>
+              </React.Fragment>
+            );
+          })}
         </div>
 
         {skills.length > 0 && (

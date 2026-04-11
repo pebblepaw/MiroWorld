@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { MarkdownContent } from '@/components/MarkdownContent';
 import {
   FileText, Loader2, Download, Send, Search, X,
   MessageSquare, Users, User, TrendingUp, TrendingDown,
@@ -790,7 +791,7 @@ export default function ReportChat() {
                             </span>
                           </div>
                         )}
-                        <p className="text-sm text-foreground/80 leading-relaxed">{formatPlainText(section.answer)}</p>
+                        <MarkdownContent className="text-sm text-foreground/80">{section.answer}</MarkdownContent>
                         {Array.isArray(section.evidence) && section.evidence.length > 0 && (
                           <div className="mt-4 space-y-2 border-t border-border pt-3">
                             <div className="label-meta">Evidence</div>
@@ -826,7 +827,7 @@ export default function ReportChat() {
                     {((report as any).preset_sections as any[]).map((preset: any, i: number) => (
                       <div key={i} className="surface-card p-5">
                         <span className="label-meta block mb-3">{formatPlainText(preset.title)}</span>
-                        <p className="text-sm text-foreground/80 leading-relaxed">{formatPlainText(preset.answer)}</p>
+                        <MarkdownContent className="text-sm text-foreground/80">{preset.answer}</MarkdownContent>
                       </div>
                     ))}
                   </section>

@@ -56,11 +56,13 @@
     --sidebar-border: 0 0% 82%;
     --sidebar-ring: 0 0% 55%;
 
-    /* Data status colors */
-    --data-green: 142 60% 35%;
-    --data-red: 0 72% 51%;
-    --data-amber: 38 92% 44%;
-    --data-blue: 210 100% 46%;
+    /* Data status colors — light mode: softer / lighter */
+    --data-green: 142 55% 42%;
+    --data-red: 0 68% 55%;
+    --data-amber: 38 88% 50%;
+    --data-blue: 210 90% 52%;
+    --data-purple: 280 55% 55%;
+    --data-cyan: 186 70% 42%;
   }
 
   /* Dark mode */
@@ -105,11 +107,13 @@
     --sidebar-border: 0 0% 12%;
     --sidebar-ring: 0 0% 40%;
 
-    /* Data status colors */
-    --data-green: 142 60% 45%;
-    --data-red: 0 72% 51%;
-    --data-amber: 38 92% 50%;
-    --data-blue: 210 100% 56%;
+    /* Data status colors — dark mode: deeper / darker */
+    --data-green: 142 50% 34%;
+    --data-red: 0 65% 44%;
+    --data-amber: 38 80% 42%;
+    --data-blue: 210 85% 42%;
+    --data-purple: 280 50% 48%;
+    --data-cyan: 186 65% 35%;
   }
 }
 
@@ -200,11 +204,11 @@
     background: transparent;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: hsl(0 0% 20%);
+    background: hsl(var(--border));
     border-radius: 3px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: hsl(0 0% 28%);
+    background: hsl(var(--muted-foreground) / 0.5);
   }
 }
 
