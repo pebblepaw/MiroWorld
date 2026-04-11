@@ -113,56 +113,6 @@
   }
 }
 
-  /* Dark mode */
-  .dark {
-    --background: 0 0% 4%;
-    --foreground: 0 0% 93%;
-
-    --card: 0 0% 8%;
-    --card-foreground: 0 0% 93%;
-
-    --popover: 0 0% 8%;
-    --popover-foreground: 0 0% 93%;
-
-    --primary: 357 79% 46%;
-    --primary-foreground: 0 0% 100%;
-
-    --secondary: 0 0% 12%;
-    --secondary-foreground: 0 0% 93%;
-
-    --muted: 0 0% 11%;
-    --muted-foreground: 0 0% 50%;
-
-    --accent: 0 0% 15%;
-    --accent-foreground: 0 0% 93%;
-
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 98%;
-
-    --success: 142 60% 45%;
-    --success-foreground: 0 0% 4%;
-
-    --border: 0 0% 15%;
-    --input: 0 0% 15%;
-    --ring: 0 0% 40%;
-
-    --sidebar-background: 0 0% 4%;
-    --sidebar-foreground: 0 0% 50%;
-    --sidebar-primary: 0 0% 93%;
-    --sidebar-primary-foreground: 0 0% 4%;
-    --sidebar-accent: 0 0% 10%;
-    --sidebar-accent-foreground: 0 0% 93%;
-    --sidebar-border: 0 0% 12%;
-    --sidebar-ring: 0 0% 40%;
-
-    /* Data status colors */
-    --data-green: 142 60% 45%;
-    --data-red: 0 72% 51%;
-    --data-amber: 38 92% 50%;
-    --data-blue: 210 100% 56%;
-  }
-}
-
 @layer base {
   * {
     @apply border-border;

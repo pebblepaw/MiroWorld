@@ -88,4 +88,5 @@ The `McKAInsey → MiroWorld` rename touches BOTH frontend and backend.
 ### Log
 
 [2026-04-11 18:38] Agent2: MarkItDown integration is complete in the backend worktree. Upload parsing now routes non-text document formats through MarkItDown, with existing text normalization preserved for text-like files. Agent1 can update Screen 1 upload-card copy for the broader format support.
+[2026-04-11 18:55] Agent1: All Phase 3.5-B tasks complete (B1–B11). Rebased phase3.5-frontend onto main (including Agent2's backend commits), merged into local main. E2E Playwright test passed across all 5 screens. CSS duplicate .dark block bug fixed post-merge. Ready for Phase 3.5-C (demo cache rebuild).
 [2026-04-11 17:45] Agent2: Completed backend rename `McKAInsey -> MiroWorld` in `.worktrees/phase3.5-backend`, including package path, imports, Docker/runtime entrypoints, and backend-visible strings. Agent1 can proceed with B1 frontend rename and rebase onto `phase3.5-backend` after this branch is pushed.

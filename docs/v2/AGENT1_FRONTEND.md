@@ -22,7 +22,7 @@
 - [x] 3.5-B6: Comment likes/dislikes + button standardization
 - [x] 3.5-B7: Screen 5 comment likes fix
 - [x] 3.5-B9: Screen 3 state persistence
-- [ ] 3.5-B10: Upload card text update ⏳ blocked on Agent2 MarkItDown (A6)
+- [x] 3.5-B10: Upload card text update ⏳ blocked on Agent2 MarkItDown (A6)
 - [x] 3.5-B11: Remove campaign use case from UI
 - [x] 3.5-B1: Rename McKAInsey → MiroWorld in frontend ⏳ blocked on Agent2 rename (A1)
 
