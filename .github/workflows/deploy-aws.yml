@@ -1,0 +1,114 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'config/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy-aws.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-aws-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_BACKEND: 050751893720.dkr.ecr.us-east-1.amazonaws.com/miroworld/backend
+  ECR_FRONTEND: 050751893720.dkr.ecr.us-east-1.amazonaws.com/miroworld/frontend
+  ECS_CLUSTER: miroworld-cluster
+  ECS_SERVICE: miroworld-backend
+  S3_FRONTEND_BUCKET: miroworld-frontend-prod
+  CLOUDFRONT_DISTRIBUTION_ID: E3LWVUPHQA8GK2
+  CLOUDFRONT_DOMAIN: d3a03mb192176l.cloudfront.net
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push backend image
+        run: |
+          docker build -f backend/Dockerfile \
+            -t $ECR_BACKEND:${{ github.sha }} \
+            -t $ECR_BACKEND:latest .
+          docker push $ECR_BACKEND:${{ github.sha }}
+          docker push $ECR_BACKEND:latest
+
+      - name: Build & push frontend image
+        working-directory: frontend
+        run: |
+          docker build --target production \
+            --build-arg VITE_API_BASE=https://${{ env.CLOUDFRONT_DOMAIN }} \
+            --build-arg VITE_BOOT_MODE=live \
+            -t $ECR_FRONTEND:${{ github.sha }} \
+            -t $ECR_FRONTEND:latest .
+          docker push $ECR_FRONTEND:${{ github.sha }}
+          docker push $ECR_FRONTEND:latest
+
+      - name: Deploy backend to ECS
+        run: |
+          # Force new deployment with latest image
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+      - name: Deploy frontend to S3
+        run: |
+          # Extract built files from frontend image
+          CONTAINER_ID=$(docker create $ECR_FRONTEND:${{ github.sha }})
+          docker cp $CONTAINER_ID:/usr/share/nginx/html ./frontend-dist
+          docker rm $CONTAINER_ID
+
+          # Sync to S3
+          aws s3 sync ./frontend-dist s3://$S3_FRONTEND_BUCKET \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          # Upload index.html and JSON with no-cache
+          aws s3 cp ./frontend-dist/index.html s3://$S3_FRONTEND_BUCKET/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          find ./frontend-dist -name '*.json' -exec sh -c \
+            'aws s3 cp "$1" "s3://'"$S3_FRONTEND_BUCKET"'/$(echo "$1" | sed "s|^./frontend-dist/||")" --cache-control "no-cache"' _ {} \;
+
+      - name: Invalidate CloudFront cache
+        if: env.CLOUDFRONT_DISTRIBUTION_ID != ''
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+            --paths "/index.html" "/*.json" "/assets/*"
+
+      - name: Wait for ECS deployment
+        run: |
+          echo "Waiting for ECS service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --region $AWS_REGION
+          echo "Deployment complete!"

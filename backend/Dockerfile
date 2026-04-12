@@ -3,6 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app/backend
 
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=src
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential curl \

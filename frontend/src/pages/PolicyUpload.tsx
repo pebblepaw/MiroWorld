@@ -14,6 +14,7 @@ import {
   getAnalysisQuestions,
   getBundledDemoOutput,
   isLiveBootMode,
+  isStaticDemoBootMode,
   processKnowledgeDocuments,
   subscribeKnowledgeStream,
   type KnowledgeArtifact,
@@ -568,6 +569,18 @@ export default function PolicyUpload() {
   const knowledgeStreamRef = useRef<ReturnType<typeof subscribeKnowledgeStream> | null>(null);
 
   const graphReady = knowledgeGraphReady && knowledgeArtifact !== null;
+
+  // Pre-load source URL in demo-static mode so Screen 1 shows the URL input filled
+  useEffect(() => {
+    if (!isStaticDemoBootMode()) return;
+    getBundledDemoOutput().then((demo: Record<string, unknown>) => {
+      const sourceUrl = (demo.source_run as Record<string, unknown> | undefined)?.source_url;
+      if (typeof sourceUrl === 'string' && sourceUrl) {
+        setUrlValue(sourceUrl);
+        setShowUrlInput(true);
+      }
+    }).catch(() => { /* ignore */ });
+  }, []);
 
   useEffect(() => {
     analysisQuestionsRef.current = analysisQuestions;

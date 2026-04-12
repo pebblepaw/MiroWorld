@@ -1427,16 +1427,28 @@ The session's `country` config is used for dataset selection but **never injecte
 ### Phase 4: Cloud Hosting MVP — AWS (3–5 days)
 *Goal: Deploy a working BYOK instance with free + paid tiers.*
 
+> **Status (2026-04-12):** Infrastructure deployed and live. Backend running on ECS Fargate, frontend on S3+CloudFront. CD pipeline created. Remaining work: RDS PostgreSQL, HTTPS/domain, auth, multi-tenancy, Stripe.
+>
+> **Live endpoints:**
+> - CloudFront: `https://d3a03mb192176l.cloudfront.net`
+> - ALB: `http://miroworld-alb-552982468.us-east-1.elb.amazonaws.com`
+> - CloudFront Distribution ID: `E3LWVUPHQA8GK2`
+> - S3 Bucket: `miroworld-frontend-prod`
+> - ECS Cluster: `miroworld-cluster`, Service: `miroworld-backend`
+> - ECR: `050751893720.dkr.ecr.us-east-1.amazonaws.com/miroworld/{backend,frontend}`
+
 **Infrastructure:**
-- [ ] Set up AWS account, configure `us-east-1` region
-- [ ] Create ECR repositories for backend + OASIS sidecar images
-- [ ] Set up RDS PostgreSQL (`db.t4g.micro`, ~$15/month
-- [ ] Create S3 bucket for frontend static assets + uploaded documents
-- [ ] Set up CloudFront CDN pointing to S3 (frontend) + ALB (API)
-- [ ] Set up ECS Fargate cluster with backend + OASIS sidecar task definitions
-- [ ] Configure ALB with HTTPS (ACM certificate)
-- [ ] Set up Route 53 for custom domain
-- [ ] GitHub Actions CD pipeline: push to `main` → build Docker images → push to ECR → deploy to ECS
+- [x] Set up AWS account, configure `us-east-1` region (Account: `050751893720`)
+- [x] Create ECR repositories for backend + frontend images
+- [ ] Set up RDS PostgreSQL (`db.t4g.micro`, ~$15/month) — *deferred: current SQLite works for single-user MVP*
+- [x] Create S3 bucket for frontend static assets (`miroworld-frontend-prod`)
+- [x] Set up CloudFront CDN pointing to S3 (frontend) + ALB (`/api/*`, `/health`)
+- [x] Set up ECS Fargate cluster with backend task definition (512 CPU, 1024 MB)
+- [ ] Configure ALB with HTTPS (ACM certificate) — *need custom domain first*
+- [ ] Set up Route 53 for custom domain — *need domain name*
+- [x] GitHub Actions CD pipeline: `.github/workflows/deploy-aws.yml` — push to `main` → build → ECR → ECS + S3
+- [x] Backend Dockerfile fixed: added `PYTHONPATH=src`, built for `linux/amd64`
+- [x] CloudFormation template: `infrastructure/cloudformation.yml` (VPC, ALB, ECS, S3, CloudFront, IAM, CloudWatch)
 
 **Backend changes for cloud:**
 - [ ] Add `DATABASE_URL` support: detect `postgresql://` → use asyncpg/psycopg, detect `sqlite://` → use current SQLite
@@ -1446,8 +1458,8 @@ The session's `country` config is used for dataset selection but **never injecte
 - [ ] **Multi-tenancy**: Add `user_id` column to all tables. Row-level security policies. Scope all queries.
 - [ ] **API key encryption**: Encrypt stored BYOK keys with `ENCRYPTION_KEY` env var (Fernet symmetric encryption)
 - [ ] **Upload storage**: `UPLOAD_STORAGE=s3` → store uploaded documents in S3 instead of local filesystem
-- [ ] **Health endpoint**: `GET /health` returning DB connectivity + service status (for ALB healthcheck)
-- [ ] **CORS**: Configure for hosted frontend domain
+- [x] **Health endpoint**: `GET /health` already exists in `routes_health.py` — returns `{"status":"ok"}`
+- [x] **CORS**: Already configured with `allow_origins=["*"]` — sufficient for MVP, restrict later
 - [ ] **Rate limiting**: Per-user request throttling middleware
 
 **Frontend changes for cloud:**
@@ -1462,6 +1474,10 @@ The session's `country` config is used for dataset selection but **never injecte
 - [ ] Backend: `POST /webhooks/stripe` → handle `checkout.session.completed`, `customer.subscription.deleted`
 - [ ] Store `user.tier` and `user.stripe_customer_id` in PostgreSQL
 - [ ] Frontend: redirect to Stripe Checkout on upgrade, handle return URL
+
+**GitHub Secrets needed for CD pipeline:**
+- `AWS_ACCESS_KEY_ID` — IAM access key (prefer creating a dedicated deploy user, not root)
+- `AWS_SECRET_ACCESS_KEY` — IAM secret key
 
 ### Phase 5: Enhancement (ongoing)
 *Goal: Improve hosted experience based on user feedback.*
