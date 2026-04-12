@@ -151,7 +151,8 @@ class SimulationService:
                             "actor_agent_id": actor["agent_id"],
                             "target_agent_id": None,
                             "action_type": "create_post",
-                            "content": f"Analysis question seed {index + 1}: {question}",
+                            "title": f"{question} (Seeded post)",
+                            "content": question,
                             "delta": 0.0,
                         }
                     )

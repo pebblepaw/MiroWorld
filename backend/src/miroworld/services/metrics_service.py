@@ -778,6 +778,7 @@ class MetricsService:
             enriched.append({
                 "post_id": _row_id(post),
                 "author": _actor_id(post),
+                "title": _clean_text(post.get("title")) or _summarize_text(_post_text(post), 80),
                 "content": _summarize_text(_post_text(post), 200),
                 "likes": likes,
                 "dislikes": dislikes,

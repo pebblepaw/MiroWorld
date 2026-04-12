@@ -321,6 +321,81 @@ describe("Analytics", () => {
     expect(screen.getByText("Raw author id should be resolved")).toBeInTheDocument();
   });
 
+  it("renders Screen 5 discourse as plain text while preserving seeded titles", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/analytics/polarization")) {
+        return { ok: true, json: async () => ({ points: [] }) } as Response;
+      }
+      if (url.includes("/analytics/opinion-flow")) {
+        return {
+          ok: true,
+          json: async () => ({
+            initial: { supporter: 1, neutral: 0, dissenter: 0 },
+            final: { supporter: 1, neutral: 0, dissenter: 0 },
+            flows: [{ from: "supporter", to: "supporter", count: 1 }],
+          }),
+        } as Response;
+      }
+      if (url.includes("/analytics/influence")) {
+        return {
+          ok: true,
+          json: async () => ({
+            top_influencers: [
+              {
+                name: "Plain Text Leader",
+                stance: "supporter",
+                influence: 0.78,
+                top_post: "**Fare support** should reach low-income commuters.",
+              },
+            ],
+          }),
+        } as Response;
+      }
+      if (url.includes("/analytics/cascades")) {
+        return {
+          ok: true,
+          json: async () => ({
+            viral_posts: [
+              {
+                author: "API Cascade Author",
+                stance: "supporter",
+                title: "[Will this keep transport affordable?] (Seeded post)",
+                content: "**Fare relief** should reach low-income commuters.\n- Keep signup simple.",
+                likes: 14,
+                dislikes: 2,
+                comments: [
+                  {
+                    author: "Responder",
+                    stance: "mixed",
+                    content: "**Agreed**.\n- Keep the form short.",
+                    likes: 4,
+                    dislikes: 1,
+                  },
+                ],
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedAnalyticsContext />
+        <Analytics />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Plain Text Leader")).toBeInTheDocument();
+    expect(screen.getByText(/Fare support should reach low-income commuters\./)).toBeInTheDocument();
+    expect(screen.getByText("[Will this keep transport affordable?] (Seeded post)")).toBeInTheDocument();
+    expect(screen.getByText(/Fare relief should reach low-income commuters\./)).toBeInTheDocument();
+    expect(screen.getByText(/Keep signup simple\./)).toBeInTheDocument();
+    expect(screen.queryByText(/\*\*Fare relief\*\*/)).not.toBeInTheDocument();
+  });
+
   it("shows an error notice and falls back to local demo analytics when API calls fail", async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("analytics unavailable")) as typeof fetch;
 

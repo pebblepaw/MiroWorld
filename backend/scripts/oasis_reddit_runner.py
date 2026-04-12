@@ -34,12 +34,19 @@ class RunnerInput:
     country: str = "Singapore"
 
 
+@dataclass(frozen=True)
+class SeedPostSpec:
+    title: str
+    content: str
+
+
 NAME_FIELD_PATTERN = re.compile(r"(?:^|\b)(?:name|full name|persona)\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})")
 NAME_WITH_VERB_PATTERN = re.compile(
     r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+(?:grew|works|is|was|lives|resides|studies|believes|prefers)\b"
 )
 CAPITALIZED_NAME_PATTERN = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b")
 TITLE_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9']+")
+WORD_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9'\-/]*")
 TITLE_STOPWORDS = {
     "a",
     "an",
@@ -60,6 +67,25 @@ TITLE_STOPWORDS = {
     "this",
     "to",
     "with",
+}
+QUESTION_STOPWORDS = TITLE_STOPWORDS | {
+    "about",
+    "could",
+    "does",
+    "fellow",
+    "from",
+    "have",
+    "into",
+    "most",
+    "other",
+    "should",
+    "their",
+    "them",
+    "these",
+    "those",
+    "what",
+    "which",
+    "would",
 }
 
 AI_REFUSAL_PATTERNS = [
@@ -200,21 +226,119 @@ def _extract_title(content: str) -> str:
     return title[:1].upper() + title[1:84]
 
 
-def _build_seed_post_content(policy_summary: str, index: int, country: str = "Singapore") -> str:
-    summary_excerpt = _sanitize_policy_context(policy_summary)[:220]
-    if not summary_excerpt:
-        summary_excerpt = f"Discuss the policy and how it may affect different {country} households."
-    return f"Policy brief: {summary_excerpt}\nWhat impacts stand out most for your own situation?"
+def _normalize_seed_question(question_text: str) -> str:
+    return " ".join(str(question_text or "").split()).strip()
 
 
-def _build_analysis_seed_post_content(policy_summary: str, question_text: str, index: int) -> str:
-    question = " ".join(str(question_text or "").split()).strip()
-    if not question:
-        return _build_seed_post_content("", index)
-    summary_excerpt = _sanitize_policy_context(policy_summary)[:220]
-    if summary_excerpt:
-        return f"Community prompt: {question[:280]}\nPolicy brief: {summary_excerpt}"
-    return f"Community prompt: {question[:280]}"
+def _limit_words(text: str, max_words: int = 100) -> str:
+    words = str(text or "").split()
+    if len(words) <= max_words:
+        return " ".join(words).strip()
+    return " ".join(words[:max_words]).rstrip(" ,.;:") + "…"
+
+
+def _split_policy_sentences(text: str) -> list[str]:
+    cleaned = _sanitize_policy_context(text)
+    if not cleaned:
+        return []
+    sentences = [
+        re.sub(r"\s+", " ", segment).strip(" ,;:-")
+        for segment in re.split(r"(?<=[.!?])\s+|\n+", cleaned)
+        if re.sub(r"\s+", " ", segment).strip(" ,;:-")
+    ]
+    return sentences
+
+
+def _question_keywords(question_text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in WORD_TOKEN_PATTERN.findall(_normalize_seed_question(question_text).lower())
+        if len(token) >= 4 and token.lower() not in QUESTION_STOPWORDS
+    }
+
+
+def _ensure_sentence(text: str) -> str:
+    cleaned = _sanitize_policy_context(text)
+    if not cleaned:
+        return ""
+    if cleaned.endswith((".", "!", "?")):
+        return cleaned
+    return f"{cleaned}."
+
+
+def _build_seed_title(question_text: str, country: str = "Singapore") -> str:
+    question = _normalize_seed_question(question_text)
+    if question:
+        return f"{question} (Seeded post)"
+    return f"{country} policy impacts (Seeded post)"
+
+
+def _select_relevant_policy_sentences(policy_summary: str, question_text: str, limit: int = 2) -> list[str]:
+    sentences = _split_policy_sentences(policy_summary)
+    if not sentences:
+        return []
+    keywords = _question_keywords(question_text)
+
+    def score(sentence: str) -> tuple[int, int, int]:
+        sentence_tokens = {token.lower() for token in WORD_TOKEN_PATTERN.findall(sentence)}
+        overlap = len(sentence_tokens & keywords)
+        return (overlap, -abs(len(sentence_tokens) - 16), -len(sentence))
+
+    ranked = sorted(sentences, key=score, reverse=True)
+    selected: list[str] = []
+    for sentence in ranked:
+        normalized = _ensure_sentence(sentence)
+        if normalized and normalized not in selected:
+            selected.append(normalized)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _seed_perspective_sentence(profile: dict[str, Any] | None, country: str = "Singapore") -> str:
+    profile = profile or {}
+    occupation = str(profile.get("occupation") or "resident").strip()
+    planning_area = str(profile.get("planning_area") or profile.get("planningArea") or country).strip()
+    if occupation and planning_area:
+        return f"As a {occupation.lower()} in {planning_area}, the everyday impact is what matters most to me."
+    if occupation:
+        return f"As a {occupation.lower()}, the everyday impact is what matters most to me."
+    return f"As a resident in {country}, the everyday impact is what matters most to me."
+
+
+def _build_seed_post_content(
+    policy_summary: str,
+    index: int,
+    country: str = "Singapore",
+    profile: dict[str, Any] | None = None,
+) -> str:
+    del index
+    policy_sentences = _select_relevant_policy_sentences(policy_summary, "", limit=2)
+    parts = [_seed_perspective_sentence(profile, country)]
+    if policy_sentences:
+        parts.extend(policy_sentences)
+    else:
+        parts.append(f"I want to discuss how this policy could affect different {country} households in practice.")
+    parts.append("I want to hear how other residents think this would play out in daily life.")
+    return _limit_words(" ".join(part for part in parts if part), max_words=100)
+
+
+def _build_analysis_seed_post_content(
+    policy_summary: str,
+    question_text: str,
+    index: int,
+    profile: dict[str, Any] | None = None,
+    country: str = "Singapore",
+) -> str:
+    del index
+    policy_sentences = _select_relevant_policy_sentences(policy_summary, question_text, limit=2)
+    parts = [_seed_perspective_sentence(profile, country)]
+    if policy_sentences:
+        parts.extend(policy_sentences)
+    else:
+        parts.append("I want to focus on the parts of the policy that would change costs, access, and everyday routines.")
+    parts.append("I want to hear how fellow citizens think this would affect daily life in practice.")
+    return _limit_words(" ".join(part for part in parts if part), max_words=100)
 
 
 def _sanitize_policy_context(text: str) -> str:
@@ -233,14 +357,32 @@ def _sanitize_policy_context(text: str) -> str:
     return filtered
 
 
-def _resolve_seed_posts(policy_summary: str, seed_discussion_threads: list[str] | None, country: str = "Singapore") -> list[str]:
-    seed_posts: list[str] = []
+def _resolve_seed_posts(
+    policy_summary: str,
+    seed_discussion_threads: list[str] | None,
+    country: str = "Singapore",
+    seed_profiles: list[dict[str, Any]] | None = None,
+) -> list[SeedPostSpec]:
+    seed_posts: list[SeedPostSpec] = []
     for index, question_text in enumerate(seed_discussion_threads or []):
         question = str(question_text or "").strip()
         if not question:
             continue
-        seed_posts.append(_build_analysis_seed_post_content(policy_summary, question, index))
-    return [post for post in seed_posts if str(post).strip()] or [_build_seed_post_content(policy_summary, 0, country)]
+        profile = (seed_profiles or [{}])[index % max(1, len(seed_profiles or [{}]))]
+        seed_posts.append(
+            SeedPostSpec(
+                title=_build_seed_title(question, country),
+                content=_build_analysis_seed_post_content(policy_summary, question, index, profile=profile, country=country),
+            )
+        )
+    if seed_posts:
+        return seed_posts
+    return [
+        SeedPostSpec(
+            title=_build_seed_title("", country),
+            content=_build_seed_post_content(policy_summary, 0, country, profile=(seed_profiles or [{}])[0]),
+        )
+    ]
 
 
 def _determine_batch_size(active_agent_count: int, round_no: int) -> int:
@@ -559,31 +701,48 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
     await env.reset()
     start_monotonic = time.monotonic()
 
-    # Seed the policy into the discussion thread before autonomous rounds.
-    seed_actions: dict[Any, Any] = {}
-    all_seed_agents = [agent for _, agent in env.agent_graph.get_agents()]
-    seed_posts = _resolve_seed_posts(payload.policy_summary, payload.seed_discussion_threads, payload.country)
-    for i, post_content in enumerate(seed_posts):
-        if not all_seed_agents:
-            break
-        agent = all_seed_agents[i % len(all_seed_agents)]
-        seed_actions[agent] = ManualAction(
-            action_type=ActionType.CREATE_POST,
-            action_args={
-                "content": post_content
-            },
-        )
-    await env.step(seed_actions)
-    print("[oasis-runner] seed posts injected", flush=True)
-    emit_event("seed_post_created", round_no=1, count=len(seed_actions))
-
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
+    # Seed the policy into the discussion thread before autonomous rounds.
+    all_seed_agents = [agent for _, agent in env.agent_graph.get_agents()]
+    seed_posts = _resolve_seed_posts(
+        payload.policy_summary,
+        payload.seed_discussion_threads,
+        payload.country,
+        seed_profiles=ordered_personas,
+    )
+    seed_post_titles: dict[int, str] = {}
+    latest_seed_post_id = 0
+    if all_seed_agents and seed_posts:
+        batch_size = max(1, len(all_seed_agents))
+        for batch_start in range(0, len(seed_posts), batch_size):
+            seed_actions: dict[Any, Any] = {}
+            batch_specs = seed_posts[batch_start: batch_start + batch_size]
+            for agent, spec in zip(all_seed_agents, batch_specs):
+                seed_actions[agent] = ManualAction(
+                    action_type=ActionType.CREATE_POST,
+                    action_args={"content": spec.content},
+                )
+            if not seed_actions:
+                continue
+            await env.step(seed_actions)
+            new_seed_rows = conn.execute(
+                "SELECT post_id FROM post WHERE post_id > ? ORDER BY post_id",
+                (latest_seed_post_id,),
+            ).fetchall()
+            for row, spec in zip(new_seed_rows, batch_specs):
+                seed_post_titles[int(row["post_id"])] = spec.title
+            if new_seed_rows:
+                latest_seed_post_id = max(int(row["post_id"]) for row in new_seed_rows)
+    print("[oasis-runner] seed posts injected", flush=True)
+    emit_event("seed_post_created", round_no=1, count=len(seed_post_titles))
+
     last_seen = {"post": 0, "comment": 0, "like": 0, "dislike": 0, "comment_like": 0, "comment_dislike": 0}
     _emit_incremental_db_events(
         conn,
         profile_lookup=profile_lookup,
         user_map=None,
+        post_titles=seed_post_titles,
         last_seen=last_seen,
         round_no=1,
         emit_event=emit_event,
@@ -615,6 +774,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
                 conn,
                 profile_lookup=profile_lookup,
                 user_map=None,
+                post_titles=seed_post_titles,
                 last_seen=last_seen,
                 round_no=round_no,
                 emit_event=emit_event,
@@ -639,6 +799,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
                 conn,
                 profile_lookup=profile_lookup,
                 user_map=None,
+                post_titles=seed_post_titles,
                 last_seen=last_seen,
                 round_no=round_no,
                 emit_event=emit_event,
@@ -684,12 +845,15 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
         "SELECT post_id, user_id, content, created_at FROM post ORDER BY post_id"
     ).fetchall()
     for row in post_rows:
+        post_id = int(row["post_id"])
         interactions.append(
             {
                 "round_no": 1,
+                "post_id": post_id,
                 "actor_agent_id": user_map.get(int(row["user_id"]), f"agent-{int(row['user_id']) + 1:04d}"),
                 "target_agent_id": None,
                 "action_type": "create_post",
+                "title": seed_post_titles.get(post_id) or _extract_title(str(row["content"])),
                 "content": row["content"],
                 "delta": 0.08,
             }
@@ -831,6 +995,7 @@ def _emit_incremental_db_events(
     *,
     profile_lookup: dict[int, dict[str, Any]],
     user_map: dict[int, str] | None,
+    post_titles: dict[int, str],
     last_seen: dict[str, int],
     round_no: int,
     emit_event,
@@ -851,18 +1016,19 @@ def _emit_incremental_db_events(
     ).fetchall()
     for row in post_rows:
         user_id = int(row["user_id"])
+        post_id = int(row["post_id"])
         last_seen["post"] = max(last_seen["post"], int(row["post_id"]))
         profile = profile_lookup.get(user_id, {})
         emit_event(
             "post_created",
             round_no=round_no,
-            post_id=int(row["post_id"]),
+            post_id=post_id,
             actor_agent_id=resolved_user_map.get(user_id, f"agent-{user_id + 1:04d}"),
             actor_name=profile.get("display_name", f"Agent {user_id + 1}"),
             actor_subtitle=profile.get("subtitle", "Sampled persona"),
             actor_occupation=profile.get("occupation", "Resident"),
             actor_age=profile.get("age", 0),
-            title=_extract_title(str(row["content"])),
+            title=post_titles.get(post_id) or _extract_title(str(row["content"])),
             content=row["content"],
             created_at=row["created_at"],
         )
@@ -1026,10 +1192,11 @@ def _emit_incremental_db_events(
     ).fetchall():
         user_id = int(row["user_id"])
         engagement = int(row["comment_count"]) + int(row["like_count"]) + int(row["dislike_count"])
+        post_id = int(row["post_id"])
         top_threads.append(
             {
-                "post_id": int(row["post_id"]),
-                "title": _extract_title(str(row["content"])),
+            "post_id": post_id,
+            "title": post_titles.get(post_id) or _extract_title(str(row["content"])),
                 "author_agent_id": resolved_user_map.get(user_id, f"agent-{user_id + 1:04d}"),
                 "author_name": profile_lookup.get(user_id, {}).get("display_name", f"Agent {user_id + 1}"),
                 "engagement": engagement,

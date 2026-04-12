@@ -47,6 +47,7 @@ class SimulationStore:
                     actor_agent_id TEXT NOT NULL,
                     target_agent_id TEXT,
                     action_type TEXT NOT NULL,
+                    title TEXT,
                     content TEXT,
                     delta REAL DEFAULT 0,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -210,6 +211,10 @@ class SimulationStore:
             if "last_checkpoint_id" not in memory_sync_columns:
                 conn.execute("ALTER TABLE memory_sync_state ADD COLUMN last_checkpoint_id INTEGER NOT NULL DEFAULT 0")
 
+            interaction_columns = [r[1] for r in conn.execute("PRAGMA table_info(interactions)").fetchall()]
+            if "title" not in interaction_columns:
+                conn.execute("ALTER TABLE interactions ADD COLUMN title TEXT")
+
             interaction_count = int(conn.execute("SELECT COUNT(*) FROM interactions").fetchone()[0])
             interaction_fts_count = int(conn.execute("SELECT COUNT(*) FROM interactions_fts").fetchone()[0])
             if interaction_count and interaction_fts_count == 0:
@@ -270,8 +275,8 @@ class SimulationStore:
             conn.execute("DELETE FROM memory_sync_state WHERE simulation_id = ?", (simulation_id,))
             conn.executemany(
                 """
-                INSERT INTO interactions(simulation_id, round_no, actor_agent_id, target_agent_id, action_type, content, delta)
-                VALUES(?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO interactions(simulation_id, round_no, actor_agent_id, target_agent_id, action_type, title, content, delta)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -280,6 +285,7 @@ class SimulationStore:
                         i["actor_agent_id"],
                         i.get("target_agent_id"),
                         i["action_type"],
+                        i.get("title"),
                         i.get("content"),
                         i.get("delta", 0),
                     )

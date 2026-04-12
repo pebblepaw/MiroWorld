@@ -782,13 +782,6 @@ export default function ReportChat() {
                               {' -> '}
                               {formatMetricValue(section.metric.final_value, section.metric.metric_unit, section.type)}
                             </span>
-                            <span className={`text-sm font-mono ${
-                              section.metric.direction === 'up' ? 'text-emerald-400' :
-                              section.metric.direction === 'down' ? 'text-red-400' :
-                              'text-muted-foreground'
-                            }`}>
-                              {formatMetricDelta(section.metric.delta, section.metric.metric_unit, section.type)}
-                            </span>
                           </div>
                         )}
                         <MarkdownContent className="text-sm text-foreground/80">{section.answer}</MarkdownContent>

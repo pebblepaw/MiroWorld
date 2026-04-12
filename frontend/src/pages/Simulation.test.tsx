@@ -589,6 +589,87 @@ describe("Simulation", () => {
     expect(screen.getByText("Persisted Commenter")).toBeInTheDocument();
   });
 
+  it("renders seeded titles exactly and strips markdown formatting from Screen 3 discourse", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/simulation/state")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen3-plain-text",
+            status: "idle",
+            event_count: 0,
+            last_round: 0,
+            platform: "reddit",
+            planned_rounds: 5,
+            current_round: 0,
+            elapsed_seconds: 0,
+            estimated_total_seconds: 0,
+            estimated_remaining_seconds: 0,
+            counters: { posts: 0, comments: 0, reactions: 0, active_authors: 0 },
+            checkpoint_status: {},
+            top_threads: [],
+            discussion_momentum: {},
+            latest_metrics: {},
+            recent_events: [],
+          }),
+        } as Response;
+      }
+      if (url.includes("/simulate")) {
+        return {
+          ok: true,
+          json: async () => ({ session_id: "session-screen3-plain-text", status: "running" }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedStage3Context />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /start simulation/i }));
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.emit("post_created", {
+        event_type: "post_created",
+        round_no: 1,
+        actor_agent_id: "agent-0001",
+        actor_name: "Amir",
+        actor_subtitle: "Woodlands · Student",
+        actor_occupation: "Student",
+        post_id: 11,
+        title: "[Will this keep transport affordable?] (Seeded post)",
+        content: "**Fare relief** matters for lower-income riders.\n- Keep the sign-up simple.",
+      });
+      source.emit("comment_created", {
+        event_type: "comment_created",
+        round_no: 1,
+        actor_agent_id: "agent-0002",
+        actor_name: "Rachel",
+        actor_subtitle: "Woodlands · Coach",
+        post_id: 11,
+        comment_id: 20,
+        content: "**Agreed**.\n- The application process should stay short.",
+      });
+    });
+
+    expect(await screen.findByText("[Will this keep transport affordable?] (Seeded post)")).toBeInTheDocument();
+    expect(screen.getByText(/Fare relief matters for lower-income riders\./)).toBeInTheDocument();
+    expect(screen.getByText(/Keep the sign-up simple\./)).toBeInTheDocument();
+    expect(screen.getByText(/Agreed\./)).toBeInTheDocument();
+    expect(screen.queryByText(/\*\*Fare relief\*\*/)).not.toBeInTheDocument();
+  });
+
   it("hydrates screen 3 state from the backend when the context state is missing", async () => {
     global.fetch = vi.fn().mockResolvedValueOnce({
       ok: true,

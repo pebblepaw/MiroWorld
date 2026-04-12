@@ -11,7 +11,6 @@ import {
 import { Activity, Flame, GitBranch, Megaphone, Users2 } from "lucide-react";
 
 import { useApp } from "@/contexts/AppContext";
-import { MarkdownContent } from "@/components/MarkdownContent";
 import { generateAgents, type Agent } from "@/data/mockData";
 import {
   getAnalyticsAgentStances,
@@ -21,6 +20,7 @@ import {
   getAnalyticsPolarization,
   isLiveBootMode,
 } from "@/lib/console-api";
+import { formatPlainText } from "@/lib/plain-text";
 import { MetricSelector } from "@/components/MetricSelector";
 
 type PolarizationPoint = {
@@ -847,13 +847,12 @@ function OpinionFlowCard({ data, loading }: { data: OpinionFlowData; loading: bo
     return <EmptyAnalyticsCard title="Opinion Flow" label="No opinion flow data yet." />;
   }
   const safeData = data;
-  const total = STANCE_ORDER.reduce((sum, stance) => sum + safeData.initial[stance], 0);
+  const initialTotal = STANCE_ORDER.reduce((sum, stance) => sum + safeData.initial[stance], 0);
+  const finalTotal = STANCE_ORDER.reduce((sum, stance) => sum + safeData.final[stance], 0);
   const maxFlow = Math.max(...safeData.flows.map((flow) => flow.count), 1);
-  const rowY: Record<Stance, number> = {
-    supporter: 28,
-    neutral: 86,
-    dissenter: 144,
-  };
+  const initialLayout = buildFlowDistributionLayout(safeData.initial, initialTotal);
+  const finalLayout = buildFlowDistributionLayout(safeData.final, finalTotal);
+  const viewBoxHeight = Math.max(initialLayout.totalHeight, finalLayout.totalHeight, 1);
 
   return (
     <section className="surface-card p-5">
@@ -863,16 +862,18 @@ function OpinionFlowCard({ data, loading }: { data: OpinionFlowData; loading: bo
       </div>
 
       <div className="grid grid-cols-[94px_minmax(0,1fr)_94px] gap-3">
-        <FlowDistributionColumn title="Initial" values={safeData.initial} total={total} />
+        <FlowDistributionColumn title="Initial" values={safeData.initial} total={initialTotal} layout={initialLayout} />
 
         <div className="h-[178px] rounded border border-border bg-muted/20 p-2">
-          <svg viewBox="0 0 220 172" className="h-full w-full" preserveAspectRatio="none">
+          <svg viewBox={`0 0 220 ${viewBoxHeight}`} className="h-full w-full" preserveAspectRatio="none">
             {safeData.flows.map((flow, index) => {
               const width = Math.max(2, (flow.count / maxFlow) * 14);
+              const fromBand = initialLayout.bands[flow.from];
+              const toBand = finalLayout.bands[flow.to];
               return (
                 <path
                   key={`${flow.from}-${flow.to}-${index}`}
-                  d={`M 0 ${rowY[flow.from]} C 80 ${rowY[flow.from]}, 140 ${rowY[flow.to]}, 220 ${rowY[flow.to]}`}
+                  d={`M 0 ${fromBand.center} C 80 ${fromBand.center}, 140 ${toBand.center}, 220 ${toBand.center}`}
                   fill="none"
                   stroke={stanceColor(flow.to)}
                   strokeOpacity={0.55}
@@ -883,7 +884,7 @@ function OpinionFlowCard({ data, loading }: { data: OpinionFlowData; loading: bo
           </svg>
         </div>
 
-        <FlowDistributionColumn title="Final" values={safeData.final} total={total} />
+        <FlowDistributionColumn title="Final" values={safeData.final} total={finalTotal} layout={finalLayout} />
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -902,10 +903,12 @@ function FlowDistributionColumn({
   title,
   values,
   total,
+  layout,
 }: {
   title: string;
   values: Record<Stance, number>;
   total: number;
+  layout: FlowDistributionLayout;
 }) {
   return (
     <div className="rounded border border-border bg-muted/20 p-2">
@@ -914,7 +917,7 @@ function FlowDistributionColumn({
         {STANCE_ORDER.map((stance) => {
           const count = values[stance];
           const percent = count / total;
-          const height = Math.max(26, Math.round(percent * 112));
+          const height = layout.bands[stance].height;
           return (
             <div
               key={stance}
@@ -932,6 +935,43 @@ function FlowDistributionColumn({
       </div>
     </div>
   );
+}
+
+type FlowDistributionBand = {
+  top: number;
+  center: number;
+  height: number;
+};
+
+type FlowDistributionLayout = {
+  totalHeight: number;
+  bands: Record<Stance, FlowDistributionBand>;
+};
+
+function buildFlowDistributionLayout(values: Record<Stance, number>, total: number): FlowDistributionLayout {
+  const gap = 6;
+  const bands = {} as Record<Stance, FlowDistributionBand>;
+  let cursor = 0;
+
+  STANCE_ORDER.forEach((stance, index) => {
+    const count = values[stance];
+    const percent = total > 0 ? count / total : 0;
+    const height = Math.max(26, Math.round(percent * 112));
+    bands[stance] = {
+      top: cursor,
+      center: cursor + (height / 2),
+      height,
+    };
+    cursor += height;
+    if (index < STANCE_ORDER.length - 1) {
+      cursor += gap;
+    }
+  });
+
+  return {
+    totalHeight: cursor,
+    bands,
+  };
 }
 
 function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loading: boolean }) {
@@ -984,7 +1024,7 @@ function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loadin
                     {Math.round(leader.influence * 100)}%
                   </span>
                 </div>
-                <MarkdownContent className="text-xs text-muted-foreground">{leader.topPost || leader.topView || "No viewpoint summary available."}</MarkdownContent>
+                <p className="whitespace-pre-line text-xs text-muted-foreground">{formatPlainText(leader.topPost || leader.topView || "No viewpoint summary available.")}</p>
               </article>
             ))}
           </div>
@@ -1038,7 +1078,7 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
             </div>
 
             <h4 className="text-sm font-semibold leading-snug text-foreground">{post.title}</h4>
-            <MarkdownContent className="text-sm text-muted-foreground mt-2" clampLines={6}>{post.content}</MarkdownContent>
+            <p className="mt-2 line-clamp-6 whitespace-pre-line text-sm text-muted-foreground">{formatPlainText(post.content)}</p>
 
             <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-mono text-muted-foreground">
               <span className="text-[hsl(var(--data-green))]">▲ {post.likes}</span>
@@ -1058,7 +1098,7 @@ function ViralPostsCard({ posts, loading }: { posts: ViralPost[]; loading: boole
                       {comment.stance}
                     </span>
                   </div>
-                  <MarkdownContent className="text-xs text-muted-foreground">{comment.content}</MarkdownContent>
+                  <p className="whitespace-pre-line text-xs text-muted-foreground">{formatPlainText(comment.content)}</p>
                   <div className="mt-1.5 flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
                     <span className="text-[hsl(var(--data-green))]">▲ {comment.likes}</span>
                     <span className="text-[hsl(var(--data-red))]">▼ {comment.dislikes}</span>
@@ -1241,21 +1281,6 @@ function normalizeViewpointText(value: unknown): string {
     return text.replace(/^analysis question\s*\d+\s*[:-]?\s*/i, "").trim();
   }
   return text;
-}
-
-function formatPlainText(value: unknown): string {
-  const text = String(value ?? "");
-  return text
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s{0,3}[-*+]\s+/gm, "")
-    .replace(/^\s{0,3}\d+\.\s+/gm, "")
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
-    .replace(/\s+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 function normalizeTopPostText(value: unknown): string {

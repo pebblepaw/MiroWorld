@@ -2,11 +2,11 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ArrowRight, Flame, Loader2, MessageSquare, Play, Clock, TrendingUp, Sparkles, Users, Zap } from "lucide-react";
 
 import { GlassCard } from "@/components/GlassCard";
-import { MarkdownContent } from "@/components/MarkdownContent";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useApp } from "@/contexts/AppContext";
+import type { SimPost } from "@/data/mockData";
 import { toast } from "@/hooks/use-toast";
 import {
   buildSimulationStreamUrl,
@@ -18,6 +18,7 @@ import {
   SimulationState,
   startSimulation,
 } from "@/lib/console-api";
+import { formatPlainText } from "@/lib/plain-text";
 
 type FeedComment = {
   id: string;
@@ -884,7 +885,7 @@ export default function Simulation() {
                       </div>
                       
                       <h4 className="text-sm font-semibold text-foreground mb-1.5 leading-tight">{thread.title}</h4>
-                      <MarkdownContent className="text-body text-muted-foreground" clampLines={6}>{thread.content}</MarkdownContent>
+                      <p className="line-clamp-6 whitespace-pre-line text-body text-muted-foreground">{formatPlainText(thread.content)}</p>
                       
                       <div className="flex items-center gap-5 mt-3 text-xs font-mono text-muted-foreground">
                         <span className="text-[hsl(var(--data-green))]">▲ {thread.likes}</span>
@@ -907,7 +908,7 @@ export default function Simulation() {
                                   <span className="text-[hsl(var(--data-red))]">▼ {comment.dislikes}</span>
                                 </span>
                               </div>
-                              <MarkdownContent className="text-xs text-muted-foreground">{comment.content}</MarkdownContent>
+                              <p className="whitespace-pre-line text-xs text-muted-foreground">{formatPlainText(comment.content)}</p>
                             </div>
                           ))}
                           {thread.comments.length > 3 && (
@@ -1150,7 +1151,7 @@ function formatSeconds(value: number | null | undefined): string {
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
 
-function simPostToFeedThread(post: import("@/data/mockData").SimPost): FeedThread {
+function simPostToFeedThread(post: SimPost): FeedThread {
   return {
     id: post.id,
     postId: post.id,
