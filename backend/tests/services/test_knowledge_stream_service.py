@@ -18,6 +18,16 @@ def _make_settings(tmp_path: Path) -> Settings:
     return Settings(simulation_db_path=str(tmp_path / "simulation.db"))
 
 
+def _stub_country_dataset_ready(service: ConsoleService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def fake_ensure_country_ready(country: str) -> str:
+        code = str(country).strip().lower()
+        if code == "singapore":
+            code = "sg"
+        return str(tmp_path / f"{code}_nemotron_cc.parquet")
+
+    monkeypatch.setattr(service.country_datasets, "ensure_country_ready", fake_ensure_country_ready)
+
+
 def _event_names(chunks: list[str]) -> list[str]:
     names: list[str] = []
     for chunk in chunks:
@@ -232,6 +242,7 @@ def test_console_process_knowledge_publishes_stream_events(tmp_path: Path, monke
 def test_console_process_knowledge_records_runtime_failure_detail(tmp_path: Path, monkeypatch) -> None:
     settings = _make_settings(tmp_path)
     service = ConsoleService(settings)
+    _stub_country_dataset_ready(service, monkeypatch, tmp_path)
     session_id = "session-usa-failure"
     service.create_v2_session(
         country="usa",
@@ -275,9 +286,10 @@ def test_console_process_knowledge_records_runtime_failure_detail(tmp_path: Path
     assert state["last_error"] == "USA LightRAG extraction failed: malformed graph payload"
 
 
-def test_preview_population_surfaces_prior_knowledge_failure(tmp_path: Path) -> None:
+def test_preview_population_surfaces_prior_knowledge_failure(tmp_path: Path, monkeypatch) -> None:
     settings = _make_settings(tmp_path)
     service = ConsoleService(settings)
+    _stub_country_dataset_ready(service, monkeypatch, tmp_path)
     session_id = "session-usa-preview"
     service.create_v2_session(
         country="usa",
@@ -314,6 +326,7 @@ def test_preview_population_surfaces_prior_knowledge_failure(tmp_path: Path) -> 
 def test_process_uploaded_knowledge_persists_artifact_for_usa_session(tmp_path: Path, monkeypatch) -> None:
     settings = _make_settings(tmp_path)
     service = ConsoleService(settings)
+    _stub_country_dataset_ready(service, monkeypatch, tmp_path)
     session_id = "session-usa-upload"
     service.create_v2_session(
         country="usa",
@@ -388,6 +401,7 @@ def test_process_uploaded_knowledge_persists_artifact_for_usa_session(tmp_path: 
 def test_process_knowledge_clears_prior_artifacts_and_stream_state(tmp_path: Path, monkeypatch) -> None:
     settings = _make_settings(tmp_path)
     service = ConsoleService(settings)
+    _stub_country_dataset_ready(service, monkeypatch, tmp_path)
     session_id = "session-reset"
     service.create_v2_session(
         country="usa",
@@ -495,6 +509,7 @@ def test_preview_population_uses_country_dataset_path_and_clears_downstream_arti
 ) -> None:
     settings = _make_settings(tmp_path)
     service = ConsoleService(settings)
+    _stub_country_dataset_ready(service, monkeypatch, tmp_path)
     session_id = "session-preview"
     service.create_v2_session(
         country="usa",
@@ -629,9 +644,10 @@ def test_preview_population_uses_country_dataset_path_and_clears_downstream_arti
     assert service.store.get_memory_sync_state(session_id) is None
 
 
-def test_update_v2_session_config_clears_derived_artifacts_when_country_changes(tmp_path: Path) -> None:
+def test_update_v2_session_config_clears_derived_artifacts_when_country_changes(tmp_path: Path, monkeypatch) -> None:
     settings = _make_settings(tmp_path)
     service = ConsoleService(settings)
+    _stub_country_dataset_ready(service, monkeypatch, tmp_path)
     session_id = "session-config-reset"
     service.create_v2_session(
         country="singapore",
