@@ -1080,7 +1080,7 @@ class ReportService:
                 response = _clean_report_text(rewrite)
             return response
         except Exception:  # noqa: BLE001
-            return "The available interactions indicate this question can be answered from observed cohort arguments and sentiment shifts."
+            return "Insufficient interaction data to generate this section. The simulation may not have produced enough relevant discussion on this topic."
 
     def _resolve_report_writer_instructions(self, use_case: str | None) -> list[str]:
         defaults = [

@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import Markdown from "react-markdown";
 
 interface MarkdownContentProps {
@@ -46,12 +46,26 @@ export function MarkdownContent({ children, className = "", clampLines }: Markdo
 
   const text = preprocessMarkdown(String(children ?? "").trim());
 
-  // Detect whether content is actually overflowing the clamp
-  useEffect(() => {
+  // Robust overflow detection: check after render, after fonts load, and on resize
+  const checkOverflow = useCallback(() => {
     if (!clampLines || !contentRef.current) return;
     const el = contentRef.current;
     setClamped(el.scrollHeight > el.clientHeight + 2);
-  }, [text, clampLines]);
+  }, [clampLines]);
+
+  useEffect(() => {
+    checkOverflow();
+    // Re-check after fonts settle (async font loading can change line heights)
+    const raf = requestAnimationFrame(checkOverflow);
+    return () => cancelAnimationFrame(raf);
+  }, [text, clampLines, checkOverflow]);
+
+  useEffect(() => {
+    if (!clampLines || !contentRef.current) return;
+    const observer = new ResizeObserver(checkOverflow);
+    observer.observe(contentRef.current);
+    return () => observer.disconnect();
+  }, [clampLines, checkOverflow]);
 
   if (!text) return null;
 
@@ -80,9 +94,9 @@ export function MarkdownContent({ children, className = "", clampLines }: Markdo
         <button
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
-          className="text-[11px] font-medium text-primary hover:text-primary/80 mt-1 transition-colors"
+          className="text-xs font-medium text-primary hover:text-primary/80 mt-1.5 transition-colors flex items-center gap-1"
         >
-          {expanded ? "Show less" : "Read more"}
+          {expanded ? "↑ Show less" : "↓ Show more"}
         </button>
       )}
     </div>

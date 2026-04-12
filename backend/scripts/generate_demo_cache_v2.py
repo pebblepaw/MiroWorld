@@ -80,6 +80,7 @@ def main() -> None:
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--model", default=None, help="Override model (skip fallback)")
     parser.add_argument("--provider", default=None, help="Override provider")
+    parser.add_argument("--embed-model", default=None, help="Override embedding model name")
     parser.add_argument("--skip-knowledge", action="store_true")
     parser.add_argument("--skip-simulation", action="store_true")
     parser.add_argument("--session-id", default=None, help="Resume from existing session")
@@ -108,12 +109,15 @@ def main() -> None:
                 continue
             _log(f"Creating session with provider={provider} model={model}")
             try:
-                resp = requests.post(f"{api}/session", json={
+                session_body: dict[str, Any] = {
                     "mode": "live",
                     "model_provider": provider,
                     "model_name": model,
                     "api_key": api_key,
-                }, timeout=30)
+                }
+                if args.embed_model:
+                    session_body["embed_model_name"] = args.embed_model
+                resp = requests.post(f"{api}/session", json=session_body, timeout=30)
                 data = _ok("session", resp)
                 session_id = data["session_id"]
                 model_used = model
