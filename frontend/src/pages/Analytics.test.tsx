@@ -507,7 +507,9 @@ describe("Analytics", () => {
     expect(mapSection).toHaveClass("surface-card");
     expect(document.querySelector("div.mx-auto.flex.w-full.max-w-\\[1700px\\].flex-col.gap-5.px-6.py-6")).toBeTruthy();
     expect(screen.getByText("Simulation Analytics").closest("header")).toHaveClass("surface-card");
-    expect(mapSection?.querySelector(".flex.flex-wrap.gap-x-8.gap-y-10")).toBeTruthy();
+    await waitFor(() => {
+      expect(mapSection?.querySelector(".flex.flex-wrap.gap-x-8.gap-y-10")).toBeTruthy();
+    });
     expect(screen.getByTitle("Supporter One · positive")).toHaveStyle({ backgroundColor: "hsl(var(--data-green))" });
     expect(screen.getByTitle("Neutral Two · neutral")).toHaveStyle({ backgroundColor: "hsl(0 0% 45%)" });
     expect(screen.getByTitle("Dissenter Three · negative")).toHaveStyle({ backgroundColor: "hsl(var(--data-red))" });
