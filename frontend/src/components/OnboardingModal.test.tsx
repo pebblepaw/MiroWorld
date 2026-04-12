@@ -44,6 +44,7 @@ describe("OnboardingModal", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+    window.sessionStorage.clear();
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
 
@@ -65,6 +66,7 @@ describe("OnboardingModal", () => {
   });
 
   afterEach(() => {
+    window.sessionStorage.clear();
     global.fetch = originalFetch;
     vi.unstubAllEnvs();
     vi.restoreAllMocks();

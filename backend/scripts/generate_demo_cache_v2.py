@@ -20,6 +20,8 @@ from typing import Any
 
 import requests
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 # ── Config ────────────────────────────────────────────────────────────
 SOURCE_URL = (
     "https://www.singaporebudget.gov.sg/budget-speech/budget-statement/"
@@ -28,7 +30,7 @@ SOURCE_URL = (
 COUNTRY = "singapore"
 USE_CASE = "public-policy-testing"
 PROVIDER = "google"
-AGENT_COUNT = 100
+AGENT_COUNT = 50
 ROUNDS = 10
 
 # Models to try in order (fallback on rate-limit)
@@ -39,6 +41,7 @@ MODEL_CANDIDATES = [
     ("google", "gemini-2.0-flash-lite", "GEMINI_API"),
     ("openai", "gpt-4.1-mini", "OPENAI_API"),
     ("openai", "gpt-4.1-nano", "OPENAI_API"),
+    ("ollama", "qwen3:4b-instruct-2507-q4_K_M", None),
 ]
 
 EXTRA_QUESTION = {
@@ -64,6 +67,17 @@ def _write_json(path: Path, data: dict) -> None:
     _log(f"  Wrote {path} ({path.stat().st_size / 1024:.0f} KB)")
 
 
+def _provider_key_env(provider: str) -> str | None:
+    normalized = str(provider).strip().lower()
+    if normalized == "google":
+        return "GEMINI_API"
+    if normalized == "openai":
+        return "OPENAI_API"
+    if normalized == "openrouter":
+        return "OPENROUTER_API_KEY"
+    return None
+
+
 def _ok(label: str, resp: requests.Response) -> dict:
     if resp.status_code >= 400:
         _log(f"  FAILED {label}: {resp.status_code}")
@@ -81,6 +95,10 @@ def main() -> None:
     parser.add_argument("--model", default=None, help="Override model (skip fallback)")
     parser.add_argument("--provider", default=None, help="Override provider")
     parser.add_argument("--embed-model", default=None, help="Override embedding model name")
+    parser.add_argument("--source-url", default=SOURCE_URL, help="Source URL to scrape for the demo cache")
+    parser.add_argument("--country", default=COUNTRY, help="Country code for the demo session")
+    parser.add_argument("--use-case", default=USE_CASE, help="Use case code for the demo session")
+    parser.add_argument("--extra-question", default=EXTRA_QUESTION["question"], help="Extra analysis question to append to the demo config")
     parser.add_argument("--agents", type=int, default=None, help="Override agent count")
     parser.add_argument("--rounds", type=int, default=None, help="Override round count")
     parser.add_argument("--skip-knowledge", action="store_true")
@@ -90,12 +108,20 @@ def main() -> None:
 
     base = args.base_url.rstrip("/")
     api = f"{base}/api/v2/console"
+    compat_api = f"{base}/api/v2"
 
     agent_count = args.agents or AGENT_COUNT
     rounds = args.rounds or ROUNDS
+    source_url = str(args.source_url).strip() or SOURCE_URL
+    country = str(args.country).strip().lower() or COUNTRY
+    use_case = str(args.use_case).strip().lower() or USE_CASE
+    extra_question = {
+        **EXTRA_QUESTION,
+        "question": str(args.extra_question).strip() or EXTRA_QUESTION["question"],
+    }
 
     if args.model and args.provider:
-        candidates = [(args.provider, args.model, "GEMINI_API" if args.provider == "google" else "OPENAI_API")]
+        candidates = [(args.provider, args.model, _provider_key_env(args.provider))]
     elif args.model:
         candidates = [("google", args.model, "GEMINI_API")]
     else:
@@ -108,21 +134,21 @@ def main() -> None:
 
     if not session_id:
         for provider, model, key_env in candidates:
-            api_key = args.api_key or os.getenv(key_env, "")
-            if not api_key:
-                _log(f"  Skipping {provider}/{model}: no {key_env} env var")
-                continue
+            api_key = args.api_key or (os.getenv(key_env, "") if key_env else "")
+            if key_env and not api_key:
+                _log(f"  No {key_env} env var for {provider}/{model}; relying on backend-configured credentials if available")
             _log(f"Creating session with provider={provider} model={model}")
             try:
                 session_body: dict[str, Any] = {
+                    "country": country,
+                    "use_case": use_case,
+                    "provider": "gemini" if provider == "google" else provider,
+                    "model": model,
                     "mode": "live",
-                    "model_provider": provider,
-                    "model_name": model,
-                    "api_key": api_key,
                 }
-                if args.embed_model:
-                    session_body["embed_model_name"] = args.embed_model
-                resp = requests.post(f"{api}/session", json=session_body, timeout=30)
+                if api_key:
+                    session_body["api_key"] = api_key
+                resp = requests.post(f"{compat_api}/session/create", json=session_body, timeout=30)
                 data = _ok("session", resp)
                 session_id = data["session_id"]
                 model_used = model
@@ -141,33 +167,33 @@ def main() -> None:
         _log(f"Resuming session: {session_id}")
 
     # Resolve the api_key for the winning provider
-    active_api_key = args.api_key or os.getenv(
-        "GEMINI_API" if provider_used == "google" else "OPENAI_API", ""
-    )
+    active_api_key = args.api_key or (os.getenv(_provider_key_env(provider_used), "") if _provider_key_env(provider_used) else "")
 
     # ── 2. Store config with extra question ───────────────────────────
     _log("Updating session config with extra question...")
     # First get default analysis questions
     try:
-        aq_resp = requests.get(f"{api}/session/{session_id}/analysis-questions", timeout=15)
+        aq_resp = requests.get(f"{compat_api}/session/{session_id}/analysis-questions", timeout=15)
         default_questions = aq_resp.json().get("questions", []) if aq_resp.status_code < 400 else []
     except Exception:
         default_questions = []
 
-    all_questions = default_questions + [EXTRA_QUESTION]
+    all_questions = default_questions + [extra_question]
     _log(f"  Total analysis questions: {len(all_questions)}")
 
-    resp = requests.patch(f"{api}/session/{session_id}/config", json={
-        "country": COUNTRY,
-        "use_case": USE_CASE,
-        "provider": provider_used,
+    config_patch: dict[str, Any] = {
+        "country": country,
+        "use_case": use_case,
+        "provider": "gemini" if provider_used == "google" else provider_used,
         "model": model_used,
-        "api_key": active_api_key,
         "analysis_questions": all_questions,
-    }, timeout=15)
+    }
+    if active_api_key:
+        config_patch["api_key"] = active_api_key
+    resp = requests.patch(f"{api}/session/{session_id}/config", json=config_patch, timeout=15)
     _ok("config/update", resp)
 
-    scratch = Path("backend/data/demo-run")
+    scratch = REPO_ROOT / "backend/data/demo-run"
     scratch.mkdir(parents=True, exist_ok=True)
 
     # ── 3. Knowledge extraction ───────────────────────────────────────
@@ -175,14 +201,14 @@ def main() -> None:
     if not args.skip_knowledge:
         _log("Scraping URL...")
         resp = requests.post(f"{api}/session/{session_id}/scrape",
-                             json={"url": SOURCE_URL}, timeout=120)
+                             json={"url": source_url}, timeout=120)
         scrape = _ok("scrape", resp)
         _log(f"  Scraped {scrape.get('length', 0)} chars: {scrape.get('title', '')[:80]}")
 
         _log("Processing knowledge graph...")
         resp = requests.post(f"{api}/session/{session_id}/knowledge/process", json={
             "document_text": scrape.get("text", ""),
-            "source_path": SOURCE_URL,
+            "source_path": source_url,
         }, timeout=300)
         knowledge = _ok("knowledge/process", resp)
         _write_json(scratch / "01_knowledge.json", knowledge)
@@ -228,7 +254,7 @@ def main() -> None:
             doc = knowledge.get("document") or {}
             policy_summary = str(doc.get("text") or doc.get("content") or "").strip()[:2000]
         if not policy_summary:
-            policy_summary = f"Policy analysis from {SOURCE_URL}"
+            policy_summary = f"Policy analysis from {source_url}"
         _log(f"Starting simulation ({rounds} rounds, {agent_count} agents)...")
         resp = requests.post(f"{api}/session/{session_id}/simulate", json={
             "rounds": rounds,
@@ -335,16 +361,18 @@ def main() -> None:
             "status": "simulation_completed",
         },
         "source_run": {
-            "source_url": SOURCE_URL,
-            "country": COUNTRY,
-            "use_case": USE_CASE,
+            "source_url": source_url,
+            "country": country,
+            "use_case": use_case,
             "provider": provider_used,
             "model": model_used,
             "agent_count": agent_count,
             "rounds": rounds,
             "controversy_boost": 0.0,
+            "analysis_questions": all_questions,
             "generated_at": _now(),
         },
+        "analysis_questions": all_questions,
         "knowledge": knowledge,
         "population": population,
         "simulation": simulation_state,
@@ -360,8 +388,8 @@ def main() -> None:
         "analytics": analytics,
     }
 
-    backend_path = Path("backend/data/demo-output.json")
-    frontend_path = Path("frontend/public/demo-output.json")
+    backend_path = REPO_ROOT / "backend/data/demo-output.json"
+    frontend_path = REPO_ROOT / "frontend/public/demo-output.json"
     _write_json(backend_path, output)
     _write_json(frontend_path, output)
 

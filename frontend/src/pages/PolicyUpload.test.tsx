@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { forwardRef, useEffect } from "react";
+import { forwardRef, useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PolicyUpload from "@/pages/PolicyUpload";
 import { AppProvider, useApp } from "@/contexts/AppContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 
 const { forceGraphSpy } = vi.hoisted(() => ({
   forceGraphSpy: vi.fn(),
@@ -76,9 +77,18 @@ describe("PolicyUpload", () => {
   const originalFetch = global.fetch;
   const originalEventSource = global.EventSource;
 
+  function renderWithProviders(children: ReactNode) {
+    return render(
+      <ThemeProvider>
+        <AppProvider>{children}</AppProvider>
+      </ThemeProvider>,
+    );
+  }
+
   beforeEach(() => {
     forceGraphSpy.mockClear();
     MockEventSource.reset();
+    window.sessionStorage.clear();
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     global.fetch = vi.fn().mockImplementation(createPolicyFetch({
       processArtifact: baseKnowledgeArtifact(),
@@ -86,6 +96,7 @@ describe("PolicyUpload", () => {
   });
 
   afterEach(() => {
+    window.sessionStorage.clear();
     global.fetch = originalFetch;
     global.EventSource = originalEventSource;
     vi.unstubAllEnvs();
@@ -105,11 +116,7 @@ describe("PolicyUpload", () => {
       }),
     ) as typeof fetch;
 
-    render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    renderWithProviders(<PolicyUpload />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(["transport subsidies for seniors"], "budget.txt", { type: "text/plain" });
@@ -214,16 +221,80 @@ describe("PolicyUpload", () => {
       } as Response;
     }) as typeof fetch;
 
-    render(
-      <AppProvider>
+    renderWithProviders(
+      <>
         <SeedAnalysisSession />
         <PolicyUpload />
-      </AppProvider>,
+      </>,
     );
 
     expect(await screen.findByText("Analysis Questions")).toBeInTheDocument();
     expect(await screen.findByText("Do you approve of this policy? Rate 1-10.")).toBeInTheDocument();
     expect(screen.getByText("PRESET")).toBeInTheDocument();
+    expect(screen.getByTestId("question-count")).toHaveTextContent("1");
+  });
+
+  it("preserves bundled demo questions while hydrating a demo-static session", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "demo-static");
+
+    function SeedAnalysisSession() {
+      const { setSessionId, setUseCase, analysisQuestions } = useApp();
+
+      useEffect(() => {
+        setSessionId("session-static-demo");
+        setUseCase("public-policy-testing");
+      }, [setSessionId, setUseCase]);
+
+      return <span data-testid="question-count">{analysisQuestions.length}</span>;
+    }
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith("/demo-output.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session: { session_id: "session-static-demo" },
+            source_run: {
+              country: "singapore",
+              provider: "google",
+              model: "gemini-2.5-flash-lite",
+              use_case: "public-policy-testing",
+              source_url: "https://www.singaporebudget.gov.sg/budget-speech/budget-statement/c-harness-ai-as-a-strategic-advantage#Harness-AI-as-a-Strategic-Advantage",
+            },
+            analysis_questions: [
+              {
+                question: "Do you support this AI policy direction? Rate 1-10.",
+                type: "scale",
+                metric_name: "policy_support",
+                metric_label: "Policy Support",
+                metric_unit: "/10",
+                report_title: "Policy Support",
+                tooltip: "Average support rating for the AI policy direction.",
+              },
+            ],
+          }),
+        } as Response;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ detail: `Unhandled fetch: ${url}` }),
+      } as Response;
+    }) as typeof fetch;
+
+    renderWithProviders(
+      <>
+        <SeedAnalysisSession />
+        <PolicyUpload />
+      </>,
+    );
+
+    expect(await screen.findByDisplayValue("https://www.singaporebudget.gov.sg/budget-speech/budget-statement/c-harness-ai-as-a-strategic-advantage#Harness-AI-as-a-Strategic-Advantage")).toBeInTheDocument();
+    expect(await screen.findByText("Do you support this AI policy direction? Rate 1-10.")).toBeInTheDocument();
     expect(screen.getByTestId("question-count")).toHaveTextContent("1");
   });
 
@@ -336,11 +407,11 @@ describe("PolicyUpload", () => {
     });
     global.fetch = fetchSpy as typeof fetch;
 
-    render(
-      <AppProvider>
+    renderWithProviders(
+      <>
         <SeedAnalysisSession />
         <PolicyUpload />
-      </AppProvider>,
+      </>,
     );
 
     await screen.findByText("How interested are you in this product? Rate 1-10.");
@@ -457,11 +528,11 @@ describe("PolicyUpload", () => {
       } as Response;
     }) as typeof fetch;
 
-    render(
-      <AppProvider>
+    renderWithProviders(
+      <>
         <SessionEcho />
         <PolicyUpload />
-      </AppProvider>,
+      </>,
     );
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -479,11 +550,7 @@ describe("PolicyUpload", () => {
   });
 
   it("accepts drag-and-drop uploads into the file list", async () => {
-    render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    renderWithProviders(<PolicyUpload />);
 
     const uploadZone = screen.getByText("Drop documents here").closest("label");
     expect(uploadZone).not.toBeNull();
@@ -530,11 +597,7 @@ describe("PolicyUpload", () => {
       } as Response);
     }) as typeof fetch;
 
-    render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    renderWithProviders(<PolicyUpload />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(fileInput, {
@@ -596,11 +659,7 @@ describe("PolicyUpload", () => {
       } as Response;
     }) as typeof fetch;
 
-    render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    renderWithProviders(<PolicyUpload />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(fileInput, {
@@ -728,11 +787,7 @@ describe("PolicyUpload", () => {
     });
     global.fetch = fetchSpy as typeof fetch;
 
-    render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    renderWithProviders(<PolicyUpload />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(fileInput, {
@@ -752,11 +807,7 @@ describe("PolicyUpload", () => {
       processArtifact: baseKnowledgeArtifact(),
     })) as typeof fetch;
 
-    const { container } = render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    const { container } = renderWithProviders(<PolicyUpload />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(fileInput, {
@@ -834,11 +885,7 @@ describe("PolicyUpload", () => {
       processArtifact: baseKnowledgeArtifact(),
     })) as typeof fetch;
 
-    render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    renderWithProviders(<PolicyUpload />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(fileInput, {
@@ -922,11 +969,7 @@ describe("PolicyUpload", () => {
       }),
     ) as typeof fetch;
 
-    render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    renderWithProviders(<PolicyUpload />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(fileInput, {
@@ -956,11 +999,7 @@ describe("PolicyUpload", () => {
       }),
     ) as typeof fetch;
 
-    render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    renderWithProviders(<PolicyUpload />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(fileInput, {
@@ -1030,11 +1069,7 @@ describe("PolicyUpload", () => {
       } as Response;
     }) as typeof fetch;
 
-    render(
-      <AppProvider>
-        <PolicyUpload />
-      </AppProvider>,
-    );
+    renderWithProviders(<PolicyUpload />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(fileInput, {

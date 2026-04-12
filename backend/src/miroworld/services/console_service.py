@@ -537,6 +537,10 @@ class ConsoleService:
             for item in config.get_analysis_questions(str(use_case_payload.get("code", use_case)))
             if isinstance(item, dict)
         ]
+        if mode == "demo" and self.demo.is_demo_available():
+            demo_questions = self.demo.get_analysis_questions()
+            if demo_questions:
+                analysis_questions = demo_questions
         self._upsert_session_config(
             payload["session_id"],
             {

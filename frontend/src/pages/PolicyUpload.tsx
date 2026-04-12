@@ -612,6 +612,15 @@ export default function PolicyUpload() {
     if (!sessionId) {
       return;
     }
+
+    if (
+      cleanQuestions.length === 0
+      && hydratedSessionRef.current !== sessionId
+      && analysisQuestionsState !== 'ready'
+    ) {
+      return;
+    }
+
     const snapshot = JSON.stringify(cleanQuestions);
 
     if (snapshot === lastPersistedQuestionsSnapshotRef.current) {
@@ -629,7 +638,7 @@ export default function PolicyUpload() {
     }).catch(() => {
       // Persisting analysis questions is best-effort so extraction can continue.
     });
-  }, [modelApiKey, modelName, modelProvider, sessionId, useCase]);
+  }, [analysisQuestionsState, modelApiKey, modelName, modelProvider, sessionId, useCase]);
 
   const persistAnalysisQuestions = useCallback((nextQuestions: AnalysisQuestion[]) => {
     const cleanQuestions = nextQuestions.map(stripQuestionMetadata);

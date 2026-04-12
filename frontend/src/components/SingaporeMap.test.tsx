@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SingaporeMap } from "@/components/SingaporeMap";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 
 vi.mock("react-leaflet", () => ({
   MapContainer: ({ children }: { children: ReactNode }) => <div data-testid="map-container">{children}</div>,
@@ -15,13 +16,17 @@ describe("SingaporeMap", () => {
   const originalFetch = global.fetch;
   const originalBaseUrl = import.meta.env.BASE_URL;
 
+  function renderWithTheme(children: ReactNode) {
+    return render(<ThemeProvider>{children}</ThemeProvider>);
+  }
+
   it("fetches the Singapore planning-area geojson by default", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ type: "FeatureCollection", features: [] }),
     }) as typeof fetch;
 
-    render(<SingaporeMap areaData={[]} />);
+    renderWithTheme(<SingaporeMap areaData={[]} />);
 
     expect(await screen.findByTestId("map-container")).toBeInTheDocument();
     await waitFor(() => {
@@ -35,7 +40,7 @@ describe("SingaporeMap", () => {
       json: async () => ({ type: "FeatureCollection", features: [] }),
     }) as typeof fetch;
 
-    render(<SingaporeMap country="usa" areaData={[]} />);
+    renderWithTheme(<SingaporeMap country="usa" areaData={[]} />);
 
     expect(await screen.findByTestId("map-container")).toBeInTheDocument();
     await waitFor(() => {

@@ -17,6 +17,10 @@ def _make_settings(tmp_path: Path) -> Settings:
 def test_answer_guiding_question_requests_detailed_evidence_rich_output(monkeypatch, tmp_path: Path) -> None:
     service = ReportService(_make_settings(tmp_path))
     captured: dict[str, str] = {}
+    report_prompt_cfg = service.config.get_system_prompt_config("report_agent")
+    defaults = (report_prompt_cfg.get("defaults") or {}) if isinstance(report_prompt_cfg, dict) else {}
+    min_words = int(defaults.get("min_words_per_question") or 300)
+    max_words = int(defaults.get("max_words_per_question") or 500)
 
     monkeypatch.setattr(
         service.store,
@@ -43,5 +47,5 @@ def test_answer_guiding_question_requests_detailed_evidence_rich_output(monkeypa
     )
 
     assert response.startswith("Agents expressed")
-    assert "300-500 words of detailed, evidence-rich analysis" in captured["prompt"]
+    assert f"{min_words}-{max_words} words of detailed, evidence-rich analysis" in captured["prompt"]
     assert len(captured["prompt"]) > 10000

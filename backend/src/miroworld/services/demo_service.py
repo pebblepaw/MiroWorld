@@ -129,6 +129,19 @@ class DemoService:
             "mode": "demo",
             "status": "created",
         }
+
+    def get_analysis_questions(self) -> list[dict[str, Any]]:
+        """Return cached analysis questions bundled with the demo output."""
+        cache = self._load_demo_cache() or {}
+        candidates = cache.get("analysis_questions")
+        if not isinstance(candidates, list):
+            source_run = cache.get("source_run")
+            if isinstance(source_run, dict):
+                source_candidates = source_run.get("analysis_questions")
+                candidates = source_candidates if isinstance(source_candidates, list) else []
+            else:
+                candidates = []
+        return [dict(item) for item in candidates if isinstance(item, dict)]
     
     def get_knowledge_artifact(self, session_id: str) -> dict[str, Any] | None:
         """Get knowledge artifact for demo session."""

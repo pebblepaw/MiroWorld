@@ -15,6 +15,8 @@
 
 MiroWorld ingests source material into a knowledge graph, samples a synthetic population from the Nemotron Singapore personas dataset, runs a multi-round OASIS social simulation, then grounds report/chat/analytics on the resulting interactions and checkpoints.
 
+The hosted GitHub Pages demo is preloaded with a bundled Singapore public-policy scenario based on the 2026 Budget AI strategy source URL. Screen 1 opens with the source URL already filled, and the shipped cache reflects a 50-agent, 10-round run with four bundled analysis questions.
+
 The repository ships:
 
 - `backend/`: FastAPI API, simulation orchestration, SQLite-backed memory, LightRAG ingestion

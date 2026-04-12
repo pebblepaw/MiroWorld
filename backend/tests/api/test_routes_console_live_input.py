@@ -12,7 +12,7 @@ def _make_settings(tmp_path: Path) -> Settings:
     return Settings(simulation_db_path=str(tmp_path / "simulation.db"))
 
 
-def test_process_knowledge_bypasses_demo_cache_when_explicit_document_is_provided(monkeypatch, tmp_path: Path) -> None:
+def test_process_knowledge_uses_demo_cache_even_when_explicit_document_is_provided(monkeypatch, tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
 
     class _DemoService:
@@ -24,18 +24,7 @@ def test_process_knowledge_bypasses_demo_cache_when_explicit_document_is_provide
 
     class _ConsoleService:
         def __init__(self, _settings: Settings) -> None:
-            pass
-
-        async def process_knowledge(self, session_id: str, **_: object) -> dict[str, object]:
-            return {
-                "session_id": session_id,
-                "summary": "Live artifact",
-                "document": {"source_path": "airbnb-policy.pdf"},
-                "entity_nodes": [],
-                "relationship_edges": [],
-                "entity_type_counts": {},
-                "processing_logs": [],
-            }
+            raise AssertionError("Live knowledge processing should not run in demo mode")
 
     monkeypatch.setattr(routes_console, "_is_demo_session", lambda *_: True)
     monkeypatch.setattr(routes_console, "_get_demo_service", lambda *_: _DemoService())
@@ -45,10 +34,10 @@ def test_process_knowledge_bypasses_demo_cache_when_explicit_document_is_provide
 
     payload = asyncio.run(routes_console.process_knowledge("session-live", req, settings))
 
-    assert payload.summary == "Live artifact"
+    assert payload.summary == "Demo artifact"
 
 
-def test_upload_knowledge_bypasses_demo_cache_when_file_is_uploaded(monkeypatch, tmp_path: Path) -> None:
+def test_upload_knowledge_uses_demo_cache_when_file_is_uploaded(monkeypatch, tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
 
     class _DemoService:
@@ -60,18 +49,7 @@ def test_upload_knowledge_bypasses_demo_cache_when_file_is_uploaded(monkeypatch,
 
     class _ConsoleService:
         def __init__(self, _settings: Settings) -> None:
-            pass
-
-        async def process_uploaded_knowledge(self, session_id: str, **_: object) -> dict[str, object]:
-            return {
-                "session_id": session_id,
-                "summary": "Uploaded live artifact",
-                "document": {"source_path": "airbnb-policy.pdf"},
-                "entity_nodes": [],
-                "relationship_edges": [],
-                "entity_type_counts": {},
-                "processing_logs": [],
-            }
+            raise AssertionError("Live upload processing should not run in demo mode")
 
     class _Upload:
         filename = "airbnb-policy.pdf"
@@ -85,4 +63,4 @@ def test_upload_knowledge_bypasses_demo_cache_when_file_is_uploaded(monkeypatch,
 
     payload = asyncio.run(routes_console.upload_knowledge("session-live", _Upload(), None, None, settings))
 
-    assert payload.summary == "Uploaded live artifact"
+    assert payload.summary == "Demo artifact"

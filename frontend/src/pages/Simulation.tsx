@@ -1250,6 +1250,13 @@ function metricConfigForUseCase(useCase: string, allowFallback: boolean): Metric
       kind: "percent",
       description: "Reads the latest approval rate from the simulation metrics payload.",
     },
+    {
+      label: "Net Sentiment",
+      keys: ["net_sentiment"],
+      fallback: fallback(7.2),
+      kind: "score",
+      description: "Tracks the latest net sentiment score reported by the simulation metrics payload.",
+    },
   ];
 }
 

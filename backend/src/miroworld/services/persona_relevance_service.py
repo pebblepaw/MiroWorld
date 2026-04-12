@@ -561,7 +561,6 @@ class PersonaRelevanceService:
         sampled_personas: list[dict[str, Any]] = []
         for index, row in enumerate(sampled):
             persona_payload = self._prepare_persona(row["persona"], geography_field=geography_field, country=country)
-            geography_value = self._persona_geography_value(persona_payload, geography_field, country=country)
             display_name = self._extract_persona_display_name(persona_payload)
             persona_payload["display_name"] = display_name
             sampled_personas.append(
@@ -850,8 +849,8 @@ class PersonaRelevanceService:
 
         candidates: list[str] = []
         combined_sections: list[str] = []
-        for field in PERSONA_NAME_FIELDS:
-            raw_text = str(persona.get(field, "") or "").strip()
+        for field_name in PERSONA_NAME_FIELDS:
+            raw_text = str(persona.get(field_name, "") or "").strip()
             if not raw_text:
                 continue
             combined_sections.append(raw_text)

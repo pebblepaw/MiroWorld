@@ -1024,7 +1024,7 @@ function KeyOpinionLeadersCard({ leaders, loading }: { leaders: Leader[]; loadin
                     {Math.round(leader.influence * 100)}%
                   </span>
                 </div>
-                <p className="whitespace-pre-line text-xs text-muted-foreground">{formatPlainText(leader.topPost || leader.topView || "No viewpoint summary available.")}</p>
+                <p className="whitespace-pre-line text-xs text-muted-foreground">{formatPlainText(leader.topView || leader.topPost || "No viewpoint summary available.")}</p>
               </article>
             ))}
           </div>

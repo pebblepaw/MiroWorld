@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     oasis_sidecar_host: str | None = None
     oasis_sidecar_port: int = 8001
     ollama_checkpoint_batch_size: int = 3
-    default_checkpoint_batch_size: int = 25
+    default_checkpoint_batch_size: int = 10
     oasis_run_log_dir: str = "data/oasis/logs"
 
     datagov_api_key: str | None = None

@@ -285,11 +285,7 @@ async def process_knowledge(
     settings: Settings = Depends(get_settings),
 ) -> KnowledgeArtifactResponse:
     # Check if demo mode with cached data
-    if (
-        _is_demo_session(session_id, settings)
-        and _get_demo_service(settings).is_demo_available()
-        and not _request_has_explicit_live_knowledge_input(req)
-    ):
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         # Return cached knowledge for demo
         demo_service = _get_demo_service(settings)
         knowledge = demo_service.get_knowledge_artifact(session_id)
@@ -316,6 +312,12 @@ async def upload_knowledge(
     demographic_focus: str | None = Form(default=None),
     settings: Settings = Depends(get_settings),
 ) -> KnowledgeArtifactResponse:
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        knowledge = demo_service.get_knowledge_artifact(session_id)
+        if knowledge:
+            return KnowledgeArtifactResponse(**knowledge)
+
     payload = await ConsoleService(settings).process_uploaded_knowledge(
         session_id,
         upload=file,

@@ -415,6 +415,7 @@ type DemoOutput = {
   generated_at?: string;
   session?: Record<string, unknown>;
   source_run?: Record<string, unknown>;
+  analysis_questions?: Array<Record<string, unknown>>;
   knowledge?: Record<string, unknown>;
   population?: Record<string, unknown>;
   simulationState?: Record<string, unknown>;
@@ -648,6 +649,19 @@ function staticQuestionsForUseCase(useCase: string | null | undefined): Array<Re
   return questions.map((question) => ({ ...question }));
 }
 
+function demoQuestionsFromOutput(demo: DemoOutput, useCase: string | null | undefined): Array<Record<string, unknown>> {
+  const topLevel = Array.isArray(demo.analysis_questions) ? demo.analysis_questions : [];
+  if (topLevel.length > 0) {
+    return topLevel.map((question) => ({ ...question }));
+  }
+  const sourceRun = (demo.source_run ?? {}) as Record<string, unknown>;
+  const sourceQuestions = Array.isArray(sourceRun.analysis_questions) ? sourceRun.analysis_questions : [];
+  if (sourceQuestions.length > 0) {
+    return sourceQuestions.map((question) => ({ ...question }));
+  }
+  return staticQuestionsForUseCase(useCase);
+}
+
 function defaultModelForProvider(provider: string): string {
   const normalized = normalizeProviderId(provider);
   return STATIC_MODEL_CATALOG.find((entry) => entry.id === normalized)?.default_model ?? "gemini-2.5-flash-lite";
@@ -681,7 +695,7 @@ async function ensureDemoSessionConfig(
       api_key: String(normalizedPatch.api_key ?? ""),
       analysis_questions:
         normalizedPatch.analysis_questions?.map((question) => ({ ...question }))
-        ?? staticQuestionsForUseCase(useCase),
+        ?? demoQuestionsFromOutput(demo, useCase),
     };
   }
 
@@ -1211,7 +1225,7 @@ export async function getCountryUiConfig(countryCode: string): Promise<CountryUi
   }
   try {
     const response = await fetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryCode)}/ui-config`);
-    return parseJson(response);
+    return await parseJson(response);
   } catch {
     const normalized = countryCode.trim().toLowerCase();
     return STATIC_UI_CONFIGS[normalized] ?? {};

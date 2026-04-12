@@ -37,6 +37,12 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 
+const BASE_URL = import.meta.env.BASE_URL.endsWith('/')
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+
+const withBase = (path: string) => `${BASE_URL}${path.replace(/^\//, '')}`;
+
 const steps = [
   { step: 1, title: 'Policy Upload', icon: Upload, path: '/upload' },
   { step: 2, title: 'Agent Config', icon: Users, path: '/agents' },
@@ -312,7 +318,7 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
       <Sidebar collapsible="icon" className="border-r border-border bg-sidebar">
         <SidebarHeader className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
-            <img src="/logo.png" alt="MiroWorld" className="w-8 h-8 rounded flex-shrink-0 object-contain" />
+            <img src={withBase('/logo.png')} alt="MiroWorld" className="w-8 h-8 rounded flex-shrink-0 object-contain" />
             {!collapsed && (
               <div>
                 <h1 className="text-foreground font-semibold text-base tracking-wide">MiroWorld</h1>

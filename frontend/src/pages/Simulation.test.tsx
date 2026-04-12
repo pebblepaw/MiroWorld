@@ -446,6 +446,7 @@ describe("Simulation", () => {
 
   beforeEach(() => {
     MockEventSource.reset();
+    window.sessionStorage.clear();
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -488,6 +489,7 @@ describe("Simulation", () => {
   });
 
   afterEach(() => {
+    window.sessionStorage.clear();
     global.fetch = originalFetch;
     global.EventSource = originalEventSource;
     vi.unstubAllEnvs();
