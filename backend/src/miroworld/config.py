@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     llm_embed_model: str = "nomic-embed-text"
     llm_api_key: str | None = None
     llm_base_url: str = "http://127.0.0.1:11434/v1/"
-    llm_timeout_seconds: int = 20
+    llm_timeout_seconds: int = 120
     ollama_llm_timeout_seconds: int = 120
     llm_auto_pull_ollama_models: bool = True
 
@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     gemini_model: str = "qwen3:4b-instruct-2507-q4_K_M"
     gemini_embed_model: str = "nomic-embed-text"
     gemini_openai_base_url: str = "http://127.0.0.1:11434/v1/"
-    gemini_timeout_seconds: int = 20
+    gemini_timeout_seconds: int = 120
 
     lightrag_workdir: str = "data/lightrag"
     demo_default_policy_markdown: str = "Sample_Inputs/singapore_budget_ai_strategic_advantage.md"

@@ -346,6 +346,20 @@ def knowledge_stream(
     return StreamingResponse(stream, media_type="text/event-stream")
 
 
+@router.put("/session/{session_id}/knowledge")
+def inject_knowledge(
+    session_id: str,
+    artifact: dict[str, Any] = Body(...),
+    settings: Settings = Depends(get_settings),
+) -> KnowledgeArtifactResponse:
+    """Inject a pre-built knowledge artifact into a session (for cache replay)."""
+    from miroworld.services.storage import SimulationStore
+    store = SimulationStore(settings.simulation_db_path)
+    artifact["session_id"] = session_id
+    store.save_knowledge_artifact(session_id, artifact)
+    return KnowledgeArtifactResponse(**artifact)
+
+
 @router.post("/session/{session_id}/scrape", response_model=ConsoleScrapeResponse)
 def scrape_document(
     session_id: str,

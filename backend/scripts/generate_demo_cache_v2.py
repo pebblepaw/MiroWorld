@@ -81,6 +81,8 @@ def main() -> None:
     parser.add_argument("--model", default=None, help="Override model (skip fallback)")
     parser.add_argument("--provider", default=None, help="Override provider")
     parser.add_argument("--embed-model", default=None, help="Override embedding model name")
+    parser.add_argument("--agents", type=int, default=None, help="Override agent count")
+    parser.add_argument("--rounds", type=int, default=None, help="Override round count")
     parser.add_argument("--skip-knowledge", action="store_true")
     parser.add_argument("--skip-simulation", action="store_true")
     parser.add_argument("--session-id", default=None, help="Resume from existing session")
@@ -88,6 +90,9 @@ def main() -> None:
 
     base = args.base_url.rstrip("/")
     api = f"{base}/api/v2/console"
+
+    agent_count = args.agents or AGENT_COUNT
+    rounds = args.rounds or ROUNDS
 
     if args.model and args.provider:
         candidates = [(args.provider, args.model, "GEMINI_API" if args.provider == "google" else "OPENAI_API")]
@@ -188,15 +193,22 @@ def main() -> None:
         cache_path = scratch / "01_knowledge.json"
         if cache_path.exists():
             knowledge = json.loads(cache_path.read_text())
+            _log(f"  Loaded {len(knowledge.get('entity_nodes', []))} entities, "
+                 f"{len(knowledge.get('relationship_edges', []))} edges from cache")
         else:
             _log("  No cached knowledge found, fetching from session...")
             resp = requests.get(f"{api}/session/{session_id}/knowledge", timeout=30)
             knowledge = _ok("knowledge/get", resp)
+        # Inject cached knowledge into the new session's DB
+        _log("  Injecting cached knowledge into session...")
+        resp = requests.put(f"{api}/session/{session_id}/knowledge",
+                            json=knowledge, timeout=30)
+        _ok("knowledge/inject", resp)
 
     # ── 4. Population sampling ────────────────────────────────────────
-    _log(f"Sampling {AGENT_COUNT} agents...")
+    _log(f"Sampling {agent_count} agents...")
     resp = requests.post(f"{api}/session/{session_id}/sampling/preview", json={
-        "agent_count": AGENT_COUNT,
+        "agent_count": agent_count,
         "sample_mode": "affected_groups",
         "seed": 42,
     }, timeout=120)
@@ -207,11 +219,22 @@ def main() -> None:
     # ── 5. Run simulation ─────────────────────────────────────────────
     simulation_state = None
     if not args.skip_simulation:
-        _log(f"Starting simulation ({ROUNDS} rounds, {AGENT_COUNT} agents)...")
+        # Resolve policy_summary from knowledge artifact or scraped content
+        policy_summary = ""
+        if knowledge:
+            policy_summary = str(knowledge.get("summary") or "").strip()
+        if not policy_summary and knowledge:
+            # Fallback: use the scraped document text (first 2000 chars)
+            doc = knowledge.get("document") or {}
+            policy_summary = str(doc.get("text") or doc.get("content") or "").strip()[:2000]
+        if not policy_summary:
+            policy_summary = f"Policy analysis from {SOURCE_URL}"
+        _log(f"Starting simulation ({rounds} rounds, {agent_count} agents)...")
         resp = requests.post(f"{api}/session/{session_id}/simulate", json={
-            "rounds": ROUNDS,
+            "rounds": rounds,
             "controversy_boost": 0.0,
             "mode": "live",
+            "policy_summary": policy_summary,
         }, timeout=60)
         sim_start = _ok("simulate", resp)
         _log(f"  Simulation started, status={sim_start.get('status')}")
@@ -230,7 +253,7 @@ def main() -> None:
             rnd = state.get("current_round", "?")
             posts = state.get("counters", {}).get("posts", 0)
             comments = state.get("counters", {}).get("comments", 0)
-            _log(f"  Poll {i}: status={status}, round={rnd}/{ROUNDS}, "
+            _log(f"  Poll {i}: status={status}, round={rnd}/{rounds}, "
                  f"posts={posts}, comments={comments}")
             if status in ("completed", "error", "failed"):
                 simulation_state = state
@@ -317,8 +340,8 @@ def main() -> None:
             "use_case": USE_CASE,
             "provider": provider_used,
             "model": model_used,
-            "agent_count": AGENT_COUNT,
-            "rounds": ROUNDS,
+            "agent_count": agent_count,
+            "rounds": rounds,
             "controversy_boost": 0.0,
             "generated_at": _now(),
         },
@@ -345,7 +368,7 @@ def main() -> None:
     _log(f"Demo cache generation complete!")
     _log(f"  Session: {session_id}")
     _log(f"  Model: {model_used}")
-    _log(f"  Agents: {AGENT_COUNT}, Rounds: {ROUNDS}")
+    _log(f"  Agents: {agent_count}, Rounds: {rounds}")
     _log(f"  Files: {backend_path}, {frontend_path}")
 
 
