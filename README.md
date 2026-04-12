@@ -9,11 +9,17 @@
 </p>
 
 <p align="center">
-  <a href="https://pebblepaw.github.io/Nemotron_AI_Consultant/"><img src="https://img.shields.io/badge/live-demo-0a66c2?logo=github" alt="Live Demo" /></a>
+  <a href="https://pebblepaw.github.io/MiroWorld/"><img src="https://img.shields.io/badge/github-pages-demo-0a66c2?logo=github" alt="GitHub Pages Demo" /></a>
+  <a href="https://d3a03mb192176l.cloudfront.net/"><img src="https://img.shields.io/badge/aws-live-app-ff9900?logo=amazonaws&logoColor=white" alt="AWS Live App" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a>
 </p>
 
 MiroWorld ingests source material into a knowledge graph, samples a synthetic population from the Nemotron Singapore personas dataset, runs a multi-round OASIS social simulation, then grounds report/chat/analytics on the resulting interactions and checkpoints.
+
+Try the static demo on GitHub Pages or the live AWS deployment:
+
+- GitHub Pages demo: [https://pebblepaw.github.io/MiroWorld/](https://pebblepaw.github.io/MiroWorld/)
+- AWS live app: [https://d3a03mb192176l.cloudfront.net/](https://d3a03mb192176l.cloudfront.net/)
 
 The hosted GitHub Pages demo is preloaded with a bundled Singapore public-policy scenario based on the 2026 Budget AI strategy source URL. Screen 1 opens with the source URL already filled, and the shipped cache reflects a 50-agent, 10-round run with four bundled analysis questions.
 
@@ -169,7 +175,7 @@ OPENAI_API_KEY="your-key"
 - `live`: native OASIS simulation with real provider calls
 - `demo-static`: frontend-only GitHub Pages build using bundled `frontend/public/demo-output.json`
 
-The GitHub Pages build uses `VITE_BOOT_MODE=demo-static` and `VITE_PUBLIC_BASE=/Nemotron_AI_Consultant/`.
+The GitHub Pages build uses `VITE_BOOT_MODE=demo-static` and `VITE_PUBLIC_BASE=/MiroWorld/`.
 
 ## Development
 

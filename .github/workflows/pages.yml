@@ -37,7 +37,7 @@ jobs:
         env:
           VITE_API_BASE: "https://invalid.local"
           VITE_BOOT_MODE: "demo-static"
-          VITE_PUBLIC_BASE: "/Nemotron_AI_Consultant/"
+          VITE_PUBLIC_BASE: "/MiroWorld/"
         run: npm run build
 
       - name: Disable Jekyll processing
