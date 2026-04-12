@@ -312,9 +312,7 @@ export function AppSidebar({ onOpenSettings }: { onOpenSettings?: () => void }) 
       <Sidebar collapsible="icon" className="border-r border-border bg-sidebar">
         <SidebarHeader className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 bg-foreground/10">
-              <span className="text-foreground font-mono text-sm font-bold">M</span>
-            </div>
+            <img src="/logo.png" alt="MiroWorld" className="w-8 h-8 rounded flex-shrink-0 object-contain" />
             {!collapsed && (
               <div>
                 <h1 className="text-foreground font-semibold text-base tracking-wide">MiroWorld</h1>

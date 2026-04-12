@@ -80,7 +80,7 @@ class ConsoleKnowledgeProcessRequest(BaseModel):
 class KnowledgeArtifactResponse(BaseModel):
     session_id: str
     document: dict[str, Any]
-    summary: str
+    summary: str | None = None
     guiding_prompt: str | None = None
     entity_nodes: list[dict[str, Any]]
     relationship_edges: list[dict[str, Any]]

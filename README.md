@@ -1,9 +1,19 @@
-# MiroWorld
+<p align="center">
+  <img src="logo.png" alt="MiroWorld" width="160" />
+</p>
 
-[![Live Demo](https://img.shields.io/badge/live-demo-0a66c2?logo=github)](https://pebblepaw.github.io/Nemotron_AI_Consultant/)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+<h1 align="center">MiroWorld</h1>
 
-MiroWorld is an AI consulting simulator for policy, campaign, and product analysis. It ingests source material into a knowledge graph, samples a synthetic population from the Nemotron Singapore personas dataset, runs a multi-round OASIS social simulation, then grounds report/chat/analytics on the resulting interactions and checkpoints.
+<p align="center">
+  AI consulting simulator for policy, campaign, and product analysis
+</p>
+
+<p align="center">
+  <a href="https://pebblepaw.github.io/Nemotron_AI_Consultant/"><img src="https://img.shields.io/badge/live-demo-0a66c2?logo=github" alt="Live Demo" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a>
+</p>
+
+MiroWorld ingests source material into a knowledge graph, samples a synthetic population from the Nemotron Singapore personas dataset, runs a multi-round OASIS social simulation, then grounds report/chat/analytics on the resulting interactions and checkpoints.
 
 The repository ships:
 
