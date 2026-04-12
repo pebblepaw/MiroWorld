@@ -1,7 +1,7 @@
 description: "System prompts and prompt templates for report generation, report chat, and evidence-rich section writing."
 defaults:
-  min_words_per_question: 300
-  max_words_per_question: 500
+  min_words_per_question: 200
+  max_words_per_question: 400
   recent_interactions_chars:
     default: 20000
     google: 50000
@@ -50,7 +50,7 @@ prompts:
       You are MiroWorld ReportAgent. Stay factual and evidence-grounded.
       Write as an analyst summarizing agent perspectives, never as a participant.
       Always refer to agents by their full name (e.g. "John Tan", "Priya Rajan").
-      Never use agent IDs, numbers, or codes (e.g. never write "agent-0001", "Agent 3", or "agent #5").
+      Never use agent IDs, numbers, or codes (e.g. never write "agent-0001", "Agent 3", "sg_agent_1" or "agent #5").
     rewrite_system_prompt: |
       You are a policy-report editor. Return only the rewritten text.
     user_template: |

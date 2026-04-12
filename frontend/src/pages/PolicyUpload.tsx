@@ -477,29 +477,29 @@ function resolveStreamProgress(eventName: string, payload: Record<string, unknow
   const fallbackMessage = (() => {
     switch (eventName) {
       case 'knowledge_started':
-        return 'Starting knowledge extraction';
+        return 'Initializing LightRAG engine...';
       case 'knowledge_document_started':
-        return 'Starting document';
+        return 'Loading document into pipeline...';
       case 'knowledge_chunk_started':
-        return 'Processing chunk';
+        return `Extracting entities from chunk${chunkIndex !== null ? ` ${chunkIndex}` : ''}${chunkTotal !== null ? ` of ${chunkTotal}` : ''}...`;
       case 'knowledge_chunk_completed':
-        return 'Completed chunk';
+        return `Chunk${chunkIndex !== null ? ` ${chunkIndex}` : ''}${chunkTotal !== null ? ` of ${chunkTotal}` : ''} extracted`;
       case 'knowledge_partial':
-        return 'Graph updated';
+        return 'Building knowledge graph...';
       case 'knowledge_completed':
-        return 'Knowledge extraction completed';
+        return 'Knowledge extraction complete';
       case 'knowledge_failed':
         return 'Knowledge extraction failed';
       default:
-        return 'Knowledge stream update';
+        return 'Processing...';
     }
   })();
 
   const chunkMessage =
     chunkIndex !== null && chunkTotal !== null
-      ? `Chunk ${chunkIndex} / ${chunkTotal}`
+      ? `Chunk ${chunkIndex} of ${chunkTotal} — extracting entities & relations`
       : chunkIndex !== null
-        ? `Chunk ${chunkIndex}`
+        ? `Chunk ${chunkIndex} — extracting...`
         : documentLabel
           ? `Document ${documentLabel}`
           : fallbackMessage;
@@ -564,6 +564,7 @@ export default function PolicyUpload() {
   const [knowledgeStreamProgress, setKnowledgeStreamProgress] = useState<KnowledgeStreamProgress | null>(null);
   const hydratedSessionRef = useRef<string | null>(null);
   const analysisQuestionsRef = useRef<AnalysisQuestion[]>(analysisQuestions);
+  const knowledgeLoadingRef = useRef<boolean>(knowledgeLoading);
   const lastPersistedQuestionsSnapshotRef = useRef<string>('');
   const knowledgeArtifactRef = useRef<KnowledgeArtifact | null>(knowledgeArtifact);
   const knowledgeStreamRef = useRef<ReturnType<typeof subscribeKnowledgeStream> | null>(null);
@@ -587,6 +588,10 @@ export default function PolicyUpload() {
   }, [analysisQuestions]);
 
   useEffect(() => {
+    knowledgeLoadingRef.current = knowledgeLoading;
+  }, [knowledgeLoading]);
+
+  useEffect(() => {
     knowledgeArtifactRef.current = knowledgeArtifact;
   }, [knowledgeArtifact]);
 
@@ -603,12 +608,10 @@ export default function PolicyUpload() {
     setKnowledgeGraphReady(Boolean(nextArtifact));
   }, [setKnowledgeArtifact, setKnowledgeGraphReady]);
 
-  const persistAnalysisQuestions = useCallback((nextQuestions: AnalysisQuestion[]) => {
+  const persistAnalysisQuestionsNow = useCallback((cleanQuestions: Record<string, unknown>[]) => {
     if (!sessionId) {
       return;
     }
-
-    const cleanQuestions = nextQuestions.map(stripQuestionMetadata);
     const snapshot = JSON.stringify(cleanQuestions);
 
     if (snapshot === lastPersistedQuestionsSnapshotRef.current) {
@@ -627,6 +630,21 @@ export default function PolicyUpload() {
       // Persisting analysis questions is best-effort so extraction can continue.
     });
   }, [modelApiKey, modelName, modelProvider, sessionId, useCase]);
+
+  const persistAnalysisQuestions = useCallback((nextQuestions: AnalysisQuestion[]) => {
+    const cleanQuestions = nextQuestions.map(stripQuestionMetadata);
+    if (knowledgeLoadingRef.current) {
+      return;
+    }
+    persistAnalysisQuestionsNow(cleanQuestions);
+  }, [persistAnalysisQuestionsNow]);
+
+  useEffect(() => {
+    if (knowledgeLoading) {
+      return;
+    }
+    persistAnalysisQuestionsNow(analysisQuestionsRef.current.map(stripQuestionMetadata));
+  }, [knowledgeLoading, persistAnalysisQuestionsNow]);
 
   useEffect(() => {
     if (!sessionId || hydratedSessionRef.current === sessionId) {
@@ -1278,6 +1296,7 @@ export default function PolicyUpload() {
                     <div className="mt-2">
                       <Progress
                         value={resolveKnowledgeProgressValue(knowledgeStreamProgress)}
+                        pulse
                         aria-label={`${file.name} extraction progress`}
                         className="h-1.5 bg-muted"
                       />
@@ -1319,7 +1338,12 @@ export default function PolicyUpload() {
                 placeholder="https://example.com/policy-doc"
                 className="text-sm bg-card border-border"
               />
-              <Button onClick={handleUrlScrape} size="sm" variant="outline" className="shrink-0 border-border text-foreground">
+              <Button
+                onClick={handleUrlScrape}
+                size="sm"
+                variant={urlValue.trim() ? "destructive" : "outline"}
+                className={urlValue.trim() ? "shrink-0" : "shrink-0 border-border text-foreground"}
+              >
                 Scrape
               </Button>
             </div>
@@ -1456,34 +1480,37 @@ export default function PolicyUpload() {
             <p className="text-xs text-destructive mt-2 font-mono uppercase">{knowledgeError}</p>
           )}
 
-          {/* Fake Loading Log */}
+          {/* Knowledge extraction progress */}
           {knowledgeLoading && (
             <div className="mt-4 p-3 border border-border bg-card rounded font-mono text-[10px] text-muted-foreground w-full space-y-1 overflow-hidden">
               <div className="flex justify-between gap-3 min-w-0">
                 <span className="truncate min-w-0">
-                  [{new Date().toLocaleTimeString('en-US', { hour12: false })}] {knowledgeStreamProgress?.message || 'Initializing graph builder...'}
+                  [{new Date().toLocaleTimeString('en-US', { hour12: false })}] {knowledgeStreamProgress?.message || 'Loading LightRAG engine...'}
                 </span>
-                <span className="text-success uppercase shrink-0">{knowledgeStreamProgress?.stage || 'running'}</span>
+                <span className="text-success uppercase shrink-0 animate-pulse">{knowledgeStreamProgress?.stage || 'initializing'}</span>
               </div>
               <Progress
                 value={resolveKnowledgeProgressValue(knowledgeStreamProgress)}
+                pulse
                 aria-label="Knowledge extraction progress"
                 className="h-1.5 bg-muted"
               />
-              {(knowledgeStreamProgress?.chunkIndex != null || knowledgeStreamProgress?.chunkTotal != null || Boolean(knowledgeStreamProgress?.documentLabel)) && (
-                <div className="flex justify-between gap-3 text-[9px] uppercase tracking-wider text-muted-foreground/80 min-w-0">
-                  <span className="truncate min-w-0">
-                    {knowledgeStreamProgress?.documentLabel ? `Document ${knowledgeStreamProgress.documentLabel}` : 'Streaming updates'}
-                  </span>
-                  <span className="shrink-0">
-                    {knowledgeStreamProgress?.chunkIndex && knowledgeStreamProgress?.chunkTotal
-                      ? `Chunk ${knowledgeStreamProgress.chunkIndex} / ${knowledgeStreamProgress.chunkTotal}`
-                      : knowledgeStreamProgress?.chunkIndex
-                        ? `Chunk ${knowledgeStreamProgress.chunkIndex}`
-                        : 'Live'}
-                  </span>
-                </div>
-              )}
+              <div className="flex justify-between gap-3 text-[9px] uppercase tracking-wider text-muted-foreground/80 min-w-0">
+                <span className="truncate min-w-0">
+                  {knowledgeStreamProgress?.documentLabel
+                    ? `Document ${knowledgeStreamProgress.documentLabel}`
+                    : knowledgeStreamProgress?.chunkIndex
+                      ? 'Extracting entities & relations'
+                      : 'Preparing document for analysis'}
+                </span>
+                <span className="shrink-0">
+                  {knowledgeStreamProgress?.chunkIndex && knowledgeStreamProgress?.chunkTotal
+                    ? `Chunk ${knowledgeStreamProgress.chunkIndex} of ${knowledgeStreamProgress.chunkTotal} extracted`
+                    : knowledgeStreamProgress?.chunkIndex
+                      ? `Chunk ${knowledgeStreamProgress.chunkIndex} extracting...`
+                      : 'Waiting for chunks'}
+                </span>
+              </div>
             </div>
           )}
         </div>

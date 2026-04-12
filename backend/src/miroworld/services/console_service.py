@@ -467,12 +467,15 @@ class ConsoleService:
 
         existing_questions = [item for item in (existing_cfg.get("analysis_questions") or []) if isinstance(item, dict)]
         merged_questions = [item for item in (merged_cfg.get("analysis_questions") or []) if isinstance(item, dict)]
-        scope_changed = any(
+        knowledge_scope_changed = any(
             merged_cfg.get(field) != existing_cfg.get(field)
             for field in ("country", "use_case", "guiding_prompt")
-        ) or existing_questions != merged_questions
-        if scope_changed:
+        )
+        analysis_questions_changed = existing_questions != merged_questions
+        if knowledge_scope_changed:
             self._clear_knowledge_downstream_artifacts(session_id)
+        elif analysis_questions_changed:
+            self._clear_population_downstream_artifacts(session_id)
 
         if provider is not None or model is not None or api_key is not None:
             resolved_provider = normalize_provider(provider or session.get("model_provider"))

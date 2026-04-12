@@ -403,6 +403,9 @@ class LightRAGService:
             test_embedding = await embedding_func(["embedding_probe"])
             embedding_dim = int(test_embedding.shape[1])
 
+            # Ensure session-scoped working directory exists before LightRAG init
+            Path(self._settings.lightrag_workdir).mkdir(parents=True, exist_ok=True)
+
             self._rag = LightRAG(
                 working_dir=self._settings.lightrag_workdir,
                 llm_model_func=lambda prompt, **kwargs: openai_complete_if_cache(
