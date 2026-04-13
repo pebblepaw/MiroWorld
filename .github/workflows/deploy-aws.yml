@@ -93,8 +93,6 @@ jobs:
 
       - name: Grant ECS execution role access to runtime secrets
         run: |
-          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
-
           cat > ecs-runtime-secrets-policy.json <<EOF
           {
             "Version": "2012-10-17",
@@ -105,10 +103,7 @@ jobs:
                   "ssm:GetParameter",
                   "ssm:GetParameters"
                 ],
-                "Resource": [
-                  "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter${GEMINI_PARAM}",
-                  "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter${HUGGINGFACE_PARAM}"
-                ]
+                "Resource": "*"
               },
               {
                 "Effect": "Allow",
