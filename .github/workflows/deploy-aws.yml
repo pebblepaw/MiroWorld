@@ -26,9 +26,12 @@ env:
   ECR_FRONTEND: 050751893720.dkr.ecr.us-east-1.amazonaws.com/miroworld/frontend
   ECS_CLUSTER: miroworld-cluster
   ECS_SERVICE: miroworld-backend
+  ECS_BACKEND_CONTAINER: backend
   S3_FRONTEND_BUCKET: miroworld-frontend-prod
   CLOUDFRONT_DISTRIBUTION_ID: E3LWVUPHQA8GK2
   CLOUDFRONT_DOMAIN: d3a03mb192176l.cloudfront.net
+  GEMINI_PARAM: /miroworld/backend/GEMINI_API
+  HUGGINGFACE_PARAM: /miroworld/backend/HUGGINGFACE_API_KEY
 
 jobs:
   build-and-deploy:
@@ -67,12 +70,119 @@ jobs:
           docker push $ECR_FRONTEND:${{ github.sha }}
           docker push $ECR_FRONTEND:latest
 
+      - name: Sync backend runtime secrets to SSM
+        env:
+          GEMINI_API: ${{ secrets.GEMINI_API }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+        run: |
+          : "${GEMINI_API:?Missing GitHub secret GEMINI_API}"
+          : "${HUGGINGFACE_API_KEY:?Missing GitHub secret HUGGINGFACE_API_KEY}"
+
+          aws ssm put-parameter \
+            --name "$GEMINI_PARAM" \
+            --type SecureString \
+            --value "$GEMINI_API" \
+            --overwrite
+
+          aws ssm put-parameter \
+            --name "$HUGGINGFACE_PARAM" \
+            --type SecureString \
+            --value "$HUGGINGFACE_API_KEY" \
+            --overwrite
+
+      - name: Register backend task definition revision
+        id: backend-task-def
+        run: |
+          CURRENT_TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --query 'services[0].taskDefinition' \
+            --output text \
+            --region $AWS_REGION)
+
+          aws ecs describe-task-definition \
+            --task-definition "$CURRENT_TASK_DEF_ARN" \
+            --query 'taskDefinition' \
+            --output json \
+            --region $AWS_REGION > task-def-source.json
+
+          python - <<'PY'
+          import json
+          import os
+
+          allowed_keys = [
+              "family",
+              "taskRoleArn",
+              "executionRoleArn",
+              "networkMode",
+              "containerDefinitions",
+              "volumes",
+              "placementConstraints",
+              "requiresCompatibilities",
+              "cpu",
+              "memory",
+              "tags",
+              "pidMode",
+              "ipcMode",
+              "proxyConfiguration",
+              "inferenceAccelerators",
+              "ephemeralStorage",
+              "runtimePlatform",
+          ]
+          secret_names = {
+              "GEMINI_API": os.environ["GEMINI_PARAM"],
+              "HUGGINGFACE_API_KEY": os.environ["HUGGINGFACE_PARAM"],
+          }
+          with open("task-def-source.json", encoding="utf-8") as handle:
+              source = json.load(handle)
+
+          task_def = {key: source[key] for key in allowed_keys if key in source}
+          container_name = os.environ["ECS_BACKEND_CONTAINER"]
+          backend_image = f"{os.environ['ECR_BACKEND']}:{os.environ['GITHUB_SHA']}"
+
+          for container in task_def.get("containerDefinitions", []):
+              if container.get("name") != container_name:
+                  continue
+              container["image"] = backend_image
+
+              current_env = {
+                  item["name"]: item["value"]
+                  for item in container.get("environment", [])
+                  if item.get("name") not in secret_names
+              }
+              container["environment"] = [
+                  {"name": name, "value": value}
+                  for name, value in sorted(current_env.items())
+              ]
+
+              current_secrets = {
+                  item["name"]: item["valueFrom"]
+                  for item in container.get("secrets", [])
+              }
+              current_secrets.update(secret_names)
+              container["secrets"] = [
+                  {"name": name, "valueFrom": value_from}
+                  for name, value_from in sorted(current_secrets.items())
+              ]
+
+          with open("task-def.json", "w", encoding="utf-8") as handle:
+              json.dump(task_def, handle)
+          PY
+
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-def.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text \
+            --region $AWS_REGION)
+
+          echo "task_definition_arn=$TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
+
       - name: Deploy backend to ECS
         run: |
-          # Force new deployment with latest image
           aws ecs update-service \
             --cluster $ECS_CLUSTER \
             --service $ECS_SERVICE \
+            --task-definition ${{ steps.backend-task-def.outputs.task_definition_arn }} \
             --force-new-deployment \
             --region $AWS_REGION
 
@@ -112,3 +222,46 @@ jobs:
             --services $ECS_SERVICE \
             --region $AWS_REGION
           echo "Deployment complete!"
+
+      - name: Warm Singapore dataset
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+          base_url = f"https://{os.environ['CLOUDFRONT_DOMAIN']}"
+          country = "singapore"
+
+          def fetch_json(path: str, *, method: str = "GET") -> dict:
+              request = urllib.request.Request(f"{base_url}{path}", method=method)
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as exc:
+                  raw_body = exc.read().decode("utf-8", errors="ignore")
+                  try:
+                      detail = json.loads(raw_body)
+                  except json.JSONDecodeError:
+                      detail = raw_body or exc.reason
+                  raise SystemExit(f"Request failed for {path}: {detail}") from exc
+
+          status = fetch_json(f"/api/v2/countries/{country}/download-status")
+          if not status.get("dataset_ready"):
+              fetch_json(f"/api/v2/countries/{country}/download", method="POST")
+
+          deadline = time.time() + 900
+          while time.time() < deadline:
+              status = fetch_json(f"/api/v2/countries/{country}/download-status")
+              if status.get("dataset_ready"):
+                  print(json.dumps(status, indent=2))
+                  sys.exit(0)
+              if status.get("download_status") == "error":
+                  raise SystemExit(f"Dataset warm-up failed: {status.get('download_error') or status}")
+              time.sleep(5)
+
+          raise SystemExit(f"Dataset warm-up timed out: {status}")
+          PY

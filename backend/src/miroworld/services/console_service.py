@@ -278,6 +278,8 @@ class ConsoleService:
             if provider_id not in provider_name_map:
                 continue
 
+            server_key_configured = bool(self.settings.resolved_key_for_provider(provider_id))
+
             default_model = str(provider.get("default_model") or "").strip()
             models: list[str] = [default_model] if default_model else []
             try:
@@ -299,7 +301,7 @@ class ConsoleService:
                 {
                     "name": provider_name_map[provider_id],
                     "models": models,
-                    "requires_api_key": bool(provider.get("requires_api_key", False)),
+                    "requires_api_key": bool(provider.get("requires_api_key", False)) and not server_key_configured,
                 }
             )
         return rows

@@ -165,6 +165,55 @@ describe("OnboardingModal", () => {
     expect(japanCard).not.toHaveClass("border-[hsl(var(--data-blue))]");
   });
 
+  it("prefers a hosted provider in live mode when the server already has one configured", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith("/api/v2/countries")) {
+        return makeResponse(countriesResponse);
+      }
+
+      if (url.endsWith("/api/v2/providers")) {
+        return makeResponse([
+          { name: "gemini", models: ["gemini-2.5-flash-lite"], requires_api_key: false },
+          { name: "openai", models: ["gpt-4o"], requires_api_key: true },
+          { name: "ollama", models: ["qwen3:4b-instruct-2507-q4_K_M"], requires_api_key: false },
+        ]);
+      }
+
+      if (url.endsWith("/api/v2/session/create")) {
+        const body = JSON.parse(String(init?.body));
+        return makeResponse({ session_id: "session-live-hosted", received: body });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <Harness />
+      </AppProvider>,
+    );
+
+    const [providerSelect, modelSelect] = await screen.findAllByRole("combobox");
+    await waitFor(() => expect(providerSelect).toHaveValue("gemini"));
+    expect(modelSelect).toHaveValue("gemini-2.5-flash-lite");
+    expect(screen.queryByPlaceholderText("sk-...")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /launch simulation environment/i }));
+
+    await waitFor(() => expect(screen.getByTestId("session-id")).toHaveTextContent("session-live-hosted"));
+
+    const sessionCreateCall = vi.mocked(global.fetch).mock.calls.find(([url]) => String(url).endsWith("/api/v2/session/create"));
+    expect(sessionCreateCall).toBeDefined();
+
+    const payload = JSON.parse(String(sessionCreateCall?.[1]?.body));
+    expect(payload.provider).toBe("google");
+    expect(payload.model).toBe("gemini-2.5-flash-lite");
+    expect(payload.api_key).toBeUndefined();
+  });
+
   it("blocks launch until required provider credentials are provided", async () => {
     render(
       <AppProvider>

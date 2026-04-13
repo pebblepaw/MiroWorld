@@ -95,3 +95,17 @@ def test_create_v2_demo_session_falls_back_to_prompt_questions_when_demo_bundle_
             "type": "open-ended",
         }
     ]
+
+
+def test_v2_provider_catalog_marks_server_configured_google_as_no_key_required(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = _make_settings(tmp_path).model_copy(update={"gemini_api": "server-key"})
+    service = ConsoleService(settings)
+    monkeypatch.setattr(service, "list_provider_models", lambda provider_id: {"models": []})
+
+    payload = service.v2_provider_catalog()
+
+    gemini = next(item for item in payload if item["name"] == "gemini")
+    assert gemini["requires_api_key"] is False

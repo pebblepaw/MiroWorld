@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useCallback, useRef, useState, type ChangeEvent } from 'react';
 import { ArrowRight, Cpu, Download, Globe, Key, Loader2, Target, X } from 'lucide-react';
 
 import { useApp } from '@/contexts/AppContext';
@@ -197,9 +197,22 @@ function pickProviderModel(providerId: string, models: string[], currentModel?: 
   return curated[0] ?? candidate;
 }
 
+function pickPreferredLiveProvider(providers: Record<string, ProviderCard>) {
+  for (const providerId of ['gemini', 'openrouter', 'openai']) {
+    const provider = providers[providerId];
+    if (provider && !provider.requiresKey && provider.models.length > 0) {
+      return providerId;
+    }
+  }
+  return null;
+}
+
 export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const app = useApp();
   const liveMode = isLiveBootMode();
+  const missingHuggingFaceMessage = liveMode
+    ? 'Country downloads are temporarily unavailable because the server is missing its Hugging Face credential.'
+    : 'Add HUGGINGFACE_API_KEY to the root .env file, then restart the backend.';
 
   const [countries, setCountries] = useState<CountryCard[]>(FALLBACK_COUNTRIES);
   const [providers, setProviders] = useState<Record<string, ProviderCard>>(liveMode ? {} : FALLBACK_PROVIDERS);
@@ -247,7 +260,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     if (!country || downloading) return;
 
     if (countryMissingDep === 'huggingface_api_key') {
-      setLaunchError('Add HUGGINGFACE_API_KEY to the root .env file, then restart the backend.');
+      setLaunchError(missingHuggingFaceMessage);
       return;
     }
 
@@ -259,7 +272,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to start dataset download.';
       if (message.includes('huggingface_api_key')) {
-        setLaunchError('Add HUGGINGFACE_API_KEY to the root .env file, then restart the backend.');
+        setLaunchError(missingHuggingFaceMessage);
       } else {
         setLaunchError(message);
       }
@@ -284,7 +297,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
       }
     };
     pollRef.current = setTimeout(poll, 1500);
-  }, [country, downloading, countryMissingDep, refreshCountryStatus]);
+  }, [country, downloading, countryMissingDep, missingHuggingFaceMessage, refreshCountryStatus]);
 
   // Clean up polling on unmount or close
   useEffect(() => {
@@ -375,6 +388,32 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     }
   }, [model, provider, providers]);
 
+  useEffect(() => {
+    if (!isOpen || !liveMode) {
+      return;
+    }
+
+    const preferredProvider = pickPreferredLiveProvider(providers);
+    if (!preferredProvider || preferredProvider === provider) {
+      return;
+    }
+
+    const currentProvider = providers[provider];
+    const shouldSwitchProvider =
+      provider === 'ollama' ||
+      !currentProvider ||
+      (currentProvider.requiresKey && !apiKey.trim());
+
+    if (!shouldSwitchProvider) {
+      return;
+    }
+
+    setProvider(preferredProvider);
+    setModel(pickProviderModel(preferredProvider, providers[preferredProvider].models, app.modelName));
+    setApiKey('');
+    setLaunchError('');
+  }, [apiKey, app.modelName, isOpen, liveMode, provider, providers]);
+
   if (!isOpen) return null;
 
   const handleLaunch = async () => {
@@ -427,7 +466,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
         // Refresh country status in case it changed
         void refreshCountryStatus(resolvedCountry);
       } else if (message.includes('huggingface_api_key_missing')) {
-        setLaunchError('Add HUGGINGFACE_API_KEY to the root .env file, then restart the backend.');
+        setLaunchError(missingHuggingFaceMessage);
       } else {
         setLaunchError(message);
       }
@@ -509,7 +548,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
               <div className="mt-4 p-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30">
                 {countryMissingDep === 'huggingface_api_key' ? (
                   <p className="text-sm text-amber-800 dark:text-amber-200">
-                    <strong>Missing API Key:</strong> Add <code className="bg-amber-100 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">HUGGINGFACE_API_KEY</code> to the root <code className="bg-amber-100 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">.env</code> file, then restart the backend.
+                    <strong>Missing API Key:</strong> {missingHuggingFaceMessage}
                   </p>
                 ) : (
                   <div className="flex items-center justify-between gap-3">
@@ -597,7 +636,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                 <Input
                   type="password"
                   value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => setApiKey(event.target.value)}
                   placeholder="sk-..."
                   className="bg-background border-border text-sm font-mono"
                 />
