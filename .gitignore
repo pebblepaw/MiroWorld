@@ -27,6 +27,7 @@ backend/benchmark_output.txt
 *.egg-info/
 node_modules/
 dist/
+tmp/*
 build/
 .vscode/
 log/
