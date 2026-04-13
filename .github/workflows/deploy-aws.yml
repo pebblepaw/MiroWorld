@@ -21,7 +21,6 @@ permissions:
   contents: read
 
 env:
-  AWS_ACCOUNT_ID: 050751893720
   AWS_REGION: us-east-1
   ECR_BACKEND: 050751893720.dkr.ecr.us-east-1.amazonaws.com/miroworld/backend
   ECR_FRONTEND: 050751893720.dkr.ecr.us-east-1.amazonaws.com/miroworld/frontend
@@ -94,6 +93,8 @@ jobs:
 
       - name: Grant ECS execution role access to runtime secrets
         run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+
           cat > ecs-runtime-secrets-policy.json <<EOF
           {
             "Version": "2012-10-17",
