@@ -9,9 +9,15 @@
 </p>
 
 <p align="center">
-  <a href="https://pebblepaw.github.io/MiroWorld/"><img src="https://img.shields.io/badge/github-pages-demo-0a66c2?logo=github" alt="GitHub Pages Demo" /></a>
-  <a href="https://d3a03mb192176l.cloudfront.net/"><img src="https://img.shields.io/badge/aws-live-app-ff9900?logo=amazonaws&logoColor=white" alt="AWS Live App" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a>
+  <a href="https://pebblepaw.github.io/MiroWorld/">
+    <img src="https://img.shields.io/badge/GitHub%20Pages-Demo-0a66c2?logo=github" alt="GitHub Pages Demo" />
+  </a>
+  <a href="https://d3a03mb192176l.cloudfront.net/">
+    <img src="https://img.shields.io/badge/AWS-Live%20App-ff9900?logo=amazonaws&logoColor=white" alt="AWS Live App" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" />
+  </a>
 </p>
 
 MiroWorld ingests source material into a knowledge graph, samples a synthetic population from the Nemotron Singapore personas dataset, runs a multi-round OASIS social simulation, then grounds report/chat/analytics on the resulting interactions and checkpoints.
