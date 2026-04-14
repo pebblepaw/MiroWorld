@@ -2,26 +2,25 @@
   <img width="1600" height="454" alt="banner" src="https://github.com/user-attachments/assets/f3e99bcd-e931-4d60-b152-816b24e889c4" />
 </p>
 
-<h1 align="center">MiroWorld</h1>
+<!-- <h1 align="center">MiroWorld</h1> -->
 
-<p align="center">
-  <a href="https://pebblepaw.github.io/MiroWorld/">
-    <img src="https://img.shields.io/badge/GitHub%20Pages-Demo-0a66c2?logo=github" alt="GitHub Pages Demo" />
-  </a>
-  <a href="https://d3a03mb192176l.cloudfront.net/">
-    <img src="https://img.shields.io/badge/AWS-Live%20App-ff9900?logo=amazonaws&logoColor=white" alt="AWS Live App" />
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" />
-  </a>
-</p>
+<p align="center"><a href="https://pebblepaw.github.io/MiroWorld/"><img src="https://img.shields.io/badge/GitHub%20Pages-Demo-0a66c2?logo=github&logoColor=white" alt="GitHub Pages Demo" /></a>
+  <a href="Poster.pdf"><img src="https://img.shields.io/badge/Poster-PDF-red?logo=adobeacrobatreader&logoColor=white" alt="Poster PDF" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a></p>
 
-MiroWorld ingests source material into a knowledge graph, samples a synthetic population from the Nemotron Singapore personas dataset, runs a multi-round OASIS social simulation, then grounds report/chat/analytics on the resulting interactions and checkpoints.
+## Overview
 
-Try the static demo on GitHub Pages or the live AWS deployment:
+MiroWorld is a next generation Population Simulation Engine. Powered by NVIDIA's demographically-grounded Nemotron-Persona datasets, simulate entire countries, starting with Singapore and the USA. 
 
-- GitHub Pages demo: [https://pebblepaw.github.io/MiroWorld/](https://pebblepaw.github.io/MiroWorld/)
-- AWS live app: [https://d3a03mb192176l.cloudfront.net/](https://d3a03mb192176l.cloudfront.net/)
+Upload a policy proposal or business idea. Watch AI citizens post, argue, and react across a live social media simulation. Track opinion shifts, virality, polarity, and conversion in real-time.
+
+Export actionable reports, or chat directly with your harshest critics and biggest advocates.
+
+> The world’s biggest focus group. On demand.
+
+## Cached Demo 
+
+Try the static demo on [GitHub Pages](https://pebblepaw.github.io/MiroWorld/)
 
 The hosted GitHub Pages demo is preloaded with a bundled Singapore public-policy scenario based on the 2026 Budget AI strategy source URL. Screen 1 opens with the source URL already filled, and the shipped cache reflects a 50-agent, 10-round run with four bundled analysis questions.
 
