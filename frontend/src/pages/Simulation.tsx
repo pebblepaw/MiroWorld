@@ -355,7 +355,7 @@ export default function Simulation() {
   }, [feedThreads.length, setFeedThreads, simPosts]);
 
   useEffect(() => {
-    if (!isStaticDemoBootMode() || !sessionId) {
+    if (isLiveBootMode() || !sessionId) {
       return;
     }
     if (feedThreads.length > 0 || simPosts.length > 0) {

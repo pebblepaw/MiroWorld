@@ -591,6 +591,95 @@ describe("Simulation", () => {
     expect(screen.getByText("Persisted Commenter")).toBeInTheDocument();
   });
 
+  it("hydrates cached demo posts in backend-backed demo mode", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "demo");
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/demo-output.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            population: {
+              sampled_personas: [
+                {
+                  agent_id: "agent-0001",
+                  persona: { occupation: "Teacher", planning_area: "Woodlands" },
+                },
+              ],
+            },
+            analytics: {
+              cascades: {
+                viral_posts: [
+                  {
+                    post_id: "demo-post-1",
+                    author: "agent-0001",
+                    author_name: "Demo Author",
+                    title: "Bundled demo post",
+                    content: "Bundled demo body",
+                    likes: 8,
+                    dislikes: 1,
+                    comments: [
+                      {
+                        comment_id: "demo-comment-1",
+                        author: "agent-0001",
+                        author_name: "Demo Author",
+                        content: "Bundled demo reply",
+                        likes: 2,
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          }),
+        } as Response;
+      }
+      if (url.includes("/simulation/state")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen3-hydrate",
+            status: "completed",
+            event_count: 12,
+            last_round: 4,
+            platform: "reddit",
+            planned_rounds: 6,
+            current_round: 6,
+            elapsed_seconds: 123,
+            estimated_total_seconds: 123,
+            estimated_remaining_seconds: 0,
+            counters: { posts: 8, comments: 19, reactions: 11, active_authors: 5 },
+            checkpoint_status: {
+              baseline: { status: "completed", completed_agents: 3, total_agents: 3 },
+              final: { status: "completed", completed_agents: 3, total_agents: 3 },
+            },
+            top_threads: [{ title: "Bundled demo post", engagement: 9 }],
+            discussion_momentum: { approval_delta: 0.21, dominant_stance: "support" },
+            latest_metrics: {
+              approval_rate: { value: 82.3, label: "Approval Rate" },
+              net_sentiment: { value: 7.4, label: "Net Sentiment" },
+              round_progress_label: "Completed",
+            },
+            recent_events: [],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedHydratedSimulationState />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Bundled demo post")).toBeInTheDocument();
+    expect(screen.queryByText("No posts to display")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Demo Author").length).toBeGreaterThan(0);
+  });
+
   it("renders seeded titles exactly and strips markdown formatting from Screen 3 discourse", async () => {
     vi.stubEnv("VITE_BOOT_MODE", "live");
 

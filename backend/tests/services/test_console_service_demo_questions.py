@@ -209,3 +209,68 @@ def test_cached_v2_report_requires_bullet_schema(tmp_path: Path) -> None:
 
     assert service._is_cached_v2_report_payload(legacy_shaped) is False
     assert service._is_cached_v2_report_payload(current_shaped) is True
+
+
+def test_get_v2_report_uses_cached_demo_report_for_demo_sessions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = _make_settings(tmp_path)
+    _write_country(Path(settings.config_countries_dir) / "singapore.yaml")
+    _write_prompt(Path(settings.config_prompts_dir) / "public-policy-testing.yaml")
+    Path(settings.console_demo_output_path).write_text(
+        json.dumps(
+            {
+                "session": {"session_id": "demo-session"},
+                "knowledge": {"summary": "Cached demo knowledge."},
+                "population": {"sampled_personas": []},
+                "simulationState": {"status": "completed", "planned_rounds": 10, "current_round": 10},
+                "report": {
+                    "session_id": "demo-session",
+                    "status": "completed",
+                    "executive_summary": "Cached demo report.",
+                    "metric_deltas": [],
+                    "sections": [
+                        {
+                            "question": "What changed?",
+                            "report_title": "Summary",
+                            "type": "open-ended",
+                            "bullets": ["Cached bullet."],
+                            "evidence": [],
+                        }
+                    ],
+                    "insight_blocks": [],
+                    "preset_sections": [
+                        {
+                            "title": "Recommendations",
+                            "bullets": ["Cached recommendation."],
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ConsoleService(settings)
+    monkeypatch.setattr(service.country_datasets, "ensure_country_ready", lambda *_: str(tmp_path / "dataset.parquet"))
+
+    payload = service.create_v2_session(
+        country="singapore",
+        use_case="public-policy-testing",
+        provider="ollama",
+        model="qwen3:4b-instruct-2507-q4_K_M",
+        mode="demo",
+        session_id="session-demo-report",
+    )
+
+    monkeypatch.setattr(
+        "miroworld.services.report_service.ReportService.build_v2_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Live report generation should not run in demo mode.")),
+    )
+
+    report = service.get_v2_report(payload["session_id"])
+
+    assert report["session_id"] == "session-demo-report"
+    assert report["executive_summary"] == "Cached demo report."
+    assert report["sections"][0]["bullets"] == ["Cached bullet."]

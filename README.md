@@ -22,7 +22,7 @@ Export actionable reports, or chat directly with your harshest critics and bigge
 
 Try the static demo on [GitHub Pages](https://pebblepaw.github.io/MiroWorld/)
 
-The hosted GitHub Pages demo is preloaded with a bundled Singapore public-policy scenario based on the 2026 Budget AI strategy source URL. Screen 1 opens with the source URL already filled, and the shipped cache reflects a 50-agent, 10-round run with four bundled analysis questions.
+The hosted GitHub Pages demo is preloaded with a bundled Singapore public-policy scenario based on the 2026 Budget AI strategy source URL. Screen 1 opens with the source URL already filled, and both `--mode demo` and `demo-static` read from the checked-in `frontend/public/demo-output.json` bundle.
 
 The repository ships:
 
@@ -70,6 +70,12 @@ Demo mode uses the bundled cached artifacts and is the fastest smoke test:
 
 ```bash
 ./quick_start.sh --mode demo
+```
+
+To regenerate the bundled demo cache before launching locally:
+
+```bash
+./quick_start.sh --refresh-demo --mode demo
 ```
 
 Live mode enables the native OASIS runtime:

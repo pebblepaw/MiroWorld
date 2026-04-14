@@ -1386,6 +1386,13 @@ class ConsoleService:
         return payload
 
     def get_v2_report(self, session_id: str) -> dict[str, Any]:
+        if self._is_demo_session(session_id) and self.demo.is_demo_available():
+            demo_report = self.demo.get_report(session_id)
+            if self._is_cached_v2_report_payload(demo_report):
+                demo_report.setdefault("status", "completed")
+                self.store.save_report_state(session_id, demo_report)
+                return demo_report
+
         cached = self.store.get_report_state(session_id)
         if isinstance(cached, dict) and self._is_cached_v2_report_payload(cached):
             cached.setdefault("status", "completed")
