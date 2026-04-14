@@ -298,22 +298,6 @@ export default function Simulation() {
   const liveMode = isLiveBootMode();
   const metricCards = useMemo(() => metricConfigForUseCase(useCase, !liveMode), [liveMode, useCase]);
   const roundProgressLabel = useMemo(() => readRoundProgressLabel(simulationState), [simulationState]);
-  const sentimentBreakdown = useMemo(() => {
-    let positive = 0, neutral = 0, negative = 0;
-    for (const t of feedThreads) {
-      if (t.likes > t.dislikes) positive++;
-      else if (t.dislikes > t.likes) negative++;
-      else neutral++;
-    }
-    return { positive, neutral, negative };
-  }, [feedThreads]);
-  const overallSentiment = useMemo(() => {
-    const { positive, neutral, negative } = sentimentBreakdown;
-    if (positive === 0 && neutral === 0 && negative === 0) return "neutral";
-    if (positive >= negative && positive >= neutral) return "positive";
-    if (negative > positive && negative >= neutral) return "negative";
-    return "neutral";
-  }, [sentimentBreakdown]);
 
   const runtimeEstimate = useMemo(
     () => estimateRuntimeBreakdown(populationArtifact?.sample_count ?? 0, simulationRounds, modelProvider),
@@ -1084,24 +1068,6 @@ export default function Simulation() {
                     </TooltipContent>
                   </Tooltip>
                 ))}
-                {/* Sentiment derived from feed threads */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex flex-col gap-1 px-3 py-2 bg-muted/40 border border-border rounded-lg cursor-help">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Sentiment</span>
-                      <span className={`text-xl font-mono font-bold ${
-                        overallSentiment === "positive" ? "text-[hsl(var(--data-green))]"
-                          : overallSentiment === "negative" ? "text-[hsl(var(--data-red))]"
-                          : "text-muted-foreground"
-                      }`}>
-                        {overallSentiment}
-                      </span>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-[220px] text-xs leading-relaxed bg-popover text-popover-foreground border-border">
-                    Overall sentiment based on post reactions: {sentimentBreakdown.positive} positive, {sentimentBreakdown.neutral} neutral, {sentimentBreakdown.negative} negative.
-                  </TooltipContent>
-                </Tooltip>
               </div>
             </GlassCard>
 

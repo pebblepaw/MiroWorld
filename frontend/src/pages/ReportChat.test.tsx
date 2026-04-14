@@ -150,6 +150,17 @@ function buildReportPayload() {
         direction: "up",
         report_title: "Rollout Support",
       },
+      {
+        metric_name: "net_sentiment",
+        metric_label: "Net Sentiment",
+        metric_unit: "/10",
+        type: "scale",
+        initial_value: 7.4,
+        final_value: 6.9,
+        delta: -0.5,
+        direction: "down",
+        report_title: "Net Sentiment",
+      },
     ],
     sections: [
       {
@@ -612,7 +623,8 @@ describe("ReportChat", () => {
       screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Singapore · Public Policy Testing · 3 agents · 5 rounds"))).length,
     ).toBeGreaterThan(0);
     expect(screen.getByText("Approval Rate")).toBeInTheDocument();
-    expect(screen.getAllByText("42% -> 57%").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("42% → 57%").length).toBeGreaterThan(0);
+    expect(screen.getByText("7.4 → 6.9 (out of 10)")).toBeInTheDocument();
     expect(screen.queryByText("Supporting Views")).not.toBeInTheDocument();
     expect(screen.queryByText("Dissenting Views")).not.toBeInTheDocument();
   });

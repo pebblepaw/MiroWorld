@@ -705,9 +705,7 @@ export default function ReportChat() {
                           </div>
                           <div className="flex items-baseline gap-2 text-sm">
                             <span className="font-mono font-medium text-foreground">
-                              {formatMetricValue(delta.initial_value, delta.metric_unit, delta.type)}
-                              {' -> '}
-                              {formatMetricValue(delta.final_value, delta.metric_unit, delta.type)}
+                              {formatMetricTransition(delta.initial_value, delta.final_value, delta.metric_unit, delta.type)}
                             </span>
                           </div>
                           {delta.report_title && (
@@ -738,9 +736,7 @@ export default function ReportChat() {
                         {section.metric && (
                           <div className="flex items-center gap-3 mb-3 px-3 py-2 rounded bg-muted/20 border border-border">
                             <span className="text-lg font-mono font-medium text-foreground">
-                              {formatMetricValue(section.metric.initial_value, section.metric.metric_unit, section.type)}
-                              {' -> '}
-                              {formatMetricValue(section.metric.final_value, section.metric.metric_unit, section.type)}
+                              {formatMetricTransition(section.metric.initial_value, section.metric.final_value, section.metric.metric_unit, section.type)}
                             </span>
                           </div>
                         )}
@@ -1303,6 +1299,24 @@ function formatMetricValue(value: unknown, unit: unknown, type?: unknown): strin
     return `${Math.round(numeric)}`;
   }
   return Number.isInteger(numeric) ? `${numeric}` : numeric.toFixed(1);
+}
+
+function formatMetricTransition(initialValue: unknown, finalValue: unknown, unit: unknown, type?: unknown): string {
+  const initialNumeric = typeof initialValue === 'number' ? initialValue : Number(initialValue);
+  const finalNumeric = typeof finalValue === 'number' ? finalValue : Number(finalValue);
+  const normalizedUnit = String(unit ?? '').trim().toLowerCase();
+  const normalizedType = String(type ?? '').trim().toLowerCase();
+
+  if (
+    Number.isFinite(initialNumeric)
+    && Number.isFinite(finalNumeric)
+    && normalizedUnit !== '%'
+    && (normalizedUnit === '/10' || normalizedType === 'scale')
+  ) {
+    return `${initialNumeric.toFixed(1)} → ${finalNumeric.toFixed(1)} (out of 10)`;
+  }
+
+  return `${formatMetricValue(initialValue, unit, type)} → ${formatMetricValue(finalValue, unit, type)}`;
 }
 
 function formatMetricDelta(value: unknown, unit: unknown, type?: unknown): string {

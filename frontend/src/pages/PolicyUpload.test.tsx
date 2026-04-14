@@ -1089,6 +1089,81 @@ describe("PolicyUpload", () => {
     expect(screen.queryByText(/https-example-com-policy\.txt/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Demo mode")).not.toBeInTheDocument();
   });
+
+  it("pulses the graph-building label and renames heartbeat progress to in progress", async () => {
+    let resolveProcess: ((value: Response) => void) | null = null;
+    const processPromise = new Promise<Response>((resolve) => {
+      resolveProcess = resolve;
+    });
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith("/api/v2/console/session")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1",
+            mode: "live",
+            status: "created",
+            model_provider: "ollama",
+            model_name: "qwen3:4b-instruct-2507-q4_K_M",
+            embed_model_name: "nomic-embed-text",
+            base_url: "http://127.0.0.1:11434/v1/",
+            api_key_configured: true,
+            api_key_masked: "ol...ama",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/knowledge/process")) {
+        return processPromise;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ detail: `Unhandled fetch: ${url}` }),
+      } as Response;
+    }) as typeof fetch;
+
+    renderWithProviders(<PolicyUpload />);
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["small payload"], "note.txt", { type: "text/plain" })],
+      },
+    });
+    await screen.findByText("note.txt");
+
+    fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
+
+    const buildingLabel = await screen.findByText("Building graph...");
+    expect(buildingLabel).toHaveClass("animate-pulse");
+
+    const source = await waitFor(() => {
+      const [instance] = MockEventSource.instances;
+      expect(instance).toBeDefined();
+      return instance;
+    });
+
+    act(() => {
+      source.triggerError();
+    });
+
+    expect(await screen.findByText("In Progress")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveProcess?.({
+        ok: true,
+        json: async () => baseKnowledgeArtifact(),
+      } as Response);
+    });
+
+    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("7"));
+  });
 });
 
 function baseKnowledgeArtifact() {

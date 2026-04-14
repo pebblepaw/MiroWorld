@@ -1496,7 +1496,7 @@ export default function PolicyUpload() {
                 <span className="truncate min-w-0">
                   [{new Date().toLocaleTimeString('en-US', { hour12: false })}] {knowledgeStreamProgress?.message || 'Loading LightRAG engine...'}
                 </span>
-                <span className="text-success uppercase shrink-0 animate-pulse">{knowledgeStreamProgress?.stage || 'initializing'}</span>
+                <span className="text-success uppercase shrink-0 animate-pulse">{formatKnowledgeStageLabel(knowledgeStreamProgress?.stage)}</span>
               </div>
               <Progress
                 value={resolveKnowledgeProgressValue(knowledgeStreamProgress)}
@@ -1725,7 +1725,7 @@ export default function PolicyUpload() {
               {knowledgeLoading ? (
                 <div className="flex flex-col items-center gap-3">
                   <Loader2 className="w-6 h-6 animate-spin text-white/40" />
-                  <span className="font-mono text-xs uppercase tracking-wider">Building graph...</span>
+                  <span className="animate-pulse font-mono text-xs uppercase tracking-wider">Building graph...</span>
                 </div>
               ) : graphReady ? (
                 'No nodes match the current filters'
@@ -1843,6 +1843,19 @@ function resolveKnowledgeProgressValue(progress: KnowledgeStreamProgress | null)
   }
 
   return 50;
+}
+
+function formatKnowledgeStageLabel(stage: string | null | undefined): string {
+  const normalized = String(stage || '').trim().toLowerCase();
+  if (!normalized) {
+    return 'Initializing';
+  }
+  if (normalized === 'heartbeat') {
+    return 'In Progress';
+  }
+  return normalized
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
 function radiusFromNormalizedValue(value?: number | null) {

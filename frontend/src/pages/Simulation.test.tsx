@@ -920,6 +920,7 @@ describe("Simulation", () => {
       "title",
       "Reads the latest approval rate from the simulation metrics payload.",
     );
+    expect(screen.queryByText(/^Sentiment$/)).not.toBeInTheDocument();
   });
 
   it("shows missing markers instead of fabricated metric values in live mode when metrics are absent", async () => {
