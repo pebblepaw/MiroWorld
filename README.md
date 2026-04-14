@@ -1,12 +1,8 @@
 <p align="center">
-  <img src="logo.png" alt="MiroWorld" width="160" />
+  <img width="1600" height="454" alt="banner" src="https://github.com/user-attachments/assets/f3e99bcd-e931-4d60-b152-816b24e889c4" />
 </p>
 
 <h1 align="center">MiroWorld</h1>
-
-<p align="center">
-  AI consulting simulator for policy, campaign, and product analysis
-</p>
 
 <p align="center">
   <a href="https://pebblepaw.github.io/MiroWorld/">
