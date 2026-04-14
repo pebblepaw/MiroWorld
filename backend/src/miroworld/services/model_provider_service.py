@@ -110,6 +110,7 @@ def resolve_model_selection(
     embed_model_name: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
+    allow_provider_env_key_fallback: bool = True,
 ) -> ResolvedModelSelection:
     resolved_provider = normalize_provider(provider or settings.llm_provider)
     if provider is None:
@@ -118,12 +119,18 @@ def resolve_model_selection(
             embed_model_name or settings.llm_embed_model or settings.default_embed_model_for_provider(resolved_provider)
         ).strip()
         resolved_base_url = normalize_base_url(base_url or settings.llm_base_url or settings.default_base_url_for_provider(resolved_provider))
-        resolved_api_key = api_key or settings.llm_api_key or settings.resolved_key_for_provider(resolved_provider) or None
+        if allow_provider_env_key_fallback:
+            resolved_api_key = api_key or settings.llm_api_key or settings.resolved_key_for_provider(resolved_provider) or None
+        else:
+            resolved_api_key = api_key or None
     else:
         resolved_model = (model_name or settings.default_model_for_provider(resolved_provider)).strip()
         resolved_embed_model = (embed_model_name or settings.default_embed_model_for_provider(resolved_provider)).strip()
         resolved_base_url = normalize_base_url(base_url or settings.default_base_url_for_provider(resolved_provider))
-        resolved_api_key = api_key or settings.resolved_key_for_provider(resolved_provider) or None
+        if allow_provider_env_key_fallback:
+            resolved_api_key = api_key or settings.resolved_key_for_provider(resolved_provider) or None
+        else:
+            resolved_api_key = api_key or None
 
     if resolved_provider == "ollama" and not resolved_api_key:
         resolved_api_key = "ollama"
@@ -203,6 +210,7 @@ def list_models_for_provider(
         provider=provider,
         api_key=api_key,
         base_url=base_url,
+        allow_provider_env_key_fallback=False,
     )
 
     if resolved.provider == "google":

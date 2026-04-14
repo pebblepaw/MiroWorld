@@ -97,7 +97,7 @@ docker compose up --build
 
 Notes:
 
-- `BOOT_MODE=demo` is the default and requires no provider key.
+- `BOOT_MODE=demo` is the default cached-flow boot mode. Remote providers still require a user-supplied API key; only `ollama` runs without one.
 - For live Docker runs, the default `.env.example` is already oriented toward OpenRouter. Set `OPENROUTER_API_KEY` and switch `BOOT_MODE=live`.
 - If you want Docker to use a host Ollama daemon instead, set `LLM_PROVIDER="ollama"` and `LLM_BASE_URL="http://host.docker.internal:11434/v1/"` in `.env`.
 - The backend healthcheck also verifies that the OASIS sidecar is reachable.

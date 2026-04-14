@@ -361,23 +361,54 @@ export interface SimulationState {
   recent_events: Array<Record<string, unknown>>;
 }
 
+export interface ReportMetricDelta {
+  metric_name: string;
+  metric_label: string;
+  metric_unit: string;
+  initial_value: number;
+  final_value: number;
+  delta: number;
+  direction: string;
+  report_title?: string;
+  initial_display?: string;
+  final_display?: string;
+  delta_display?: string;
+  type?: string;
+}
+
+export interface ReportEvidenceItem {
+  agent_id?: string;
+  agent_name?: string;
+  post_id?: string;
+  quote?: string;
+  content?: string;
+  source_label?: string;
+}
+
+export interface ReportSection {
+  question: string;
+  report_title: string;
+  type: string;
+  bullets: string[];
+  evidence: ReportEvidenceItem[];
+  metric?: ReportMetricDelta;
+}
+
+export interface ReportPresetSection {
+  title: string;
+  bullets: string[];
+}
+
 export interface StructuredReportState {
   session_id: string;
   status: string;
-  generated_at?: string | null;
-  executive_summary?: string | null;
-  quick_stats?: Record<string, unknown>;
-  metric_deltas?: Array<Record<string, unknown>>;
-  sections?: Array<Record<string, unknown>>;
-  insight_blocks?: Array<Record<string, unknown>>;
-  preset_sections?: Array<Record<string, unknown>>;
-  insight_cards: Array<Record<string, unknown>>;
-  support_themes: Array<Record<string, unknown>>;
-  dissent_themes: Array<Record<string, unknown>>;
-  demographic_breakdown: Array<Record<string, unknown>>;
-  influential_content: Array<Record<string, unknown>>;
-  recommendations: Array<Record<string, unknown>>;
-  risks: Array<Record<string, unknown>>;
+  generated_at: string | null;
+  executive_summary: string | null;
+  quick_stats: Record<string, unknown>;
+  metric_deltas: ReportMetricDelta[];
+  sections: ReportSection[];
+  insight_blocks: Array<Record<string, unknown>>;
+  preset_sections: ReportPresetSection[];
   error?: string | null;
 }
 
@@ -420,7 +451,6 @@ type DemoOutput = {
   population?: Record<string, unknown>;
   simulationState?: Record<string, unknown>;
   report?: Record<string, unknown>;
-  reportFull?: Record<string, unknown>;
   analytics?: Record<string, unknown>;
 };
 
@@ -455,8 +485,8 @@ const STATIC_COUNTRIES: V2CountryResponse[] = [
 ];
 
 const STATIC_V2_PROVIDERS: V2ProviderResponse[] = [
-  { name: "gemini", models: ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], requires_api_key: false },
-  { name: "openai", models: ["gpt-4o-mini", "gpt-4o"], requires_api_key: false },
+  { name: "gemini", models: ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], requires_api_key: true },
+  { name: "openai", models: ["gpt-4o-mini", "gpt-4o"], requires_api_key: true },
   { name: "ollama", models: ["qwen3:4b-instruct-2507-q4_K_M", "llama3:8b"], requires_api_key: false },
 ];
 
@@ -467,7 +497,7 @@ const STATIC_MODEL_CATALOG: ConsoleModelProvider[] = [
     default_model: "gemini-2.5-flash-lite",
     default_embed_model: "nomic-embed-text",
     default_base_url: "",
-    requires_api_key: false,
+    requires_api_key: true,
   },
   {
     id: "openrouter",
@@ -475,7 +505,7 @@ const STATIC_MODEL_CATALOG: ConsoleModelProvider[] = [
     default_model: "meta-llama/llama-3.1-8b-instruct:free",
     default_embed_model: "nomic-embed-text",
     default_base_url: "https://openrouter.ai/api/v1",
-    requires_api_key: false,
+    requires_api_key: true,
   },
   {
     id: "openai",
@@ -483,7 +513,7 @@ const STATIC_MODEL_CATALOG: ConsoleModelProvider[] = [
     default_model: "gpt-4o-mini",
     default_embed_model: "text-embedding-3-small",
     default_base_url: "https://api.openai.com/v1",
-    requires_api_key: false,
+    requires_api_key: true,
   },
   {
     id: "ollama",
@@ -822,16 +852,125 @@ async function getDemoAgentLookup(): Promise<Map<string, DemoAgentRecord>> {
   return new Map((await getDemoAgentRecords()).map((agent) => [agent.agent_id, agent]));
 }
 
-async function getDemoViralPosts(): Promise<Array<Record<string, unknown>>> {
-  const demo = await loadBundledDemoOutput();
-  const report = (demo.reportFull ?? demo.report ?? {}) as Record<string, unknown>;
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => String(item ?? "").trim())
+    .filter((item) => item.length > 0);
+}
+
+function resolveDemoReportRecord(demo: DemoOutput): Record<string, unknown> {
+  const directReport = asRecord(demo.report);
+  const looksLikeReport = (value: Record<string, unknown>): boolean => {
+    return Boolean(
+      String(value.session_id ?? "").trim()
+      || String(value.executive_summary ?? "").trim()
+      || Array.isArray(value.metric_deltas)
+      || Array.isArray(value.sections)
+      || Array.isArray(value.preset_sections),
+    );
+  };
+
+  return looksLikeReport(directReport) ? directReport : {};
+}
+
+function resolveDemoCascadesRecord(demo: DemoOutput): Record<string, unknown> {
+  const analytics = asRecord(demo.analytics);
+  const cascades = asRecord(analytics.cascades);
+  if (Object.keys(cascades).length > 0) {
+    return cascades;
+  }
+
+  const report = resolveDemoReportRecord(demo);
   const insightBlocks = Array.isArray(report.insight_blocks) ? report.insight_blocks : [];
   const cascadeBlock = insightBlocks.find((block) => {
-    const entry = block as Record<string, unknown>;
+    const entry = asRecord(block);
     return entry.type === "viral_cascade";
-  }) as Record<string, unknown> | undefined;
-  const data = (cascadeBlock?.data ?? {}) as Record<string, unknown>;
-  const posts = Array.isArray(data.viral_posts) ? data.viral_posts : [];
+  });
+  return asRecord(asRecord(cascadeBlock).data);
+}
+
+function normalizeMetricDelta(raw: unknown): ReportMetricDelta | null {
+  const entry = asRecord(raw);
+  const metricName = String(entry.metric_name ?? "").trim();
+  const metricLabel = String(entry.metric_label ?? metricName).trim();
+  if (!metricName && !metricLabel) {
+    return null;
+  }
+  return {
+    metric_name: metricName || metricLabel.toLowerCase().replace(/\s+/g, "_"),
+    metric_label: metricLabel || metricName,
+    metric_unit: String(entry.metric_unit ?? "").trim(),
+    initial_value: Number(entry.initial_value ?? 0),
+    final_value: Number(entry.final_value ?? 0),
+    delta: Number(entry.delta ?? 0),
+    direction: String(entry.direction ?? "flat"),
+    report_title: String(entry.report_title ?? "").trim() || undefined,
+    initial_display: String(entry.initial_display ?? "").trim() || undefined,
+    final_display: String(entry.final_display ?? "").trim() || undefined,
+    delta_display: String(entry.delta_display ?? "").trim() || undefined,
+    type: String(entry.type ?? "").trim() || undefined,
+  };
+}
+
+function normalizeEvidenceItem(raw: unknown): ReportEvidenceItem {
+  const entry = asRecord(raw);
+  return {
+    agent_id: String(entry.agent_id ?? "").trim() || undefined,
+    agent_name: String(entry.agent_name ?? "").trim() || undefined,
+    post_id: String(entry.post_id ?? "").trim() || undefined,
+    quote: String(entry.quote ?? "").trim() || undefined,
+    content: String(entry.content ?? "").trim() || undefined,
+    source_label: String(entry.source_label ?? "").trim() || undefined,
+  };
+}
+
+function normalizeReportSection(raw: unknown): ReportSection | null {
+  const entry = asRecord(raw);
+  const question = String(entry.question ?? "").trim();
+  const title = String(entry.report_title ?? question).trim();
+  if (!question && !title) {
+    return null;
+  }
+  const metric = normalizeMetricDelta(entry.metric);
+  return {
+    question: question || title,
+    report_title: title || question,
+    type: String(entry.type ?? "open-ended").trim() || "open-ended",
+    bullets: normalizeStringList(entry.bullets),
+    evidence: Array.isArray(entry.evidence) ? entry.evidence.map((item) => normalizeEvidenceItem(item)) : [],
+    ...(metric ? { metric } : {}),
+  };
+}
+
+function normalizePresetSection(raw: unknown): ReportPresetSection | null {
+  const entry = asRecord(raw);
+  const title = String(entry.title ?? "").trim();
+  if (!title) {
+    return null;
+  }
+  return {
+    title,
+    bullets: normalizeStringList(entry.bullets),
+  };
+}
+
+async function getDemoViralPosts(): Promise<Array<Record<string, unknown>>> {
+  const demo = await loadBundledDemoOutput();
+  const cascades = resolveDemoCascadesRecord(demo);
+  const posts = Array.isArray(cascades.viral_posts)
+    ? cascades.viral_posts
+    : Array.isArray(cascades.posts)
+      ? cascades.posts
+      : Array.isArray(cascades.top_threads)
+        ? cascades.top_threads
+        : [];
   return posts.map((post) => ({ ...(post as Record<string, unknown>) }));
 }
 
@@ -946,24 +1085,23 @@ async function getDemoSimulationStatePayload(sessionId: string): Promise<Simulat
 
 async function getDemoReportPayload(sessionId: string): Promise<StructuredReportState> {
   const demo = await loadBundledDemoOutput();
-  const report = ((demo.reportFull ?? demo.report) ?? {}) as Record<string, unknown>;
+  const report = resolveDemoReportRecord(demo);
   return {
     session_id: sessionId,
     status: String(report.status ?? "complete"),
     generated_at: (report.generated_at as string | null | undefined) ?? null,
     executive_summary: (report.executive_summary as string | null | undefined) ?? null,
     quick_stats: (report.quick_stats as Record<string, unknown> | undefined) ?? {},
-    metric_deltas: Array.isArray(report.metric_deltas) ? (report.metric_deltas as Array<Record<string, unknown>>) : [],
-    sections: Array.isArray(report.sections) ? (report.sections as Array<Record<string, unknown>>) : [],
+    metric_deltas: Array.isArray(report.metric_deltas)
+      ? report.metric_deltas.map((item) => normalizeMetricDelta(item)).filter((item): item is ReportMetricDelta => item !== null)
+      : [],
+    sections: Array.isArray(report.sections)
+      ? report.sections.map((item) => normalizeReportSection(item)).filter((item): item is ReportSection => item !== null)
+      : [],
     insight_blocks: Array.isArray(report.insight_blocks) ? (report.insight_blocks as Array<Record<string, unknown>>) : [],
-    preset_sections: Array.isArray(report.preset_sections) ? (report.preset_sections as Array<Record<string, unknown>>) : [],
-    insight_cards: Array.isArray(report.insight_cards) ? (report.insight_cards as Array<Record<string, unknown>>) : [],
-    support_themes: Array.isArray(report.support_themes) ? (report.support_themes as Array<Record<string, unknown>>) : [],
-    dissent_themes: Array.isArray(report.dissent_themes) ? (report.dissent_themes as Array<Record<string, unknown>>) : [],
-    demographic_breakdown: Array.isArray(report.demographic_breakdown) ? (report.demographic_breakdown as Array<Record<string, unknown>>) : [],
-    influential_content: Array.isArray(report.influential_content) ? (report.influential_content as Array<Record<string, unknown>>) : [],
-    recommendations: Array.isArray(report.recommendations) ? (report.recommendations as Array<Record<string, unknown>>) : [],
-    risks: Array.isArray(report.risks) ? (report.risks as Array<Record<string, unknown>>) : [],
+    preset_sections: Array.isArray(report.preset_sections)
+      ? report.preset_sections.map((item) => normalizePresetSection(item)).filter((item): item is ReportPresetSection => item !== null)
+      : [],
     error: (report.error as string | null | undefined) ?? null,
   };
 }

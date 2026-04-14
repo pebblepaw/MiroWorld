@@ -226,7 +226,11 @@ if [[ "$REFRESH_DEMO" == "true" ]]; then
 
   (
     cd "$BACKEND_DIR"
-    env "${DEMO_ENV[@]}" "$PY_BIN" -u scripts/generate_demo_cache.py --from-stage simulation --skip-knowledge --agent-count 50 --rounds 10
+    env "${DEMO_ENV[@]}" "$PY_BIN" -u scripts/generate_v2_demo_cache_from_url.py \
+      --url "https://www.singaporebudget.gov.sg/budget-speech/budget-statement/c-harness-ai-as-a-strategic-advantage#Harness-AI-as-a-Strategic-Advantage" \
+      --extra-question "Are you worried about AI replacing your job? Yes/No" \
+      --agent-count 50 \
+      --rounds 10
   )
 fi
 
@@ -276,7 +280,21 @@ echo "[frontend] Starting UI on http://$FRONTEND_HOST:$FRONTEND_PORT ..."
 ) &
 FRONTEND_PID=$!
 
-sleep 2
+for i in {1..60}; do
+  if curl -sf "http://$FRONTEND_HOST:$FRONTEND_PORT/@vite/client" >/dev/null 2>&1; then
+    echo "[frontend] Dev server is ready."
+    break
+  fi
+  if ! kill -0 "$FRONTEND_PID" >/dev/null 2>&1; then
+    echo "Frontend exited before becoming ready. See logs: $FRONTEND_LOG"
+    exit 1
+  fi
+  sleep 1
+  if [[ "$i" -eq 60 ]]; then
+    echo "Frontend failed to become ready. See logs: $FRONTEND_LOG"
+    exit 1
+  fi
+done
 
 echo ""
 echo "MiroWorld console is up:"

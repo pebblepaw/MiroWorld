@@ -165,7 +165,7 @@ describe("OnboardingModal", () => {
     expect(japanCard).not.toHaveClass("border-[hsl(var(--data-blue))]");
   });
 
-  it("prefers a hosted provider in live mode when the server already has one configured", async () => {
+  it("does not auto-switch from Ollama to hosted providers when hosted providers require user keys", async () => {
     vi.stubEnv("VITE_BOOT_MODE", "live");
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -176,7 +176,7 @@ describe("OnboardingModal", () => {
 
       if (url.endsWith("/api/v2/providers")) {
         return makeResponse([
-          { name: "gemini", models: ["gemini-2.5-flash-lite"], requires_api_key: false },
+          { name: "gemini", models: ["gemini-2.5-flash-lite"], requires_api_key: true },
           { name: "openai", models: ["gpt-4o"], requires_api_key: true },
           { name: "ollama", models: ["qwen3:4b-instruct-2507-q4_K_M"], requires_api_key: false },
         ]);
@@ -197,8 +197,8 @@ describe("OnboardingModal", () => {
     );
 
     const [providerSelect, modelSelect] = await screen.findAllByRole("combobox");
-    await waitFor(() => expect(providerSelect).toHaveValue("gemini"));
-    expect(modelSelect).toHaveValue("gemini-2.5-flash-lite");
+    await waitFor(() => expect(providerSelect).toHaveValue("ollama"));
+    expect(modelSelect).toHaveValue("qwen3:4b-instruct-2507-q4_K_M");
     expect(screen.queryByPlaceholderText("sk-...")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /launch simulation environment/i }));
@@ -209,8 +209,8 @@ describe("OnboardingModal", () => {
     expect(sessionCreateCall).toBeDefined();
 
     const payload = JSON.parse(String(sessionCreateCall?.[1]?.body));
-    expect(payload.provider).toBe("google");
-    expect(payload.model).toBe("gemini-2.5-flash-lite");
+    expect(payload.provider).toBe("ollama");
+    expect(payload.model).toBe("qwen3:4b-instruct-2507-q4_K_M");
     expect(payload.api_key).toBeUndefined();
   });
 

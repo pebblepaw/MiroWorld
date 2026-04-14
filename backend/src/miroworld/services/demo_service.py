@@ -363,10 +363,6 @@ class DemoService:
         """Get report for demo session."""
         # Always return from cache for demo mode
         cache = self._load_demo_cache()
-        if cache and "reportFull" in cache:
-            report = dict(cache["reportFull"])
-            report["session_id"] = session_id
-            return report
         if cache and "report" in cache:
             report = dict(cache["report"])
             report["session_id"] = session_id
@@ -374,64 +370,6 @@ class DemoService:
         
         # Fall back to database
         return self.store.get_report_state(session_id)
-    
-    def get_report_opinions(self, session_id: str) -> dict[str, Any]:
-        """Get report opinions for demo session."""
-        cache = self._load_demo_cache()
-        
-        feed = []
-        influential = []
-        
-        if cache:
-            if "reportOpinions" in cache:
-                ro = cache["reportOpinions"]
-                feed = ro.get("feed", [])
-                influential = ro.get("influential_agents", [])
-            elif "report" in cache and "influential_agents" in cache["report"]:
-                influential = cache["report"]["influential_agents"]
-        
-        # Get interactions from database if available
-        if not feed:
-            interactions = self.store.get_interactions(session_id)[-50:]
-            feed = [
-                {
-                    "event_type": "post_created",
-                    "session_id": session_id,
-                    "round_no": i.get("round_no", 1),
-                    "actor_agent_id": i.get("actor_agent_id"),
-                    "content": i.get("content"),
-                }
-                for i in interactions
-            ]
-        
-        return {
-            "session_id": session_id,
-            "feed": feed,
-            "influential_agents": influential,
-        }
-    
-    def get_friction_map(self, session_id: str) -> dict[str, Any]:
-        """Get friction map for demo session."""
-        cache = self._load_demo_cache()
-        
-        friction = []
-        anomaly_summary = "No friction data available"
-        
-        if cache:
-            if "reportFriction" in cache:
-                rf = cache["reportFriction"]
-                friction = rf.get("map_metrics", [])
-                anomaly_summary = rf.get("anomaly_summary", anomaly_summary)
-            elif "report" in cache:
-                friction = cache["report"].get("friction_by_planning_area", [])
-                if friction:
-                    anomaly_summary = f"Highest friction: {friction[0]['planning_area']}"
-        
-        return {
-            "session_id": session_id,
-            "map_metrics": friction,
-            "anomaly_summary": anomaly_summary,
-        }
     
     def get_interaction_hub(self, session_id: str, agent_id: str | None = None) -> dict[str, Any]:
         """Get interaction hub data for demo session."""
@@ -441,11 +379,7 @@ class DemoService:
         selected_agent = None
         
         if cache:
-            if "interactionHub" in cache:
-                ih = cache["interactionHub"]
-                influential = ih.get("influential_agents", [])
-                selected_agent = ih.get("selected_agent")
-            elif "report" in cache:
+            if "report" in cache:
                 influential = cache["report"].get("influential_agents", [])
         
         # Use provided agent_id or first influential agent
@@ -463,49 +397,6 @@ class DemoService:
             },
             "influential_agents": influential,
             "selected_agent": selected_agent,
-        }
-    
-    def generate_demo_report_chat(self, session_id: str, message: str) -> dict[str, Any]:
-        """Generate a demo report chat response."""
-        # Get report data for context
-        report = self.get_report(session_id) or {}
-        friction = report.get("friction_by_planning_area", [])
-        
-        # Simple response based on message content
-        message_lower = message.lower()
-        
-        if "friction" in message_lower or "dissent" in message_lower:
-            if friction:
-                top = friction[0]
-                response = (
-                    f"The highest friction is in {top['planning_area']} with a friction index of "
-                    f"{top['friction_index']:.2f}. This area showed a mean opinion shift of "
-                    f"{top['mean_shift']:+.2f} from {top['avg_pre_opinion']:.2f} to {top['avg_post_opinion']:.2f}."
-                )
-            else:
-                response = "No significant friction clusters were identified in this simulation."
-        elif "mitigation" in message_lower or "recommend" in message_lower:
-            recommendations = report.get("recommendations", [])
-            if recommendations:
-                rec = recommendations[0]
-                response = f"Consider: {rec.get('title', 'Targeted outreach to high-friction demographics')}. {rec.get('description', '')}"
-            else:
-                response = "Based on the simulation, consider targeted outreach to high-friction planning areas and addressing specific cost-of-living concerns."
-        elif "approval" in message_lower or "support" in message_lower:
-            pre = report.get("approval_rates", {}).get("stage3a", 0)
-            post = report.get("approval_rates", {}).get("stage3b", 0)
-            response = f"Approval shifted from {pre:.1%} to {post:.1%} after deliberation."
-        else:
-            response = (
-                "This is a demo simulation of Singapore FY2026 Budget reception. "
-                "The simulation shows how different demographic groups respond to policy proposals. "
-                "Ask about friction clusters, mitigations, or approval rates for more details."
-            )
-        
-        return {
-            "response": response,
-            "zep_context_used": False,
-            "demo_mode": True,
         }
     
     def generate_demo_agent_chat(self, session_id: str, agent_id: str, message: str) -> dict[str, Any]:

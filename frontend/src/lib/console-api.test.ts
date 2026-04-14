@@ -237,4 +237,177 @@ describe("console-api demo-static routing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(String(fetchSpy.mock.calls[0]?.[0])).toMatch(/demo-output\.json$/);
   });
+
+  it("keeps remote demo-static providers marked as BYOK", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "demo-static");
+
+    const { getModelProviderCatalog, getV2Providers } = await import("./console-api");
+
+    await expect(getV2Providers()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "gemini", requires_api_key: true }),
+        expect.objectContaining({ name: "openai", requires_api_key: true }),
+        expect.objectContaining({ name: "ollama", requires_api_key: false }),
+      ]),
+    );
+
+    await expect(getModelProviderCatalog()).resolves.toMatchObject({
+      providers: expect.arrayContaining([
+        expect.objectContaining({ id: "google", requires_api_key: true }),
+        expect.objectContaining({ id: "openai", requires_api_key: true }),
+        expect.objectContaining({ id: "ollama", requires_api_key: false }),
+      ]),
+    });
+  });
+
+  it("hydrates top-level V2 demo reports and reads cached simulation posts from cascades", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "demo-static");
+
+    const demoPayload = {
+      session: { session_id: "demo-session" },
+      source_run: {
+        country: "singapore",
+        provider: "google",
+        model: "gemini-2.5-flash-lite",
+        use_case: "public-policy-testing",
+      },
+      population: {
+        session_id: "demo-session",
+        sample_seed: 7,
+        sampled_personas: [
+          {
+            agent_id: "agent-1",
+            display_name: "Alex Tan",
+            persona: { occupation: "Teacher", planning_area: "Woodlands" },
+            selection_reason: {
+              score: 0.8,
+              matched_facets: [],
+              matched_document_entities: [],
+              instruction_matches: [],
+              bm25_terms: [],
+              semantic_summary: "",
+              semantic_relevance: 0.8,
+              geographic_relevance: 0.7,
+              socioeconomic_relevance: 0.7,
+              digital_behavior_relevance: 0.7,
+              filter_alignment: 0.9,
+            },
+          },
+        ],
+      },
+      report: {
+        session_id: "demo-session",
+        status: "complete",
+        executive_summary: "Wrapped V2 report summary",
+        metric_deltas: [
+          {
+            metric_name: "approval_rate",
+            metric_label: "Approval Rate",
+            metric_unit: "%",
+            initial_value: 40,
+            final_value: 55,
+            delta: 15,
+            direction: "up",
+            report_title: "Policy Approval",
+          },
+        ],
+        sections: [
+          {
+            question: "What changed?",
+            report_title: "Policy Approval",
+            type: "scale",
+            bullets: ["Support improved after safeguards were clarified."],
+            evidence: [],
+          },
+        ],
+        preset_sections: [
+          {
+            title: "Recommendations",
+            bullets: ["Lead with affordability safeguards."],
+          },
+        ],
+      },
+      analytics: {
+        cascades: {
+          viral_posts: [
+            {
+              post_id: "post-1",
+              author_agent_id: "agent-1",
+              author_name: "Alex Tan",
+              title: "Affordability worries are still rising",
+              content: "Families still need clearer safeguards.",
+              likes: 14,
+              dislikes: 2,
+              comments: [
+                {
+                  comment_id: "comment-1",
+                  author_agent_id: "agent-1",
+                  author_name: "Alex Tan",
+                  content: "Clearer rollout details would help.",
+                  likes: 3,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      simulationState: {
+        session_id: "demo-session",
+        status: "completed",
+        counters: { posts: 1, comments: 1, reactions: 0, active_authors: 1 },
+        checkpoint_status: {},
+        latest_metrics: {},
+        top_threads: [],
+        discussion_momentum: {},
+        recent_events: [],
+        event_count: 1,
+        last_round: 3,
+      },
+    };
+
+    const fetchSpy = vi.fn(async () => {
+      return {
+        ok: true,
+        json: async () => demoPayload,
+      } as Response;
+    });
+    global.fetch = fetchSpy as typeof fetch;
+
+    const { getBundledDemoSimulationPosts, getStructuredReport } = await import("./console-api");
+
+    await expect(getStructuredReport("demo-session")).resolves.toMatchObject({
+      session_id: "demo-session",
+      executive_summary: "Wrapped V2 report summary",
+      metric_deltas: [
+        expect.objectContaining({ metric_name: "approval_rate" }),
+      ],
+      sections: [
+        expect.objectContaining({
+          bullets: ["Support improved after safeguards were clarified."],
+        }),
+      ],
+      preset_sections: [
+        expect.objectContaining({
+          bullets: ["Lead with affordability safeguards."],
+        }),
+      ],
+    });
+
+    await expect(getBundledDemoSimulationPosts()).resolves.toMatchObject([
+      expect.objectContaining({
+        id: "post-1",
+        agentId: "agent-1",
+        title: "Affordability worries are still rising",
+        commentCount: 1,
+        comments: [
+          expect.objectContaining({
+            id: "comment-1",
+            content: "Clearer rollout details would help.",
+          }),
+        ],
+      }),
+    ]);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
 });

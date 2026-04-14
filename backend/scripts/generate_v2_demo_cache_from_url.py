@@ -26,6 +26,7 @@ DEFAULT_COUNTRY = "singapore"
 DEFAULT_PROVIDER = "google"
 DEFAULT_USE_CASE = "public-policy-testing"
 DEFAULT_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_EXTRA_QUESTION = "Are you worried about AI replacing your job? Yes/No"
 
 
 def _now() -> str:
@@ -144,6 +145,7 @@ def _build_demo_output(
     use_case: str,
     provider: str,
     model: str,
+    analysis_questions: list[dict[str, Any]],
     agent_count: int,
     rounds: int,
     controversy_boost: float,
@@ -151,9 +153,6 @@ def _build_demo_output(
     population: dict[str, Any],
     simulation_state: dict[str, Any],
     report: dict[str, Any],
-    report_opinions: dict[str, Any],
-    report_friction: dict[str, Any],
-    interaction_hub: dict[str, Any],
     analytics_polarization: dict[str, Any],
     analytics_opinion_flow: dict[str, Any],
     analytics_influence: dict[str, Any],
@@ -191,20 +190,18 @@ def _build_demo_output(
             "use_case": use_case,
             "provider": provider,
             "model": model,
+            "analysis_questions": analysis_questions,
             "agent_count": agent_count,
             "rounds": rounds,
             "controversy_boost": controversy_boost,
             "generated_at": _now(),
         },
+        "analysis_questions": analysis_questions,
         "knowledge": knowledge,
         "population": population,
         "simulation": simulation_summary,
         "simulationState": simulation_state,
         "report": report,
-        "reportFull": report,
-        "reportOpinions": report_opinions,
-        "reportFriction": report_friction,
-        "interactionHub": interaction_hub,
         "analytics": {
             "polarization": analytics_polarization,
             "opinion_flow": analytics_opinion_flow,
@@ -224,6 +221,7 @@ def main() -> None:
     parser.add_argument("--provider", default=DEFAULT_PROVIDER)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--api-key", default=None, help="Optional provider API key override.")
+    parser.add_argument("--extra-question", default=DEFAULT_EXTRA_QUESTION, help="Optional extra analysis question to append.")
     parser.add_argument("--agent-count", type=int, default=DEFAULT_AGENT_COUNT)
     parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
     parser.add_argument("--controversy-boost", type=float, default=DEFAULT_CONTROVERSY_BOOST)
@@ -271,6 +269,41 @@ def main() -> None:
     )
     session_id = str(session["session_id"])
     _log(f"Created session: {session_id}")
+
+    default_questions_payload = _require_ok(
+        "analysis-questions",
+        client.get(f"/api/v2/session/{session_id}/analysis-questions"),
+    )
+    analysis_questions = [
+        dict(item)
+        for item in (default_questions_payload.get("questions") or [])
+        if isinstance(item, dict)
+    ]
+    extra_question_text = str(args.extra_question or "").strip()
+    if extra_question_text:
+        analysis_questions.append(
+            {
+                "question": extra_question_text,
+                "type": "yes-no",
+                "metric_name": "ai_job_worry",
+                "metric_label": "AI Job Replacement Concern",
+                "report_title": "AI Job Displacement Concerns",
+            }
+        )
+        _require_ok(
+            "session/config",
+            client.patch(
+                f"/api/v2/console/session/{session_id}/config",
+                json={
+                    "country": args.country,
+                    "use_case": args.use_case,
+                    "provider": args.provider,
+                    "model": args.model,
+                    "analysis_questions": analysis_questions,
+                    **({"api_key": api_key} if api_key else {}),
+                },
+            ),
+        )
 
     scraped = _require_ok(
         "session/scrape",
@@ -336,18 +369,6 @@ def main() -> None:
         "report",
         client.get(f"/api/v2/console/session/{session_id}/report"),
     )
-    report_opinions = _require_ok(
-        "report/opinions",
-        client.get(f"/api/v2/console/session/{session_id}/report/opinions"),
-    )
-    report_friction = _require_ok(
-        "report/friction-map",
-        client.get(f"/api/v2/console/session/{session_id}/report/friction-map"),
-    )
-    interaction_hub = _require_ok(
-        "interaction-hub",
-        client.get(f"/api/v2/console/session/{session_id}/interaction-hub"),
-    )
 
     analytics_polarization = _require_ok(
         "analytics/polarization",
@@ -378,6 +399,7 @@ def main() -> None:
         use_case=args.use_case,
         provider=args.provider,
         model=args.model,
+        analysis_questions=analysis_questions,
         agent_count=args.agent_count,
         rounds=args.rounds,
         controversy_boost=args.controversy_boost,
@@ -385,9 +407,6 @@ def main() -> None:
         population=population,
         simulation_state=simulation_state,
         report=report,
-        report_opinions=report_opinions,
-        report_friction=report_friction,
-        interaction_hub=interaction_hub,
         analytics_polarization=analytics_polarization,
         analytics_opinion_flow=analytics_opinion_flow,
         analytics_influence=analytics_influence,

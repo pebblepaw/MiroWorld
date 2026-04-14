@@ -8,15 +8,11 @@ from pydantic import ValidationError
 
 from miroworld.config import Settings, get_settings
 from miroworld.models.console import (
-    ConsoleAgentChatRequest,
-    ConsoleAgentChatResponse,
     CountryDatasetStatusResponse,
     ConsoleDynamicFiltersResponse,
     ConsoleKnowledgeProcessRequest,
     ConsoleModelProviderCatalogResponse,
     ConsoleProviderModelsResponse,
-    ConsoleReportChatRequest,
-    ConsoleReportChatResponse,
     ConsoleScrapeRequest,
     ConsoleScrapeResponse,
     ConsoleSessionModelConfigRequest,
@@ -28,12 +24,9 @@ from miroworld.models.console import (
     V2GroupChatAgentsResponse,
     V2GroupChatRequest,
     V2GroupChatResponse,
-    InteractionHubResponse,
     KnowledgeArtifactResponse,
     PopulationArtifactResponse,
     PopulationPreviewRequest,
-    ReportFrictionMapResponse,
-    ReportOpinionsResponse,
     SimulationStartRequest,
     SimulationQuickStartRequest,
     SimulationStateResponse,
@@ -640,21 +633,6 @@ def v2_agent_chat(
     return V2AgentChatResponse(**payload)
 
 
-@router.get("/session/{session_id}/report/full", response_model=V2ReportResponse)
-def report_full(
-    session_id: str,
-    settings: Settings = Depends(get_settings),
-) -> V2ReportResponse:
-    # Check if demo mode with cached data
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        demo_service = _get_demo_service(settings)
-        report = demo_service.get_report(session_id)
-        if report:
-            return V2ReportResponse(**report)
-
-    return V2ReportResponse(**ConsoleService(settings).get_v2_report(session_id))
-
-
 @router.post("/session/{session_id}/report/generate", response_model=V2ReportResponse)
 def report_generate(
     session_id: str,
@@ -668,75 +646,6 @@ def report_generate(
             return V2ReportResponse(**report)
 
     return V2ReportResponse(**ConsoleService(settings).generate_v2_report(session_id))
-
-
-@router.get("/session/{session_id}/report/opinions", response_model=ReportOpinionsResponse)
-def report_opinions(
-    session_id: str,
-    settings: Settings = Depends(get_settings),
-) -> ReportOpinionsResponse:
-    # Check if demo mode with cached data
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        demo_service = _get_demo_service(settings)
-        opinions = demo_service.get_report_opinions(session_id)
-        return ReportOpinionsResponse(**opinions)
-    
-    return ReportOpinionsResponse(**ConsoleService(settings).get_report_opinions(session_id))
-
-
-@router.get("/session/{session_id}/report/friction-map", response_model=ReportFrictionMapResponse)
-def report_friction_map(
-    session_id: str,
-    settings: Settings = Depends(get_settings),
-) -> ReportFrictionMapResponse:
-    # Check if demo mode with cached data
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        demo_service = _get_demo_service(settings)
-        friction = demo_service.get_friction_map(session_id)
-        return ReportFrictionMapResponse(**friction)
-    
-    return ReportFrictionMapResponse(**ConsoleService(settings).get_report_friction_map(session_id))
-
-
-@router.get("/session/{session_id}/interaction-hub", response_model=InteractionHubResponse)
-def interaction_hub(
-    session_id: str,
-    agent_id: str | None = Query(default=None),
-    settings: Settings = Depends(get_settings),
-) -> InteractionHubResponse:
-    # Check if demo mode with cached data
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        demo_service = _get_demo_service(settings)
-        hub = demo_service.get_interaction_hub(session_id, agent_id)
-        return InteractionHubResponse(**hub)
-    
-    return InteractionHubResponse(**ConsoleService(settings).get_interaction_hub(session_id, agent_id=agent_id))
-
-
-@router.post("/session/{session_id}/interaction-hub/report-chat", response_model=ConsoleReportChatResponse)
-def interaction_hub_report_chat(
-    session_id: str,
-    req: ConsoleReportChatRequest,
-    settings: Settings = Depends(get_settings),
-) -> ConsoleReportChatResponse:
-    try:
-        payload = ConsoleService(settings).report_chat(session_id, req.message)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return ConsoleReportChatResponse(**payload)
-
-
-@router.post("/session/{session_id}/interaction-hub/agent-chat", response_model=ConsoleAgentChatResponse)
-def interaction_hub_agent_chat(
-    session_id: str,
-    req: ConsoleAgentChatRequest,
-    settings: Settings = Depends(get_settings),
-) -> ConsoleAgentChatResponse:
-    try:
-        payload = ConsoleService(settings).agent_chat(session_id, req.agent_id, req.message)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return ConsoleAgentChatResponse(**payload)
 
 
 @compat_router.post("/questions/generate-metadata")

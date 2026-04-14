@@ -97,7 +97,7 @@ def test_create_v2_demo_session_falls_back_to_prompt_questions_when_demo_bundle_
     ]
 
 
-def test_v2_provider_catalog_marks_server_configured_google_as_no_key_required(
+def test_v2_provider_catalog_keeps_google_key_required_even_when_server_key_is_configured(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -108,4 +108,104 @@ def test_v2_provider_catalog_marks_server_configured_google_as_no_key_required(
     payload = service.v2_provider_catalog()
 
     gemini = next(item for item in payload if item["name"] == "gemini")
-    assert gemini["requires_api_key"] is False
+    assert gemini["requires_api_key"] is True
+
+
+def test_create_v2_session_requires_explicit_api_key_for_remote_provider(
+    tmp_path: Path,
+) -> None:
+    settings = _make_settings(tmp_path).model_copy(update={"gemini_api": "server-key"})
+    _write_country(Path(settings.config_countries_dir) / "singapore.yaml")
+    _write_prompt(Path(settings.config_prompts_dir) / "public-policy-testing.yaml")
+    service = ConsoleService(settings)
+
+    try:
+        service.create_v2_session(
+            country="singapore",
+            use_case="public-policy-testing",
+            provider="google",
+            model="gemini-2.5-flash-lite",
+            mode="live",
+        )
+    except Exception as exc:  # noqa: BLE001
+        assert getattr(exc, "status_code", None) == 422
+        assert "API key is required" in str(getattr(exc, "detail", exc))
+    else:  # pragma: no cover - defensive
+        raise AssertionError("Expected create_v2_session to reject remote providers without an explicit API key.")
+
+
+def test_session_model_payload_does_not_fallback_to_server_key_for_remote_provider(
+    tmp_path: Path,
+) -> None:
+    settings = _make_settings(tmp_path).model_copy(update={"gemini_api": "server-key"})
+    service = ConsoleService(settings)
+
+    payload = service.create_session(
+        requested_session_id="session-explicit-key",
+        mode="live",
+        model_provider="google",
+        model_name="gemini-2.5-flash-lite",
+        api_key="user-key",
+    )
+    assert payload["api_key_configured"] is True
+
+    service.store.upsert_console_session(
+        session_id="session-explicit-key",
+        mode="live",
+        status="created",
+        model_provider="google",
+        model_name="gemini-2.5-flash-lite",
+        embed_model_name="gemini-embedding-001",
+        api_key="",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+    )
+
+    session_payload = service.get_session_model_config("session-explicit-key")
+    assert session_payload["api_key_configured"] is False
+    assert session_payload["api_key_masked"] is None
+
+
+def test_cached_v2_report_requires_bullet_schema(tmp_path: Path) -> None:
+    service = ConsoleService(_make_settings(tmp_path))
+
+    legacy_shaped = {
+        "session_id": "session-demo",
+        "metric_deltas": [],
+        "sections": [
+            {
+                "question": "What changed?",
+                "report_title": "Summary",
+                "type": "open-ended",
+                "answer": "Legacy prose blob.",
+            }
+        ],
+        "insight_blocks": [],
+        "preset_sections": [
+            {
+                "title": "Recommendations",
+                "answer": "Legacy preset prose.",
+            }
+        ],
+    }
+    current_shaped = {
+        "session_id": "session-demo",
+        "metric_deltas": [],
+        "sections": [
+            {
+                "question": "What changed?",
+                "report_title": "Summary",
+                "type": "open-ended",
+                "bullets": ["Point one."],
+            }
+        ],
+        "insight_blocks": [],
+        "preset_sections": [
+            {
+                "title": "Recommendations",
+                "bullets": ["Point one."],
+            }
+        ],
+    }
+
+    assert service._is_cached_v2_report_payload(legacy_shaped) is False
+    assert service._is_cached_v2_report_payload(current_shaped) is True

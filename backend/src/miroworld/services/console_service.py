@@ -142,6 +142,7 @@ class ConsoleService:
         selection = resolve_model_selection(
             self.settings,
             **self._session_model_overrides(session),
+            allow_provider_env_key_fallback=False,
         )
         updates = selection_to_settings_update(selection)
         updates["lightrag_workdir"] = self._session_lightrag_workdir(
@@ -165,6 +166,7 @@ class ConsoleService:
         selection = resolve_model_selection(
             self.settings,
             **self._session_model_overrides(session),
+            allow_provider_env_key_fallback=False,
         )
         return {
             "session_id": session_id,
@@ -264,6 +266,34 @@ class ConsoleService:
     def model_provider_catalog(self) -> dict[str, Any]:
         return {"providers": provider_catalog(self.settings)}
 
+    def _provider_requires_user_api_key(self, provider: str | None) -> bool:
+        return normalize_provider(provider) in {"google", "openai", "openrouter"}
+
+    def _resolve_session_api_key(
+        self,
+        session: dict[str, Any] | None,
+        *,
+        provider: str,
+        api_key: str | None,
+    ) -> str | None:
+        normalized_provider = normalize_provider(provider)
+        if not self._provider_requires_user_api_key(normalized_provider):
+            return str(api_key or "").strip() or None
+
+        explicit_api_key = str(api_key).strip() if api_key is not None else None
+        if api_key is not None:
+            if explicit_api_key:
+                return explicit_api_key
+            raise HTTPException(status_code=422, detail=f"API key is required for provider '{normalized_provider}'.")
+
+        if session:
+            existing_provider = normalize_provider(session.get("model_provider"))
+            existing_api_key = str(session.get("api_key") or "").strip() or None
+            if existing_provider == normalized_provider and existing_api_key:
+                return existing_api_key
+
+        raise HTTPException(status_code=422, detail=f"API key is required for provider '{normalized_provider}'.")
+
     def v2_provider_catalog(self) -> list[dict[str, Any]]:
         provider_name_map = {
             "google": "gemini",
@@ -277,8 +307,6 @@ class ConsoleService:
             provider_id = str(provider.get("id", "")).strip().lower()
             if provider_id not in provider_name_map:
                 continue
-
-            server_key_configured = bool(self.settings.resolved_key_for_provider(provider_id))
 
             default_model = str(provider.get("default_model") or "").strip()
             models: list[str] = [default_model] if default_model else []
@@ -301,7 +329,7 @@ class ConsoleService:
                 {
                     "name": provider_name_map[provider_id],
                     "models": models,
-                    "requires_api_key": bool(provider.get("requires_api_key", False)) and not server_key_configured,
+                    "requires_api_key": bool(provider.get("requires_api_key", False)),
                 }
             )
         return rows
@@ -432,6 +460,7 @@ class ConsoleService:
         if not session:
             raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
         existing_cfg = self._read_session_config(session_id)
+        resolved_model_api_key: str | None = None
 
         patch: dict[str, Any] = {}
         config_service = ConfigService(self.settings)
@@ -465,6 +494,14 @@ class ConsoleService:
         if analysis_questions is not None:
             patch["analysis_questions"] = [item for item in analysis_questions if isinstance(item, dict)]
 
+        if provider is not None or model is not None or api_key is not None:
+            resolved_provider = normalize_provider(provider or session.get("model_provider"))
+            resolved_model_api_key = self._resolve_session_api_key(
+                session,
+                provider=resolved_provider,
+                api_key=api_key,
+            )
+
         merged_cfg = self._upsert_session_config(session_id, patch)
 
         existing_questions = [item for item in (existing_cfg.get("analysis_questions") or []) if isinstance(item, dict)]
@@ -488,7 +525,7 @@ class ConsoleService:
                 session_id,
                 model_provider=resolved_provider,
                 model_name=resolved_model,
-                api_key=api_key,
+                api_key=resolved_model_api_key,
             )
 
         model_payload = self._session_model_payload(session_id)
@@ -519,18 +556,19 @@ class ConsoleService:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         config = ConfigService(self.settings)
+        resolved_provider = normalize_provider(provider)
+        resolved_api_key = self._resolve_session_api_key(None, provider=resolved_provider, api_key=api_key)
         country_payload = config.get_country(country)
         selected_country = str(country_payload.get("code") or country).strip().lower()
         self.country_datasets.ensure_country_ready(selected_country)
         _ = config.get_use_case(use_case)
 
-        resolved_provider = normalize_provider(provider)
         payload = self.create_session(
             requested_session_id=session_id,
             mode=mode,
             model_provider=resolved_provider,
             model_name=model,
-            api_key=api_key,
+            api_key=resolved_api_key,
         )
         use_case_payload = config.get_use_case(use_case)
         stored_prompt = str(config.get_system_prompt(str(use_case_payload.get("code", use_case))) or "").strip() or None
@@ -749,8 +787,9 @@ class ConsoleService:
             provider=model_provider,
             model_name=model_name,
             embed_model_name=embed_model_name,
-            api_key=api_key,
+            api_key=self._resolve_session_api_key(session, provider=model_provider, api_key=api_key),
             base_url=base_url,
+            allow_provider_env_key_fallback=False,
         )
         if selection.provider == "ollama":
             ensure_ollama_models_available(self.settings, selection)
@@ -784,8 +823,9 @@ class ConsoleService:
             provider=model_provider,
             model_name=model_name,
             embed_model_name=embed_model_name,
-            api_key=api_key,
+            api_key=self._resolve_session_api_key(None, provider=model_provider or self.settings.llm_provider, api_key=api_key),
             base_url=base_url,
+            allow_provider_env_key_fallback=False,
         )
         if selection.provider == "ollama" and mode == "live":
             try:
@@ -1339,95 +1379,11 @@ class ConsoleService:
         session = self.store.get_console_session(session_id)
         return session is not None and session.get("mode") == "demo"
 
-    def generate_report(self, session_id: str) -> dict[str, Any]:
-        # Check if demo mode
-        if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            return self.demo.get_report(session_id) or self._empty_report_state(session_id, status="completed")
-        
-        state = self.store.get_report_state(session_id)
-        if state and state.get("status") in {"running", "completed"}:
-            return state
-
-        initial_state = self._empty_report_state(session_id, status="running")
-        self.store.save_report_state(session_id, initial_state)
-        thread = threading.Thread(
-            target=self._run_report_generation_background,
-            args=(session_id,),
-            daemon=True,
-        )
-        thread.start()
-        return initial_state
-
     def generate_v2_report(self, session_id: str) -> dict[str, Any]:
         payload = self.get_v2_report(session_id)
         if not payload.get("status"):
             payload["status"] = "completed"
         return payload
-
-    def get_report_full(self, session_id: str) -> dict[str, Any]:
-        payload = self.get_v2_report(session_id)
-        if not payload.get("status"):
-            payload["status"] = "completed"
-        return payload
-
-    def get_report_opinions(self, session_id: str) -> dict[str, Any]:
-        # Check if demo mode
-        if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            return self.demo.get_report_opinions(session_id)
-
-        runtime_settings = self._runtime_settings_for_session(session_id)
-        report_service = ReportService(runtime_settings)
-        report = report_service.build_report(session_id)
-        feed = self.store.get_interactions(session_id)[-50:]
-        return {
-            "session_id": session_id,
-            "feed": feed,
-            "influential_agents": report.get("influential_agents", []),
-        }
-
-    def get_report_friction_map(self, session_id: str) -> dict[str, Any]:
-        # Check if demo mode
-        if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            return self.demo.get_friction_map(session_id)
-
-        runtime_settings = self._runtime_settings_for_session(session_id)
-        report_service = ReportService(runtime_settings)
-        report = report_service.build_report(session_id)
-        friction = report.get("friction_by_planning_area", [])
-        top = friction[0]["planning_area"] if friction else "N/A"
-        return {
-            "session_id": session_id,
-            "map_metrics": friction,
-            "anomaly_summary": f"Highest observed friction cluster: {top}",
-        }
-
-    def get_interaction_hub(self, session_id: str, agent_id: str | None = None) -> dict[str, Any]:
-        # Check if demo mode
-        if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            return self.demo.get_interaction_hub(session_id, agent_id)
-
-        runtime_settings = self._runtime_settings_for_session(session_id)
-        report_service = ReportService(runtime_settings)
-        report = report_service.build_report(session_id)
-        influential = report.get("influential_agents", [])
-        selected_agent_id = agent_id or (str(influential[0].get("agent_id")) if influential else None)
-        selected = self._build_selected_agent_state(
-            session_id,
-            selected_agent_id,
-            influential,
-            runtime_settings=runtime_settings,
-        )
-        report_transcript = self.store.list_interaction_transcript(session_id, channel="report_agent", limit=12)
-        return {
-            "session_id": session_id,
-            "selected_agent_id": selected_agent_id,
-            "report_agent": {
-                "starter_prompt": "Ask about dissent clusters, mitigation options, or demographic shifts.",
-                "transcript": report_transcript,
-            },
-            "influential_agents": influential,
-            "selected_agent": selected,
-        }
 
     def get_v2_report(self, session_id: str) -> dict[str, Any]:
         cached = self.store.get_report_state(session_id)
@@ -1449,14 +1405,24 @@ class ConsoleService:
             return False
         if not str(payload.get("session_id") or "").strip():
             return False
-
-        candidates = [
+        required_lists = (
             payload.get("metric_deltas"),
             payload.get("sections"),
             payload.get("insight_blocks"),
             payload.get("preset_sections"),
-        ]
-        return any(isinstance(value, list) for value in candidates)
+        )
+        if not all(isinstance(value, list) for value in required_lists):
+            return False
+
+        sections = payload.get("sections") or []
+        if any(not isinstance(section, dict) or not isinstance(section.get("bullets"), list) for section in sections):
+            return False
+
+        preset_sections = payload.get("preset_sections") or []
+        if any(not isinstance(section, dict) or not isinstance(section.get("bullets"), list) for section in preset_sections):
+            return False
+
+        return True
 
     def get_session_analysis_questions(self, session_id: str) -> dict[str, Any]:
         session = self._session_record(session_id)
@@ -1501,18 +1467,6 @@ class ConsoleService:
         )
 
         if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            if not selected:
-                hub = self.demo.get_interaction_hub(session_id)
-                influential_agents = [
-                    row for row in hub.get("influential_agents", []) if str(row.get("agent_id") or "").strip()
-                ]
-                selected = [
-                    {
-                        "agent_id": str(row.get("agent_id")),
-                        "influence_score": float(row.get("influence_score", 0.0) or 0.0),
-                    }
-                    for row in influential_agents
-                ]
             if not selected:
                 selected = [
                     {
@@ -1988,47 +1942,6 @@ class ConsoleService:
             })
         return {"session_id": session_id, "metric_name": metric_name, "score_field": score_field, "stances": stances}
 
-    def report_chat(self, session_id: str, message: str) -> dict[str, Any]:
-        # Check if demo mode
-        if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            model_payload = self._session_model_payload(session_id)
-            payload = {
-                **self.demo.generate_demo_report_chat(session_id, message),
-                "session_id": session_id,
-                "model_provider": model_payload["model_provider"],
-                "model_name": model_payload["model_name"],
-                "gemini_model": model_payload["model_name"],
-            }
-            self.store.append_interaction_transcript(session_id, "report_agent", "user", message)
-            self.store.append_interaction_transcript(session_id, "report_agent", "assistant", payload["response"])
-            return payload
-
-        runtime_settings = self._runtime_settings_for_session(session_id)
-        report_service = ReportService(runtime_settings)
-        payload = report_service.report_chat_payload(session_id, message)
-        self.store.append_interaction_transcript(session_id, "report_agent", "user", message)
-        self.store.append_interaction_transcript(session_id, "report_agent", "assistant", payload["response"])
-        return payload
-
-    def agent_chat(self, session_id: str, agent_id: str, message: str) -> dict[str, Any]:
-        # Check if demo mode
-        if self._is_demo_session(session_id) and self.demo.is_demo_available():
-            model_payload = self._session_model_payload(session_id)
-            payload = {
-                **self.demo.generate_demo_agent_chat(session_id, agent_id, message),
-                "session_id": session_id,
-                "agent_id": agent_id,
-                "memory_used": True,
-                "model_provider": model_payload["model_provider"],
-                "model_name": model_payload["model_name"],
-                "gemini_model": model_payload["model_name"],
-            }
-            self.store.append_interaction_transcript(session_id, "agent_chat", "user", message, agent_id=agent_id)
-            self.store.append_interaction_transcript(session_id, "agent_chat", "assistant", payload["response"], agent_id=agent_id)
-            return payload
-
-        return self.agent_chat_v2(session_id, agent_id, message)
-
     def _agents_for_metrics(self, session_id: str) -> list[dict[str, Any]]:
         rows = self.store.get_agents(session_id)
         normalized: list[dict[str, Any]] = []
@@ -2162,35 +2075,6 @@ class ConsoleService:
                 agent[score_field] = pick(agent_scores)
 
         return agents, score_field
-
-    def _build_selected_agent_state(
-        self,
-        session_id: str,
-        agent_id: str | None,
-        influential_agents: list[dict[str, Any]],
-        *,
-        runtime_settings: Settings,
-    ) -> dict[str, Any] | None:
-        if not agent_id:
-            return None
-
-        by_agent_id = {str(agent["agent_id"]): agent for agent in self.store.get_agents(session_id)}
-        influential = next((agent for agent in influential_agents if str(agent.get("agent_id")) == agent_id), None)
-        stored = by_agent_id.get(agent_id)
-        memory_service = MemoryService(runtime_settings)
-        recent_memory = memory_service.get_agent_memory(session_id, agent_id)[-8:]
-        transcript = self.store.list_interaction_transcript(session_id, "agent_chat", agent_id=agent_id, limit=12)
-        persona = stored.get("persona", {}) if stored else {}
-        merged = dict(influential or {})
-        merged.update(
-            {
-                "agent_id": agent_id,
-                "persona": persona,
-                "recent_memory": recent_memory,
-                "transcript": transcript,
-            }
-        )
-        return merged
 
     def _run_simulation_background(
         self,
@@ -2434,18 +2318,6 @@ class ConsoleService:
             self.store.save_simulation_state_snapshot(session_id, failure_state)
             self.store.upsert_console_session(session_id=session_id, mode=mode, status="simulation_failed")
 
-    def _run_report_generation_background(self, session_id: str) -> None:
-        try:
-            runtime_settings = self._runtime_settings_for_session(session_id)
-            report_service = ReportService(runtime_settings)
-            use_case = self._session_use_case(session_id)
-            payload = report_service.generate_structured_report(session_id, use_case=use_case)
-            self.store.save_report_state(session_id, payload)
-        except Exception as exc:  # noqa: BLE001
-            failed = self._empty_report_state(session_id, status="failed")
-            failed["error"] = str(exc)
-            self.store.save_report_state(session_id, failed)
-
     def _merge_population_filters(self, request: Any, parsed_instructions: dict[str, Any], *, country: str) -> dict[str, Any]:
         hard_filters = parsed_instructions.get("hard_filters", {})
         selected_country = str(country or "singapore").strip().lower() or "singapore"
@@ -2679,21 +2551,6 @@ class ConsoleService:
             payload["round_progress_label"] = round_label
             payload["round_progress"] = {"label": round_label}
         return payload
-
-    def _empty_report_state(self, session_id: str, *, status: str) -> dict[str, Any]:
-        return {
-            "session_id": session_id,
-            "status": status,
-            "generated_at": None,
-            "executive_summary": None,
-            "insight_cards": [],
-            "support_themes": [],
-            "dissent_themes": [],
-            "demographic_breakdown": [],
-            "influential_content": [],
-            "recommendations": [],
-            "risks": [],
-        }
 
     def _enrich_personas_for_simulation(
         self,

@@ -1,34 +1,185 @@
-description: "System prompts and prompt templates for report generation, report chat, and evidence-rich section writing."
+description: "System prompts and repair prompts for V2 report generation, report chat, and structured Screen 4 report sections."
 defaults:
-  min_words_per_question: 200
-  max_words_per_question: 400
+  analysis_section:
+    min_bullets: 2
+    max_bullets: 5
+    max_words_per_bullet: 60
+  preset_section:
+    min_bullets: 2
+    max_bullets: 6
+    max_words_per_bullet: 60
+  format_repair_attempts: 2
   recent_interactions_chars:
     default: 20000
     google: 50000
+  report_writer_instructions:
+    - "Write in third-person analytical voice describing what agents expressed."
+    - "Summarize what agents expressed rather than roleplaying as a participant."
+    - "Ground each point in observable interaction evidence or metric movement."
+    - "If evidence is thin, say what is missing instead of inventing detail."
+  failure_messages:
+    analysis_section: "Section generation failed."
+    preset_section: "Preset section generation failed."
+    executive_summary: "Executive summary generation failed."
 prompts:
-  structured_seed:
-    description: "Seed the structured report shell from the cached simulation artifacts."
+  section_bullets:
+    description: "Generate structured bullet lists for both analysis-question sections and preset sections."
     system_prompt: |
-      You are MiroWorld ReportAgent. Return valid JSON only using the requested schema.
-      Every claim must be grounded in provided evidence.
-  executive_summary:
-    description: "Legacy concise executive summary used by the basic report builder."
-    system_prompt: |
-      You are ReportAgent. Return concise strategic summary.
+      You are MiroWorld ReportAgent.
+      Return valid JSON only.
+      Write evidence-grounded analytical bullet points in third-person voice.
+      Never use first-person pronouns.
+      Never use agent IDs, numbered placeholders, or simulation IDs in the output.
+      Prefer real agent names when evidence provides them.
+    repair_system_prompt: |
+      You are MiroWorld ReportAgent.
+      Repair the response so it matches the requested JSON schema exactly.
+      Return valid JSON only.
     user_template: |
-      Generate a concise executive summary for simulation {simulation_id}.
-      Pre approval={pre_approval}, post approval={post_approval}, net shift={net_shift}.
-      Top dissent cohorts={top_dissenting}.
+      Prepare the {section_kind} for the Screen 4 report.
+
+      Section title:
+      {section_title}
+
+      User question or instruction:
+      {question}
+
+      Original document context:
+      {knowledge_context}
+
+      Agent sample size: {agent_count}
+
+      Recent interactions:
+      {recent_interactions}
+
+      Writing requirements:
+      {style_block}
+
+      Return valid JSON only with this schema:
+      {{"bullets": ["bullet 1", "bullet 2"]}}
+
+      Rules:
+      - Return {min_bullets}-{max_bullets} bullets.
+      - Each bullet must be at most {max_words_per_bullet} words.
+      - Each bullet must be a standalone point, not a paragraph fragment.
+      - Keep each bullet evidence-grounded and specific. 
+      - Mention posts and comments, concrete cohorts, named agents, round shifts, objections, or support drivers when the evidence supports them.
+      - Do not use markdown, numbering, headings, or prose paragraphs.
+      - If evidence is thin, state the missing evidence directly instead of inventing details.
+
+      Example output A (Policy Approval): 
+      {{"bullets": ["Approval dropped from 72% to 41% between rounds 1 and 5, with the sharpest single-round decline (−14%) following a viral thread about childcare subsidy shortfalls.", 
+      "Under-35 residents were 29% less likely to approve than over-55s by the final round, driven by concerns that wage growth has not kept pace with housing costs.", 
+      "A post by Jenny Tan, a freelance designer from Bishan, reframed the SkillsFuture credit as 'too little for anyone retraining mid-career' and drew 38 replies — the most-engaged thread in the simulation.",
+      "Residents in rental-heavy districts (Hougang, Woodlands, Jurong West) scored 2–3% lower than owner-occupied areas, citing daily cost pressures]}}
+
+      Example output B (Net Sentiment): 
+      {{"bullets": ["Cost of living dominated the discourse: 61% of posts referenced groceries, utilities, or rent within the first two sentences, with residents from 1–2 room flats the most vocal.", 
+      "AI job displacement emerged as the second-largest concern by round 3, catalyzed by Mei Lin, a part-time tutor from Ang Mo Kio, who described watching her work pipeline shrink to 'near-zero since ChatGPT.",
+      "Gig workers (delivery riders, private-hire drivers, freelancers) formed a vocal dissenting bloc, arguing that CPF changes do not address their lack of employer contributions.",
+      "Several residents including Ben from Punggol explicitly stated they shifted from neutral to oppose after reading threads that quantified the gap between announced subsidies and actual monthly shortfalls."]}}
+
+      Example output C (Product Interest):
+      {{"bullets": ["Interest peaked at 78% among 25–34-year-old professionals who already use at least two competing productivity tools, suggesting the strongest product-market fit sits with digitally fluent early adopters.",
+          "Over-45 participants rated interest 3.2 points lower on average, frequently citing 'another subscription I don't need' as their primary objection.",
+          "Wei Jie, a startup founder from Tanjong Pagar, called the integrations 'exactly what Notion should have shipped two years ago' — a sentiment echoed by six other tech-sector respondents.",
+          "Parents with children under 12 showed unexpectedly high interest (7.4%), linking the product to household budget tracking despite it not being a stated use case."
+        ]}
+
+      Example output D (Best-Fit Demographics):
+      {{"bullets": ["The ideal early adopter is a 25–34-year-old knowledge worker earning $5k–$8k/month who already juggles 3+ productivity tools and is actively frustrated by context-switching.",
+          "Secondary fit emerged among small business owners (5–20 employees) who valued the team dashboard — Ahmad, who runs a logistics firm in Tuas, described it as 'the first tool my ops team didn't push back on'.",
+          "Weakest fit was among over-50 non-technical users: interest scores averaged 4.1 and onboarding abandonment was highest in this group.",
+          "Parents with school-age children showed surprising crossover interest for household budgeting — a use case worth validating with a dedicated survey."
+        ]}}
+
+    repair_user_template: |
+      The previous response did not satisfy the required JSON bullet schema.
+
+      Original prompt:
+      {original_prompt}
+
+      Original invalid output:
+      {original_response}
+
+      Validation errors:
+      {validation_errors}
+
+      Fix the output and return valid JSON only with this schema:
+      {{"bullets": ["bullet 1", "bullet 2"]}}
+
+      Rules:
+      - Return {min_bullets}-{max_bullets} bullets.
+      - Each bullet must be at most {max_words_per_bullet} words.
+      - Keep the bullets evidence-grounded and in third-person analytical voice.
+      - Do not use markdown, numbering, headings, or prose paragraphs.
+
+  executive_summary:
+    description: "Generate the short executive summary shown at the top of the Screen 4 report."
+    system_prompt: |
+      You are MiroWorld ReportAgent.
+      Write a concise executive summary in third-person analytical voice.
+      Do not use first-person pronouns.
+      Do not include markdown.
+    repair_system_prompt: |
+      You are MiroWorld ReportAgent.
+      Repair the executive summary so it is concise, third-person, and free of formatting issues.
+      Return plain text only.
+    user_template: |
+      Write the executive summary for the Screen 4 report.
+
+      Simulation: {simulation_id}
+      Agents: {agent_count}
+      Rounds: {round_count}
+
+      Original document context:
+      {knowledge_context}
+
+      Metric deltas:
+      {metrics_summary}
+
+      Writing requirements:
+      {style_block}
+
+      Rules:
+      - Write a single short paragraph of no more than 3 sentences.
+      - Highlight the most important shift across the tracked metrics.
+      - Call out the main source of support or friction when the evidence supports it.
+      - Stay factual and concise.
+
+      Example output:
+      "Approval of Budget 2026 measures eroded from 65% to 34% over five rounds of discourse, driven primarily by cost-of-living concerns among under-35 residents and gig workers who framed announced subsidies as insufficient against rising daily expenses. 
+      The most influential agents were dissenters from lower-income brackets — notably Jenny Tan from Bishan and Rajesh from Tampines — whose posts reframing policy benefits as inadequate each triggered cascading opinion shifts across 40+ residents. 
+      Support held only among over-55s and civil servants, anchored to the senior care package and CDC vouchers, suggesting these line items are the strongest foundation for revised public messaging."
+
+    repair_user_template: |
+      Rewrite the executive summary so it satisfies the original prompt.
+
+      Original prompt:
+      {original_prompt}
+
+      Original invalid output:
+      {original_response}
+
+      Requirements:
+      - plain text only
+      - third-person analytical voice
+      - no first-person pronouns
+      - one short paragraph of no more than 3 sentences
+
   report_chat:
     description: "Answer report-chat questions against the generated report and retrieved evidence."
     system_prompt: |
       You are MiroWorld ReportAgent.
+      Answer directly using the supplied report, memory results, and checkpoint evidence.
+      Stay analytical and specific.
     user_template: |
       Report JSON:
       {report_json}
 
       User asks: {message}
-      Provide a direct, data-grounded answer with concrete cohort references.
+
+      Provide a direct, evidence-grounded answer with concrete cohort or agent references when available.
     user_template_with_memory: |
       Report JSON:
       {report_json}
@@ -43,63 +194,5 @@ prompts:
       {checkpoint_excerpt}
 
       User asks: {message}
-      Provide a direct, data-grounded answer with concrete cohort references.
-  guiding_question:
-    description: "Produce detailed, evidence-rich answers for Screen 4 report sections."
-    system_prompt: |
-      You are MiroWorld ReportAgent. Stay factual and evidence-grounded.
-      Write as an analyst summarizing agent perspectives, never as a participant.
-      Always refer to agents by their full name (e.g. "John Tan", "Priya Rajan").
-      Never use agent IDs, numbers, or codes (e.g. never write "agent-0001", "Agent 3", "sg_agent_1" or "agent #5"). Never mention the simulation session ID. 
-    rewrite_system_prompt: |
-      You are a policy-report editor. Return only the rewritten text.
-    user_template: |
-      Simulation ID: {simulation_id}
-      Guiding question: {question}
-      Original document context:
-      {knowledge_context}
-      Agent sample size: {agent_count}
-      Recent interactions: {recent_interactions}
-      Writing requirements:
-      {style_block}
-      Write {min_words_per_question}-{max_words_per_question} words of detailed, evidence-rich analysis.
-      Cite specific agent quotes, demographic patterns, and round-over-round opinion shifts when available.
-      Respond in third-person analytical voice only.
-  v2_executive_summary:
-    description: "Concise executive summary for the richer v2 report path."
-    system_prompt: |
-      You are MiroWorld ReportAgent.
-    user_template: |
-      Simulation {simulation_id}. Approval moved from {initial_metric} to {final_metric} over {round_count} rounds.
-      Supporting themes: {supporting_views}
-      Dissenting themes: {dissenting_views}
-      Write a concise executive summary in 3-4 sentences.
-  metric_delta_summary:
-    description: "Executive summary for metric-delta based reports."
-    system_prompt: |
-      You are MiroWorld ReportAgent. Write in third-person analytical voice only; do not present personal opinions.
-    rewrite_system_prompt: |
-      You are a policy-report editor. Return only the rewritten text.
-    user_template: |
-      Simulation {simulation_id}. {agent_count} agents over {round_count} rounds.
-      Original document context:
-      {knowledge_context}
-      Key metrics: {metrics_summary}
-      Writing requirements:
-      {style_block}
-      Write a concise executive summary in 3-4 sentences highlighting the most important findings.
-  recommendations:
-    description: "Generate structured policy communication or mitigation recommendations."
-    system_prompt: |
-      You are MiroWorld ReportAgent. Return valid JSON only.
-    user_template: |
-      Generate 5 concrete policy communication/mitigation recommendations in JSON.
-      Use ONLY this schema:
-      [{{"title": str, "rationale": str, "target_demographic": str, "expected_impact": str, "execution_plan": [str, str, str], "confidence": number}}]
-      simulation_id={simulation_id}
-      top_dissenting={top_dissenting}
-      income_metrics={income_metrics}
-      arguments_for={arguments_for}
-      arguments_against={arguments_against}
-      Rules: recommendations must be specific, non-generic, and tied to at least one planning area or cohort.
-      confidence must be between 0 and 1.
+
+      Provide a direct, evidence-grounded answer with concrete cohort or agent references when available.

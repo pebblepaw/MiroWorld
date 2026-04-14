@@ -18,11 +18,20 @@ agent_personality_modifiers:
   - "Be direct about willingness to use or pay for this."
   - "Compare against alternatives you already use."
   - "Include specific details about what worked and what didn't."
+  - "When responding to other comments, engage directly with their specific arguments."
+  - "If you strongly disagree, explain why with concrete personal examples."
+  - "Never claim to be an AI or say you cannot hold opinions; stay fully in-character as a resident persona."
+  - "Do not copy wording from other posts. Add at least one concrete detail unique to your own circumstances in every post/comment."
+  - "Vary sentence openings and phrasing. Avoid repetitive templates like 'As a [occupation] from [area]' in every response."
+  - "Do not post near-duplicate comments in the same thread. If your point is similar, add a new angle or do not comment."
 
 report_writer_instructions:
   - "Write in third-person analytical voice describing what participants expressed."
   - "Do not use first-person pronouns or personal opinions in report text."
   - "Ground each section in evidence from interactions and metrics."
+  -  "Summarize evidence from interactions; avoid roleplaying as a participant."
+  - "When citing agent opinions, refer to them by their persona name (e.g. 'Priya, a nurse from Tampines'), strictly do not refer to them by their agent ID such as Agent 2 or sgagent2."
+  - "Never produce filler sentences like 'The available interactions indicate this question can be answered'. If evidence is insufficient, state that directly."
 
 analysis_questions:
   - question: "How interested are you in this product? Rate 1-10."
@@ -34,12 +43,6 @@ analysis_questions:
     threshold_direction: "gte"
     report_title: "Product Interest"
     tooltip: "Percentage of agents who rated interest ≥ 7/10."
-
-  - question: "What would you change or improve about this product?"
-    type: "open-ended"
-    metric_name: "product_feedback"
-    report_title: "Product Feedback"
-    tooltip: "Qualitative summary of what agents liked, disliked, and want improved."
 
   - question: "Would you recommend this to a friend? Rate 1-10."
     type: "scale"
@@ -57,12 +60,6 @@ analysis_questions:
     report_title: "Pain Points"
     tooltip: "Top pain points and unmet needs raised by agents."
 
-  - question: "What alternatives or competitors would you compare this to, and why?"
-    type: "open-ended"
-    metric_name: "competitive_landscape"
-    report_title: "Competitive Landscape"
-    tooltip: "Alternatives and competitors mentioned by agents with comparison reasoning."
-
 insight_blocks:
   - type: "segment_heatmap"
     title: "Best-Fit Segments"
@@ -76,5 +73,5 @@ insight_blocks:
 preset_sections:
   - title: "Best-Fit Demographics"
     prompt: "Analyze which demographic segments (age, occupation, income, location) are the best fit for this product based on interest scores, feedback sentiment, and NPS. State the ideal customer profile clearly."
-  - title: "Improvement Priorities"
+  - title: "Top Recommendations"
     prompt: "Recommend prioritized product improvements based on complaint frequency, severity, and which segments they affect most."

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import {
   FileText, Loader2, Download, Send, Search, X,
-  MessageSquare, Users, User, TrendingUp, TrendingDown,
+  MessageSquare, Users, User,
   AlertTriangle, ArrowRight, BadgeCheck, BriefcaseBusiness, MapPin, Wallet
 } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
@@ -13,8 +13,9 @@ import {
   StructuredReportState,
   exportReportDocx,
   generateReport,
-  getBundledDemoOutput,
   getGroupChatAgents,
+  ReportPresetSection,
+  ReportSection,
   getStructuredReport,
   sendAgentChatMessage,
   sendGroupChatMessage,
@@ -36,54 +37,11 @@ const EMPTY_REPORT: StructuredReportState = {
   status: 'idle',
   generated_at: null,
   executive_summary: null,
-  insight_cards: [],
-  support_themes: [],
-  dissent_themes: [],
-  demographic_breakdown: [],
-  influential_content: [],
-  recommendations: [],
-  risks: [],
-  error: null,
-};
-
-/* ── Mock report data for demo mode ── */
-const DEMO_REPORT: StructuredReportState = {
-  session_id: 'demo',
-  status: 'complete',
-  generated_at: new Date().toISOString(),
-  executive_summary:
-    'The simulation reveals a deeply divided population regarding Budget 2026 policies. Initial approval of 65% eroded to 34% over 5 rounds of discourse, driven primarily by concerns about cost of living, AI-driven job displacement, and insufficient support for gig workers. The most influential agents were dissenters from lower-income brackets who reframed policy benefits as insufficient relative to rising costs.',
-  insight_cards: [
-    { title: 'Generational Divide', description: 'Under-35s are 29pp less likely to approve than over-55s. Housing and CPF concerns dominate.', icon: 'trend' },
-    { title: 'Income Correlation', description: 'Below $4k income bracket shows 35% approval vs 64% for above $8k. Inequality is the key driver.', icon: 'chart' },
-    { title: 'Cascade Effect', description: 'A single viral post about AI job displacement shifted 42 agents from supporter to dissenter.', icon: 'alert' },
-  ],
-  support_themes: [
-    { theme: 'AI investment is forward-thinking and positions Singapore competitively', evidence_count: 23 },
-    { theme: 'SkillsFuture enhancements address workforce readiness', evidence_count: 18 },
-    { theme: 'Family support measures are practical and well-targeted', evidence_count: 15 },
-  ],
-  dissent_themes: [
-    { theme: 'Cost of living not adequately addressed — wage growth lags inflation', evidence_count: 47 },
-    { theme: 'AI benefits accrue to top earners while displacing middle-income jobs', evidence_count: 31 },
-    { theme: 'Carbon tax increases will hit transport-dependent workers hardest', evidence_count: 22 },
-  ],
-  demographic_breakdown: [
-    { group: '21–30', approval: 38, count: 62 },
-    { group: '31–40', approval: 47, count: 58 },
-    { group: '41–55', approval: 58, count: 72 },
-    { group: '55+', approval: 67, count: 58 },
-  ],
-  influential_content: [
-    { title: 'Innovation hubs only benefit top earners', author: 'Raj Kumar', engagement: 142, shift: -0.42 },
-    { title: 'SkillsFuture is a band-aid on structural inequality', author: 'Siti Ibrahim', engagement: 98, shift: -0.28 },
-  ],
-  recommendations: [
-    { title: 'Address cost-of-living gap', description: 'Introduce targeted wage supplements for income brackets below $4,000 to reduce the approval gap.' },
-    { title: 'AI transition support', description: 'Create an AI Displacement Fund with retraining credits specifically for middle-income workers in at-risk sectors.' },
-    { title: 'Carbon tax rebates', description: 'Expand U-Save rebates and introduce transport subsidies for workers in non-CBD areas.' },
-  ],
-  risks: [],
+  quick_stats: {},
+  metric_deltas: [],
+  sections: [],
+  insight_blocks: [],
+  preset_sections: [],
   error: null,
 };
 
@@ -92,8 +50,7 @@ function hasRenderableReportContent(report: StructuredReportState): boolean {
     String(report.executive_summary ?? '').trim() ||
       (Array.isArray(report.metric_deltas) && report.metric_deltas.length > 0) ||
       (Array.isArray(report.sections) && report.sections.length > 0) ||
-      (Array.isArray(report.preset_sections) && report.preset_sections.length > 0) ||
-      (Array.isArray(report.insight_cards) && report.insight_cards.length > 0),
+      (Array.isArray(report.preset_sections) && report.preset_sections.length > 0),
   );
 }
 
@@ -175,16 +132,16 @@ export default function ReportChat() {
     [agents],
   );
   const reportEvidenceAgents = useMemo<ChatAgent[]>(() => {
-    const sections = Array.isArray((reportState as any).sections) ? ((reportState as any).sections as any[]) : [];
+    const sections = Array.isArray(reportState.sections) ? reportState.sections : [];
     const byId = new Map<string, ChatAgent>();
     for (const section of sections) {
-      const evidence = Array.isArray(section?.evidence) ? section.evidence : [];
+      const evidence = Array.isArray(section.evidence) ? section.evidence : [];
       for (const item of evidence) {
-        const agentId = String(item?.agent_id ?? '').trim();
+        const agentId = String(item.agent_id ?? '').trim();
         if (!agentId) {
           continue;
         }
-        const fallbackName = String(item?.agent_name ?? agentId).trim() || agentId;
+        const fallbackName = String(item.agent_name ?? agentId).trim() || agentId;
         const existing = byId.get(agentId);
         if (existing) {
           if ((!existing.name || existing.name === agentId) && fallbackName && fallbackName !== agentId) {
@@ -221,18 +178,21 @@ export default function ReportChat() {
   );
 
   const loadDemoReport = useCallback(async (): Promise<void> => {
+    const demoSessionId = sessionId || 'demo-session';
     try {
-      const data = await getBundledDemoOutput();
-      if (data?.report || data?.reportFull) {
-        const reportFromDemo = (data.reportFull || data.report) as Record<string, unknown>;
-        setReportState({ ...DEMO_REPORT, ...reportFromDemo, status: 'complete' });
+      const report = await getStructuredReport(demoSessionId);
+      if (hasRenderableReportContent(report)) {
+        setReportState(report);
+        setReportError(null);
         return;
       }
-    } catch {
-      // Fall through to built-in demo report.
+      setReportState({ ...EMPTY_REPORT, session_id: demoSessionId, status: 'failed' });
+      setReportError('Bundled demo report is unavailable.');
+    } catch (error) {
+      setReportState({ ...EMPTY_REPORT, session_id: demoSessionId, status: 'failed' });
+      setReportError(error instanceof Error ? error.message : 'Bundled demo report is unavailable.');
     }
-    setReportState(DEMO_REPORT);
-  }, []);
+  }, [sessionId]);
 
   // Load demo data if no backend
   useEffect(() => {
@@ -725,11 +685,11 @@ export default function ReportChat() {
                 </section>
 
                 {/* Metric Deltas (from analysis_questions) */}
-                {(report as any).metric_deltas && (report as any).metric_deltas.length > 0 && (
+                {report.metric_deltas.length > 0 && (
                   <section>
                     <span className="label-meta block mb-3">Key Metrics</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {((report as any).metric_deltas as any[]).map((delta: any, i: number) => (
+                      {report.metric_deltas.map((delta, i) => (
                         <div key={i} className="surface-card p-4">
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-0">
@@ -760,10 +720,10 @@ export default function ReportChat() {
                 )}
 
                 {/* Analysis Question Sections */}
-                {(report as any).sections && (report as any).sections.length > 0 && (
+                {report.sections.length > 0 && (
                   <section className="space-y-4">
                     <span className="label-section block">Analysis Findings</span>
-                    {((report as any).sections as any[]).map((section: any, i: number) => (
+                    {report.sections.map((section: ReportSection, i: number) => (
                       <div key={i} className="surface-card p-5">
                         <div className="flex items-center gap-2 mb-2">
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider ${
@@ -784,11 +744,11 @@ export default function ReportChat() {
                             </span>
                           </div>
                         )}
-                        <MarkdownContent className="text-sm text-foreground/80">{section.answer}</MarkdownContent>
-                        {Array.isArray(section.evidence) && section.evidence.length > 0 && (
+                        <BulletList bullets={section.bullets} />
+                        {section.evidence.length > 0 && (
                           <div className="mt-4 space-y-2 border-t border-border pt-3">
                             <div className="label-meta">Evidence</div>
-                            {section.evidence.slice(0, 4).map((item: any, evidenceIndex: number) => (
+                            {section.evidence.slice(0, 4).map((item, evidenceIndex: number) => (
                               <div key={`${item.agent_id || 'evidence'}-${evidenceIndex}`} className="rounded border border-border bg-muted/20 p-3">
                                 <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
                                   {item.agent_id ? (
@@ -815,65 +775,14 @@ export default function ReportChat() {
                 )}
 
                 {/* Preset Sections */}
-                {(report as any).preset_sections && (report as any).preset_sections.length > 0 && (
+                {report.preset_sections.length > 0 && (
                   <section className="space-y-4">
-                    {((report as any).preset_sections as any[]).map((preset: any, i: number) => (
+                    {report.preset_sections.map((preset: ReportPresetSection, i: number) => (
                       <div key={i} className="surface-card p-5">
                         <span className="label-meta block mb-3">{formatPlainText(preset.title)}</span>
-                        <MarkdownContent className="text-sm text-foreground/80">{preset.answer}</MarkdownContent>
+                        <BulletList bullets={preset.bullets} />
                       </div>
                     ))}
-                  </section>
-                )}
-
-                {/* Legacy fallback: Insight Cards */}
-                {report.insight_cards && report.insight_cards.length > 0 && !(report as any).metric_deltas && (
-                  <section>
-                    <span className="label-section block mb-3">Key Insights</span>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      {report.insight_cards.map((card: any, i: number) => (
-                        <div key={i} className="surface-card p-4">
-                          <div className="text-sm font-medium text-foreground mb-1">{card.title || card.headline}</div>
-                          <p className="text-xs text-muted-foreground leading-relaxed">{card.description}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {/* Legacy fallback: Supporting vs Dissenting */}
-                {!(report as any).sections && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <ThemeCard
-                      title="Supporting Views"
-                      color="hsl(var(--data-green))"
-                      themes={report.support_themes}
-                    />
-                    <ThemeCard
-                      title="Dissenting Views"
-                      color="hsl(var(--data-red))"
-                      themes={report.dissent_themes}
-                    />
-                  </div>
-                )}
-
-                {/* Legacy fallback: Recommendations */}
-                {report.recommendations && report.recommendations.length > 0 && !(report as any).preset_sections && (
-                  <section className="surface-card p-5">
-                    <span className="label-section block mb-4">Recommendations</span>
-                    <div className="space-y-4">
-                      {report.recommendations.map((rec: any, i: number) => (
-                        <div key={i} className="flex gap-3">
-                          <div className="w-5 h-5 rounded flex items-center justify-center bg-white/5 text-[9px] font-mono text-muted-foreground flex-shrink-0 mt-0.5">
-                            {i + 1}
-                          </div>
-                          <div>
-                            <div className="text-sm font-medium text-foreground">{rec.title}</div>
-                            <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{rec.description}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
                   </section>
                 )}
               </>
@@ -1147,32 +1056,24 @@ function QuickStat({ label, value, color }: { label: string; value: string; colo
   );
 }
 
-function ThemeCard({ title, color, themes }: { title: string; color: string; themes: any[] }) {
-  if (!themes || themes.length === 0) return null;
+function BulletList({ bullets }: { bullets: string[] }) {
+  const items = bullets
+    .map((bullet) => formatPlainText(bullet))
+    .filter((bullet) => bullet.length > 0);
+
+  if (items.length === 0) {
+    return <p className="text-sm text-muted-foreground">No findings available.</p>;
+  }
+
   return (
-    <div className="surface-card p-5">
-      <div className="flex items-center gap-2 mb-3">
-        {color.includes('green') ? (
-          <TrendingUp className="w-3.5 h-3.5" style={{ color }} />
-        ) : (
-          <TrendingDown className="w-3.5 h-3.5" style={{ color }} />
-        )}
-        <span className="label-meta" style={{ color }}>{title}</span>
-      </div>
-      <ul className="space-y-2">
-        {themes.map((t: any, i: number) => (
-          <li key={i} className="text-xs text-foreground/80 leading-relaxed flex gap-2">
-            <span className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: color }} />
-            <span>
-              {t.theme || t}
-              {t.evidence_count && (
-                <span className="text-muted-foreground ml-1">({t.evidence_count} citations)</span>
-              )}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <ul className="space-y-2">
+      {items.map((bullet, index) => (
+        <li key={`${bullet}-${index}`} className="flex gap-2 text-sm leading-relaxed text-foreground/80">
+          <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[hsl(var(--data-blue))]" />
+          <span>{bullet}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

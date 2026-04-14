@@ -312,32 +312,7 @@ def main() -> None:
     report = _ok("report/get", resp)
     _write_json(scratch / "04_report.json", report)
 
-    # ── 7. Fetch report sub-views ─────────────────────────────────────
-    _log("Fetching report opinions feed...")
-    try:
-        resp = requests.get(f"{api}/session/{session_id}/report/opinions", timeout=30)
-        report_opinions = _ok("report/opinions", resp)
-    except Exception as exc:
-        _log(f"  Report opinions failed: {exc}")
-        report_opinions = {"session_id": session_id, "feed": [], "influential_agents": []}
-
-    _log("Fetching friction map...")
-    try:
-        resp = requests.get(f"{api}/session/{session_id}/report/friction-map", timeout=30)
-        report_friction = _ok("report/friction-map", resp)
-    except Exception as exc:
-        _log(f"  Friction map failed: {exc}")
-        report_friction = {"session_id": session_id, "map_metrics": [], "anomaly_summary": ""}
-
-    _log("Fetching interaction hub...")
-    try:
-        resp = requests.get(f"{api}/session/{session_id}/interaction-hub", timeout=30)
-        interaction_hub = _ok("interaction-hub", resp)
-    except Exception as exc:
-        _log(f"  Interaction hub failed: {exc}")
-        interaction_hub = {"session_id": session_id, "influential_agents": []}
-
-    # ── 8. Fetch analytics ────────────────────────────────────────────
+    # ── 7. Fetch analytics ────────────────────────────────────────────
     _log("Fetching analytics...")
     analytics = {}
     for endpoint in ["polarization", "opinion-flow", "influence", "cascades"]:
@@ -351,7 +326,7 @@ def main() -> None:
 
     _write_json(scratch / "05_analytics.json", analytics)
 
-    # ── 9. Assemble demo-output.json ──────────────────────────────────
+    # ── 8. Assemble demo-output.json ──────────────────────────────────
     _log("Assembling demo-output.json...")
     output = {
         "generated_at": _now(),
@@ -378,13 +353,6 @@ def main() -> None:
         "simulation": simulation_state,
         "simulationState": simulation_state,
         "report": report,
-        "reportFull": {
-            "session_id": session_id,
-            "report": report,
-        },
-        "reportOpinions": report_opinions,
-        "reportFriction": report_friction,
-        "interactionHub": interaction_hub,
         "analytics": analytics,
     }
 

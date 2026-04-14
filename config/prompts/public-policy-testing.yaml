@@ -26,7 +26,7 @@ report_writer_instructions:
   - "Write in third-person analytical voice describing what agents expressed."
   - "Do not use first-person pronouns or personal opinions in report text."
   - "Summarize evidence from interactions; avoid roleplaying as a participant."
-  - "When citing agent opinions, refer to them by their persona name (e.g. 'Priya, a nurse from Tampines') rather than generic labels."
+  - "When citing agent opinions, refer to them by their persona name (e.g. 'Priya, a nurse from Tampines), strictly do not refer to them by their agent ID such as Agent 2 or sgagent2."
   - "Never produce filler sentences like 'The available interactions indicate this question can be answered'. If evidence is insufficient, state that directly."
 
 analysis_questions:

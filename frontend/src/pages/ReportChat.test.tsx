@@ -156,7 +156,11 @@ function buildReportPayload() {
         question: "Do you approve of this policy? Rate 1-10.",
         report_title: "## Policy Approval",
         type: "scale",
-        answer: "**Support** increased after the final round of discussion.\n\n- Affordability concerns eased\n- Rollout clarity improved",
+        bullets: [
+          "Support increased after the final round of discussion.",
+          "Affordability concerns eased once safeguards were clarified.",
+          "Rollout clarity improved for agents who were initially uncertain.",
+        ],
         metric: {
           metric_name: "approval_rate",
           metric_label: "Approval Rate",
@@ -176,7 +180,11 @@ function buildReportPayload() {
         question: "What specific aspects of this policy do you support or oppose, and why?",
         report_title: "Key Viewpoints",
         type: "open-ended",
-        answer: "Most discussion centered on affordability and rollout fairness.\n\n1. Less pressure on households\n2. Clearer transition support",
+        bullets: [
+          "Most discussion centered on affordability and rollout fairness.",
+          "Agents wanted less pressure on households during implementation.",
+          "Clearer transition support was the most common condition for support.",
+        ],
         evidence: [
           { agent_id: "agent-neg-2", post_id: "post-3", quote: "I need stronger protections before I can support it." },
         ],
@@ -199,7 +207,10 @@ function buildReportPayload() {
     preset_sections: [
       {
         title: "Recommendations",
-        answer: "Lead with affordability safeguards and clearer rollout details.",
+        bullets: [
+          "Lead with affordability safeguards in the top-line message.",
+          "Pair rollout details with concrete household examples.",
+        ],
       },
     ],
     error: null,
@@ -259,7 +270,7 @@ describe("ReportChat", () => {
 
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       if (url.includes("/chat/group")) {
@@ -342,7 +353,7 @@ describe("ReportChat", () => {
 
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       if (url.includes("/chat/agent/agent-neg-1")) {
@@ -392,7 +403,7 @@ describe("ReportChat", () => {
 
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       return { ok: true, json: async () => ({}) } as Response;
@@ -410,6 +421,8 @@ describe("ReportChat", () => {
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
     expect(screen.queryByText("Supporting Views")).not.toBeInTheDocument();
     expect(screen.queryByText("Dissenting Views")).not.toBeInTheDocument();
+    expect(screen.getByText("Support increased after the final round of discussion.")).toBeInTheDocument();
+    expect(screen.getByText("Lead with affordability safeguards in the top-line message.")).toBeInTheDocument();
     expect(
       screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Families are stretched thin by current policy costs."))).length,
     ).toBeGreaterThan(0);
@@ -425,12 +438,12 @@ describe("ReportChat", () => {
     expect(screen.getAllByText("Alex Tan").length).toBeGreaterThan(0);
   });
 
-  it("formats metrics as initial to final values, keeps yes-no metrics numeric, and strips markdown markers from report copy", async () => {
+  it("formats metrics as initial to final values and renders analysis and preset sections as bullet lists", async () => {
     vi.stubEnv("VITE_BOOT_MODE", "live");
 
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       return { ok: true, json: async () => ({}) } as Response;
@@ -464,10 +477,16 @@ describe("ReportChat", () => {
       screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Most discussion centered on affordability and rollout fairness."))).length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Less pressure on households"))).length,
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("less pressure on households"))).length,
     ).toBeGreaterThan(0);
     expect(
       screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Clearer transition support"))).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Lead with affordability safeguards in the top-line message."))).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => Boolean(element?.textContent?.includes("Pair rollout details with concrete household examples."))).length,
     ).toBeGreaterThan(0);
   });
 
@@ -483,7 +502,7 @@ describe("ReportChat", () => {
           blob: async () => new Blob(["docx"], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
         } as Response;
       }
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       return { ok: true, json: async () => ({}) } as Response;
@@ -512,7 +531,7 @@ describe("ReportChat", () => {
   it("switches the main view modes without breaking the report/chat split", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       return { ok: true, json: async () => ({}) } as Response;
@@ -575,7 +594,7 @@ describe("ReportChat", () => {
     vi.stubEnv("VITE_BOOT_MODE", "live");
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       return { ok: true, json: async () => ({}) } as Response;
@@ -602,7 +621,7 @@ describe("ReportChat", () => {
     vi.stubEnv("VITE_BOOT_MODE", "live");
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       if (url.includes("/chat/group")) {
@@ -646,7 +665,7 @@ describe("ReportChat", () => {
     vi.stubEnv("VITE_BOOT_MODE", "live");
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       if (url.includes("/chat/agent/agent-neg-1")) {
@@ -694,7 +713,7 @@ describe("ReportChat", () => {
     vi.stubEnv("VITE_BOOT_MODE", "live");
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/report/generate") || url.includes("/report/full") || url.includes("/report")) {
+      if (url.includes("/report/generate") || url.includes("/report")) {
         return { ok: true, json: async () => buildReportPayload() } as Response;
       }
       if (url.includes("/chat/group/agents") && url.includes("segment=dissenter")) {

@@ -7,8 +7,6 @@ from miroworld.api.routes_console import compat_router, router as console_router
 from miroworld.api.routes_phase_a import router as phase_a_router
 from miroworld.api.routes_phase_b import router as phase_b_router
 from miroworld.api.routes_phase_c import router as phase_c_router
-from miroworld.api.routes_phase_d import router as phase_d_router
-from miroworld.api.routes_phase_e import router as phase_e_router
 from miroworld.config import get_settings
 
 settings = get_settings()
@@ -29,5 +27,3 @@ app.include_router(compat_router)
 app.include_router(phase_a_router)
 app.include_router(phase_b_router)
 app.include_router(phase_c_router)
-app.include_router(phase_d_router)
-app.include_router(phase_e_router)
