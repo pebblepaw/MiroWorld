@@ -880,9 +880,25 @@ function resolveDemoReportRecord(demo: DemoOutput): Record<string, unknown> {
   return looksLikeReport(directReport) ? directReport : {};
 }
 
-function resolveDemoCascadesRecord(demo: DemoOutput): Record<string, unknown> {
+function resolveDemoAnalyticsPayload(
+  demo: DemoOutput,
+  key: string,
+  metricName?: string,
+): Record<string, unknown> {
   const analytics = asRecord(demo.analytics);
-  const cascades = asRecord(analytics.cascades);
+  if (metricName) {
+    const byMetric = asRecord(analytics.by_metric);
+    const metricRecord = asRecord(byMetric[metricName]);
+    const metricPayload = asRecord(metricRecord[key]);
+    if (Object.keys(metricPayload).length > 0) {
+      return metricPayload;
+    }
+  }
+  return asRecord(analytics[key]);
+}
+
+function resolveDemoCascadesRecord(demo: DemoOutput): Record<string, unknown> {
+  const cascades = resolveDemoAnalyticsPayload(demo, "cascades");
   if (Object.keys(cascades).length > 0) {
     return cascades;
   }
@@ -979,8 +995,8 @@ export async function getBundledDemoSimulationPosts(): Promise<SimPost[]> {
   return posts.slice(0, 16).map((item, index) => {
     const post = item as Record<string, unknown>;
     const authorId = String(post.author ?? post.author_agent_id ?? `agent-${index + 1}`);
-    const authorName = String(post.author_name ?? post.author ?? authorId);
     const agent = lookup.get(authorId);
+    const authorName = String(agent?.agent_name ?? post.author_name ?? post.author ?? authorId).trim() || authorId;
     const comments = Array.isArray(post.comments) ? post.comments : [];
     return {
       id: String(post.post_id ?? `demo-post-${index + 1}`),
@@ -1001,7 +1017,7 @@ export async function getBundledDemoSimulationPosts(): Promise<SimPost[]> {
         const commentAgent = lookup.get(commentAgentId);
         return {
           id: String(entry.comment_id ?? `${post.post_id}-comment-${commentIndex + 1}`),
-          agentName: String(entry.author_name ?? entry.author ?? commentAgentId),
+          agentName: String(commentAgent?.agent_name ?? entry.author_name ?? entry.author ?? commentAgentId).trim() || commentAgentId,
           agentOccupation: commentAgent?.occupation ?? "",
           content: String(entry.content ?? entry.body ?? ""),
           upvotes: Math.max(0, Number(entry.upvotes ?? entry.likes ?? 0)),
@@ -1880,7 +1896,7 @@ export async function sendAgentChatMessage(
 export async function getAnalyticsPolarization(sessionId: string, metricName?: string): Promise<Record<string, unknown>> {
   if (isStaticDemoBootMode()) {
     const demo = await loadBundledDemoOutput();
-    return { ...((demo.analytics?.polarization as Record<string, unknown> | undefined) ?? {}) };
+    return { ...resolveDemoAnalyticsPayload(demo, "polarization", metricName) };
   }
   const url = new URL(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/polarization`);
   if (metricName) url.searchParams.set("metric_name", metricName);
@@ -1891,7 +1907,7 @@ export async function getAnalyticsPolarization(sessionId: string, metricName?: s
 export async function getAnalyticsOpinionFlow(sessionId: string, metricName?: string): Promise<Record<string, unknown>> {
   if (isStaticDemoBootMode()) {
     const demo = await loadBundledDemoOutput();
-    return { ...((demo.analytics?.opinion_flow as Record<string, unknown> | undefined) ?? {}) };
+    return { ...resolveDemoAnalyticsPayload(demo, "opinion_flow", metricName) };
   }
   const url = new URL(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/opinion-flow`);
   if (metricName) url.searchParams.set("metric_name", metricName);
@@ -1919,6 +1935,11 @@ export async function getAnalyticsCascades(sessionId: string): Promise<Record<st
 
 export async function getAnalyticsAgentStances(sessionId: string, metricName?: string): Promise<Record<string, unknown>> {
   if (isStaticDemoBootMode()) {
+    const demo = await loadBundledDemoOutput();
+    const cached = resolveDemoAnalyticsPayload(demo, "agent_stances", metricName);
+    if (Object.keys(cached).length > 0) {
+      return { ...cached };
+    }
     const agents = await getDemoAgentRecords();
     return {
       session_id: sessionId,

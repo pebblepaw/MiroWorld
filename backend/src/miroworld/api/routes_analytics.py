@@ -30,8 +30,7 @@ def analytics_polarization(
     settings: Settings = Depends(get_settings),
 ) -> V2PolarizationResponse:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        payload = _get_demo_service(settings).get_analytics_polarization(session_id)
-        payload.setdefault("metric_name", metric_name)
+        payload = _get_demo_service(settings).get_analytics_polarization(session_id, metric_name=metric_name)
         return V2PolarizationResponse(**payload)
 
     try:
@@ -48,8 +47,7 @@ def analytics_opinion_flow(
     settings: Settings = Depends(get_settings),
 ) -> V2OpinionFlowResponse:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        payload = _get_demo_service(settings).get_analytics_opinion_flow(session_id)
-        payload.setdefault("metric_name", metric_name)
+        payload = _get_demo_service(settings).get_analytics_opinion_flow(session_id, metric_name=metric_name)
         return V2OpinionFlowResponse(**payload)
 
     try:
@@ -98,8 +96,8 @@ def analytics_agent_stances(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        # For demo, fall through to live service which handles enrichment
-        pass
+        payload = _get_demo_service(settings).get_analytics_agent_stances(session_id, metric_name=metric_name)
+        return payload
 
     try:
         payload = ConsoleService(settings).get_agent_stances(session_id, metric_name=metric_name)

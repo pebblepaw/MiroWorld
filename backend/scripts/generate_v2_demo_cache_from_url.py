@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,6 +52,177 @@ def _require_ok(step: str, response: Response) -> dict[str, Any]:
     payload = response.json()
     _log(f"{step} succeeded (status {response.status_code})")
     return payload
+
+
+def _normalize_discourse_text(value: Any) -> str:
+    text = str(value or "").replace("**", " ")
+    return " ".join(text.split()).strip().lower()
+
+
+def _agent_id_from_oasis_alias(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.startswith("agent-"):
+        return text
+    if text.startswith("sg_agent_"):
+        raw_number = text.removeprefix("sg_agent_").strip()
+        if raw_number.isdigit():
+            return f"agent-{int(raw_number):04d}"
+    return None
+
+
+def _display_name_lookup(population: dict[str, Any]) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for row in population.get("sampled_personas") or []:
+        if not isinstance(row, dict):
+            continue
+        agent_id = str(row.get("agent_id") or "").strip()
+        persona = row.get("persona") if isinstance(row.get("persona"), dict) else {}
+        display_name = str(
+            row.get("display_name")
+            or persona.get("display_name")
+            or persona.get("confirmed_name")
+            or persona.get("name")
+            or ""
+        ).strip()
+        if agent_id and display_name:
+            lookup[agent_id] = display_name
+    return lookup
+
+
+def _enrich_cascades_from_oasis(
+    *,
+    session_id: str,
+    population: dict[str, Any],
+    cascades_payload: dict[str, Any],
+    settings: Any,
+) -> dict[str, Any]:
+    enriched = json.loads(json.dumps(cascades_payload))
+
+    oasis_db_root = Path(settings.oasis_db_dir)
+    if not oasis_db_root.is_absolute():
+        oasis_db_root = Path(__file__).resolve().parents[1] / oasis_db_root
+    oasis_db_path = oasis_db_root / f"{session_id}.db"
+    if not oasis_db_path.exists():
+        return enriched
+
+    display_name_by_agent = _display_name_lookup(population)
+
+    with sqlite3.connect(oasis_db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        user_rows = conn.execute("SELECT user_id, agent_id, name FROM user").fetchall()
+        user_id_to_agent: dict[int, str] = {}
+        for row in user_rows:
+            mapped = _agent_id_from_oasis_alias(row["name"])
+            if not mapped and row["agent_id"] is not None:
+                mapped = f"agent-{int(row['agent_id']) + 1:04d}"
+            if mapped:
+                user_id_to_agent[int(row["user_id"])] = mapped
+
+        post_like_counts = {
+            int(row["post_id"]): int(row["count"] or 0)
+            for row in conn.execute("SELECT post_id, COUNT(*) AS count FROM like GROUP BY post_id")
+        }
+        post_dislike_counts = {
+            int(row["post_id"]): int(row["count"] or 0)
+            for row in conn.execute("SELECT post_id, COUNT(*) AS count FROM dislike GROUP BY post_id")
+        }
+        comment_like_counts = {
+            int(row["comment_id"]): int(row["count"] or 0)
+            for row in conn.execute("SELECT comment_id, COUNT(*) AS count FROM comment_like GROUP BY comment_id")
+        }
+        comment_dislike_counts = {
+            int(row["comment_id"]): int(row["count"] or 0)
+            for row in conn.execute("SELECT comment_id, COUNT(*) AS count FROM comment_dislike GROUP BY comment_id")
+        }
+
+        post_index: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in conn.execute("SELECT post_id, user_id, content, num_likes, num_dislikes FROM post ORDER BY post_id"):
+            agent_id = user_id_to_agent.get(int(row["user_id"]))
+            if not agent_id:
+                continue
+            post_id = int(row["post_id"])
+            key = (agent_id, _normalize_discourse_text(row["content"]))
+            post_index.setdefault(key, []).append(
+                {
+                    "post_id": post_id,
+                    "likes": max(int(row["num_likes"] or 0), post_like_counts.get(post_id, 0)),
+                    "dislikes": max(int(row["num_dislikes"] or 0), post_dislike_counts.get(post_id, 0)),
+                }
+            )
+
+        comment_index: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in conn.execute(
+            "SELECT comment_id, post_id, user_id, content, num_likes, num_dislikes FROM comment ORDER BY comment_id"
+        ):
+            agent_id = user_id_to_agent.get(int(row["user_id"]))
+            if not agent_id:
+                continue
+            comment_id = int(row["comment_id"])
+            key = (agent_id, _normalize_discourse_text(row["content"]))
+            comment_index.setdefault(key, []).append(
+                {
+                    "comment_id": comment_id,
+                    "post_id": int(row["post_id"]),
+                    "likes": max(int(row["num_likes"] or 0), comment_like_counts.get(comment_id, 0)),
+                    "dislikes": max(int(row["num_dislikes"] or 0), comment_dislike_counts.get(comment_id, 0)),
+                }
+            )
+
+    viral_posts = enriched.get("viral_posts")
+    if not isinstance(viral_posts, list):
+        return enriched
+
+    total_engagement = 0
+    for post in viral_posts:
+        if not isinstance(post, dict):
+            continue
+        author_id = str(post.get("author") or post.get("author_agent_id") or "").strip()
+        if author_id:
+            post["author_name"] = display_name_by_agent.get(author_id, str(post.get("author_name") or author_id))
+
+        post_match_key = (author_id, _normalize_discourse_text(post.get("content") or post.get("body") or ""))
+        post_match = None
+        if post_match_key in post_index and post_index[post_match_key]:
+            post_match = post_index[post_match_key].pop(0)
+        if post_match:
+            post["likes"] = int(post_match["likes"])
+            post["upvotes"] = int(post_match["likes"])
+            post["dislikes"] = int(post_match["dislikes"])
+            post["downvotes"] = int(post_match["dislikes"])
+
+        comments = post.get("comments")
+        if isinstance(comments, list):
+            for comment in comments:
+                if not isinstance(comment, dict):
+                    continue
+                comment_author_id = str(comment.get("author") or comment.get("author_agent_id") or "").strip()
+                if comment_author_id:
+                    comment["author_name"] = display_name_by_agent.get(
+                        comment_author_id,
+                        str(comment.get("author_name") or comment_author_id),
+                    )
+                comment_match_key = (
+                    comment_author_id,
+                    _normalize_discourse_text(comment.get("content") or comment.get("body") or ""),
+                )
+                comment_match = None
+                if comment_match_key in comment_index and comment_index[comment_match_key]:
+                    comment_match = comment_index[comment_match_key].pop(0)
+                if comment_match:
+                    comment["likes"] = int(comment_match["likes"])
+                    comment["upvotes"] = int(comment_match["likes"])
+                    comment["dislikes"] = int(comment_match["dislikes"])
+                    comment["downvotes"] = int(comment_match["dislikes"])
+                total_engagement += int(comment.get("likes") or comment.get("upvotes") or 0)
+                total_engagement += int(comment.get("dislikes") or comment.get("downvotes") or 0)
+
+        total_engagement += int(post.get("likes") or post.get("upvotes") or 0)
+        total_engagement += int(post.get("dislikes") or post.get("downvotes") or 0)
+
+    enriched["total_engagement"] = total_engagement
+    return enriched
 
 
 def _extract_opinion_score(record: dict[str, Any]) -> float:
@@ -157,6 +329,8 @@ def _build_demo_output(
     analytics_opinion_flow: dict[str, Any],
     analytics_influence: dict[str, Any],
     analytics_cascades: dict[str, Any],
+    analytics_agent_stances: dict[str, Any],
+    analytics_by_metric: dict[str, Any],
     baseline_scores: list[float],
     final_scores: list[float],
 ) -> dict[str, Any]:
@@ -207,6 +381,8 @@ def _build_demo_output(
             "opinion_flow": analytics_opinion_flow,
             "influence": analytics_influence,
             "cascades": analytics_cascades,
+            "agent_stances": analytics_agent_stances,
+            "by_metric": analytics_by_metric,
         },
     }
 
@@ -386,6 +562,51 @@ def main() -> None:
         "analytics/cascades",
         client.get(f"/api/v2/console/session/{session_id}/analytics/cascades"),
     )
+    analytics_agent_stances = _require_ok(
+        "analytics/agent-stances",
+        client.get(f"/api/v2/console/session/{session_id}/analytics/agent-stances"),
+    )
+
+    analytics_cascades = _enrich_cascades_from_oasis(
+        session_id=session_id,
+        population=population,
+        cascades_payload=analytics_cascades,
+        settings=settings,
+    )
+
+    metric_names = sorted(
+        {
+            str(item.get("metric_name") or "").strip()
+            for item in analysis_questions
+            if isinstance(item, dict) and str(item.get("type") or "").strip() in {"scale", "yes-no"}
+        }
+        - {""}
+    )
+    analytics_by_metric: dict[str, Any] = {}
+    for metric_name in metric_names:
+        analytics_by_metric[metric_name] = {
+            "polarization": _require_ok(
+                f"analytics/polarization[{metric_name}]",
+                client.get(
+                    f"/api/v2/console/session/{session_id}/analytics/polarization",
+                    params={"metric_name": metric_name},
+                ),
+            ),
+            "opinion_flow": _require_ok(
+                f"analytics/opinion-flow[{metric_name}]",
+                client.get(
+                    f"/api/v2/console/session/{session_id}/analytics/opinion-flow",
+                    params={"metric_name": metric_name},
+                ),
+            ),
+            "agent_stances": _require_ok(
+                f"analytics/agent-stances[{metric_name}]",
+                client.get(
+                    f"/api/v2/console/session/{session_id}/analytics/agent-stances",
+                    params={"metric_name": metric_name},
+                ),
+            ),
+        }
 
     baseline_records = store.list_checkpoint_records(session_id, "baseline")
     final_records = store.list_checkpoint_records(session_id, "final")
@@ -411,6 +632,8 @@ def main() -> None:
         analytics_opinion_flow=analytics_opinion_flow,
         analytics_influence=analytics_influence,
         analytics_cascades=analytics_cascades,
+        analytics_agent_stances=analytics_agent_stances,
+        analytics_by_metric=analytics_by_metric,
         baseline_scores=baseline_scores,
         final_scores=final_scores,
     )

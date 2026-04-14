@@ -410,4 +410,147 @@ describe("console-api demo-static routing", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("prefers sampled persona display names over bundled sg_agent aliases and serves metric-scoped analytics", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "demo-static");
+
+    const demoPayload = {
+      session: { session_id: "demo-session" },
+      source_run: {
+        country: "singapore",
+        provider: "google",
+        model: "gemini-2.5-flash",
+        use_case: "public-policy-testing",
+      },
+      analysis_questions: [
+        {
+          question: "Support?",
+          type: "scale",
+          metric_name: "approval_rate",
+          metric_label: "Approval Rate",
+          metric_unit: "%",
+        },
+        {
+          question: "Worried about jobs?",
+          type: "yes-no",
+          metric_name: "ai_job_worry",
+          metric_label: "AI Job Replacement Concern",
+        },
+      ],
+      population: {
+        session_id: "demo-session",
+        sampled_personas: [
+          {
+            agent_id: "agent-0004",
+            display_name: "Syed Anwar Bin Wah Tjahjono",
+            persona: { display_name: "Syed Anwar Bin Wah Tjahjono", occupation: "Technician", planning_area: "Punggol" },
+            selection_reason: { score: 0.4 },
+          },
+          {
+            agent_id: "agent-0016",
+            display_name: "Real Madrid",
+            persona: { display_name: "Real Madrid", occupation: "Engineer", planning_area: "Bukit Merah" },
+            selection_reason: { score: 0.7 },
+          },
+        ],
+      },
+      analytics: {
+        polarization: {
+          session_id: "demo-session",
+          series: [{ round: "Start", polarization_index: 0.15, severity: "low" }],
+        },
+        opinion_flow: {
+          session_id: "demo-session",
+          initial: { supporter: 12, neutral: 20, dissenter: 3 },
+          final: { supporter: 18, neutral: 10, dissenter: 7 },
+          flows: [{ from: "neutral", to: "supporter", count: 8 }],
+        },
+        agent_stances: {
+          session_id: "demo-session",
+          stances: [{ agent_id: "agent-0004", score: 8 }],
+        },
+        cascades: {
+          viral_posts: [
+            {
+              post_id: "post-1",
+              author: "agent-0004",
+              author_name: "sg_agent_4",
+              title: "Demo thread",
+              content: "Demo content",
+              likes: 4,
+              dislikes: 1,
+              comments: [
+                {
+                  comment_id: "comment-1",
+                  author: "agent-0016",
+                  author_name: "sg_agent_16",
+                  content: "Demo reply",
+                  likes: 2,
+                },
+              ],
+            },
+          ],
+        },
+        by_metric: {
+          approval_rate: {
+            polarization: {
+              session_id: "demo-session",
+              series: [{ round: "Start", polarization_index: 0.66, severity: "high" }],
+            },
+            opinion_flow: {
+              session_id: "demo-session",
+              initial: { supporter: 30, neutral: 5, dissenter: 0 },
+              final: { supporter: 10, neutral: 5, dissenter: 20 },
+              flows: [{ from: "supporter", to: "dissenter", count: 12 }],
+            },
+            agent_stances: {
+              session_id: "demo-session",
+              stances: [{ agent_id: "agent-0004", score: 2 }],
+            },
+          },
+        },
+      },
+      simulationState: {
+        session_id: "demo-session",
+        status: "completed",
+        counters: { posts: 1, comments: 1, reactions: 4, active_authors: 2 },
+        checkpoint_status: {},
+        latest_metrics: {},
+        top_threads: [],
+        discussion_momentum: {},
+        recent_events: [],
+        event_count: 1,
+        last_round: 10,
+      },
+    };
+
+    global.fetch = vi.fn(async () => {
+      return {
+        ok: true,
+        json: async () => demoPayload,
+      } as Response;
+    }) as typeof fetch;
+
+    const {
+      getAnalyticsAgentStances,
+      getAnalyticsOpinionFlow,
+      getAnalyticsPolarization,
+      getBundledDemoSimulationPosts,
+    } = await import("./console-api");
+
+    const posts = await getBundledDemoSimulationPosts();
+
+    expect(posts[0]?.agentName).toBe("Syed Anwar Bin Wah Tjahjono");
+    expect(posts[0]?.comments[0]?.agentName).toBe("Real Madrid");
+
+    await expect(getAnalyticsPolarization("demo-session", "approval_rate")).resolves.toMatchObject({
+      series: [{ polarization_index: 0.66 }],
+    });
+    await expect(getAnalyticsOpinionFlow("demo-session", "approval_rate")).resolves.toMatchObject({
+      final: { dissenter: 20 },
+    });
+    await expect(getAnalyticsAgentStances("demo-session", "approval_rate")).resolves.toMatchObject({
+      stances: [{ agent_id: "agent-0004", score: 2 }],
+    });
+  });
 });

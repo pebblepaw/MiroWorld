@@ -179,13 +179,21 @@ class DemoService:
         # Fall back to database
         return self.store.get_simulation_state_snapshot(session_id)
 
-    def _cached_analytics_payload(self, key: str) -> dict[str, Any] | None:
+    def _cached_analytics_payload(self, key: str, metric_name: str | None = None) -> dict[str, Any] | None:
         cache = self._load_demo_cache()
         if not cache:
             return None
         analytics = cache.get("analytics")
         if not isinstance(analytics, dict):
             return None
+        if metric_name:
+            by_metric = analytics.get("by_metric")
+            if isinstance(by_metric, dict):
+                metric_payload = by_metric.get(metric_name)
+                if isinstance(metric_payload, dict):
+                    payload = metric_payload.get(key)
+                    if isinstance(payload, dict):
+                        return dict(payload)
         payload = analytics.get(key)
         if not isinstance(payload, dict):
             return None
@@ -267,18 +275,28 @@ class DemoService:
 
         return events
 
-    def get_analytics_polarization(self, session_id: str) -> dict[str, Any]:
-        payload = self._cached_analytics_payload("polarization") or {"series": []}
+    def get_analytics_polarization(self, session_id: str, metric_name: str | None = None) -> dict[str, Any]:
+        payload = self._cached_analytics_payload("polarization", metric_name=metric_name) or {"series": []}
         payload["session_id"] = session_id
+        payload.setdefault("metric_name", metric_name)
         payload.setdefault("series", [])
         return payload
 
-    def get_analytics_opinion_flow(self, session_id: str) -> dict[str, Any]:
-        payload = self._cached_analytics_payload("opinion_flow") or {}
+    def get_analytics_opinion_flow(self, session_id: str, metric_name: str | None = None) -> dict[str, Any]:
+        payload = self._cached_analytics_payload("opinion_flow", metric_name=metric_name) or {}
         payload["session_id"] = session_id
+        payload.setdefault("metric_name", metric_name)
         payload.setdefault("initial", {"supporter": 0, "neutral": 0, "dissenter": 0})
         payload.setdefault("final", {"supporter": 0, "neutral": 0, "dissenter": 0})
         payload.setdefault("flows", [])
+        return payload
+
+    def get_analytics_agent_stances(self, session_id: str, metric_name: str | None = None) -> dict[str, Any]:
+        payload = self._cached_analytics_payload("agent_stances", metric_name=metric_name) or {}
+        payload["session_id"] = session_id
+        payload.setdefault("metric_name", metric_name)
+        payload.setdefault("score_field", "approval_score")
+        payload.setdefault("stances", [])
         return payload
 
     def get_analytics_influence(self, session_id: str) -> dict[str, Any]:
