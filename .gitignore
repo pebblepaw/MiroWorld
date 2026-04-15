@@ -14,6 +14,8 @@ backend/tests/**/__pycache__/
 backend/tests/**/*.pyc
 .worktrees/
 .pytest_cache/
+codex/*
+docs/*
 .ruff_cache/
 backend/data/lightrag/
 backend/backend/data/lightrag/
@@ -47,4 +49,4 @@ Sample_Inputs/*
 mcp_tools.json
 list_mcp_tools.py
 replace_glasscard.py
-prompts_for_claude.md
+prompt_to_codex.md 
