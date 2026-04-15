@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getAnalysisQuestions } from "@/lib/console-api";
 import { useApp } from "@/contexts/AppContext";
 
@@ -19,8 +19,11 @@ interface MetricSelectorProps {
 
 export function MetricSelector({ sessionId, value, onChange, className }: MetricSelectorProps) {
   const { analysisQuestions: appQuestions } = useApp();
-  const fallbackQuestions = appQuestions.filter(
-    (q) => (q.type === "scale" || q.type === "yes-no") && q.metric_name,
+  const fallbackQuestions = useMemo(
+    () => appQuestions.filter(
+      (q) => (q.type === "scale" || q.type === "yes-no") && q.metric_name,
+    ),
+    [appQuestions],
   );
   const [questions, setQuestions] = useState<AnalysisQuestion[]>(fallbackQuestions);
 
