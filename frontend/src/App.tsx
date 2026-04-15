@@ -14,8 +14,35 @@ import ReportChat from "@/pages/ReportChat";
 import Analytics from "@/pages/Analytics";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { useState, useEffect } from "react";
+import { isStaticDemoBootMode } from "@/lib/console-api";
 
 const queryClient = new QueryClient();
+const APP_STATE_STORAGE_KEY = "miroworld-app-state";
+
+function shouldResumeDemoStaticSession(): boolean {
+  if (typeof window === "undefined" || !isStaticDemoBootMode()) {
+    return false;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(APP_STATE_STORAGE_KEY);
+    if (!raw) {
+      return false;
+    }
+
+    const parsed = JSON.parse(raw) as {
+      sessionId?: unknown;
+      currentStep?: unknown;
+      completedSteps?: unknown;
+    };
+    const sessionId = String(parsed.sessionId ?? "").trim();
+    const currentStep = Number(parsed.currentStep ?? 1);
+    const completedSteps = Array.isArray(parsed.completedSteps) ? parsed.completedSteps : [];
+    return Boolean(sessionId || currentStep > 1 || completedSteps.length > 0);
+  } catch {
+    return false;
+  }
+}
 
 function MainContent() {
   const { currentStep } = useApp();
@@ -47,7 +74,7 @@ function MainContent() {
 }
 
 const App = () => {
-  const [onboardingOpen, setOnboardingOpen] = useState(true);
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !shouldResumeDemoStaticSession());
 
   return (
     <QueryClientProvider client={queryClient}>
