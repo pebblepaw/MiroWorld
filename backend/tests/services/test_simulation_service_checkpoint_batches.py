@@ -96,3 +96,48 @@ def test_google_checkpoint_repairs_invalid_json_with_structured_output_and_logs(
     assert "Original invalid output" in str(calls[1]["prompt"])
     assert "Checkpoint attempt failed" in caplog.text
     assert "raw_preview=" in caplog.text
+
+
+def test_build_context_bundles_use_clean_display_text_in_brief(tmp_path: Path) -> None:
+    service = SimulationService(
+        Settings(
+            simulation_db_path=str(tmp_path / "simulation.db"),
+            llm_provider="google",
+            llm_model="gemini-2.5-flash-lite",
+        )
+    )
+
+    bundles = service.build_context_bundles(
+        simulation_id="session-product",
+        subject_summary="Teachers in Washington want simpler product onboarding.",
+        knowledge_artifact={
+            "summary": "Teachers in Washington want simpler product onboarding.",
+            "entity_nodes": [],
+            "relationship_edges": [],
+        },
+        sampled_personas=[
+            {
+                "agent_id": "agent-0001",
+                "persona": {
+                    "display_name": "John Lewis",
+                    "planning_area": "Washington",
+                    "occupation": "Teacher Or Instructor",
+                    "age": 32,
+                    "education_level": "9th-12th, No Diploma",
+                    "marital_status": "Married",
+                },
+                "selection_reason": {
+                    "matched_facets": ["pricing"],
+                    "matched_document_entities": [],
+                    "semantic_summary": "The persona cares about clear pricing.",
+                },
+            }
+        ],
+    )
+
+    brief = bundles["agent-0001"]["brief"]
+    assert "Teacher Or Instructor" in brief
+    assert "9th-12th, No Diploma" in brief
+    assert "Married" in brief
+    assert '{"planning_area"' not in brief
+    assert "teacher_or_instructor" not in brief

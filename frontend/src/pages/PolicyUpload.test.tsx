@@ -234,6 +234,30 @@ describe("PolicyUpload", () => {
     expect(screen.getByTestId("question-count")).toHaveTextContent("1");
   });
 
+  it("shows the Screen 1 policy-detail guidance when extraction returns an unusable summary error", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+    global.fetch = vi.fn().mockImplementation(
+      createPolicyFetch({
+        processError:
+          "Knowledge extraction did not produce a usable summary for simulation. "
+          + "Not enough policy details in this document. Re-run Screen 1 with a clearer policy document or guiding prompt before starting Screen 3.",
+      }),
+    ) as typeof fetch;
+
+    renderWithProviders(<PolicyUpload />);
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["headline only"], "press-release.txt", { type: "text/plain" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    await screen.findByText("press-release.txt");
+
+    fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
+
+    await screen.findByText(
+      /Not enough policy details in this document\. Re-run Screen 1 with a clearer policy document or guiding prompt before starting Screen 3\./i,
+    );
+  });
+
   it("preserves bundled demo questions while hydrating a demo-static session", async () => {
     vi.stubEnv("VITE_BOOT_MODE", "demo-static");
 
@@ -718,6 +742,7 @@ describe("PolicyUpload", () => {
 
     await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("2"));
     expect(screen.getByRole("progressbar", { name: /knowledge extraction progress/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /proceed/i })).not.toBeInTheDocument();
 
     resolveProcess?.({
       ok: true,
@@ -959,6 +984,59 @@ describe("PolicyUpload", () => {
       1,
     );
     expect(labelCtx.fillText).toHaveBeenCalled();
+  });
+
+  it("shows a single low-value orphan node when it is the only extracted node", async () => {
+    global.fetch = vi.fn().mockImplementation(createPolicyFetch({
+      processArtifact: {
+        session_id: "session-screen1",
+        document: {
+          document_id: "doc-single-node",
+          source_path: "short-note.txt",
+          file_name: "short-note.txt",
+          file_type: "text/plain",
+          text_length: 32,
+          paragraph_count: 1,
+        },
+        summary: "Powered and protected by Privacy",
+        guiding_prompt: null,
+        demographic_focus_summary: null,
+        entity_nodes: [
+          {
+            id: "Privacy",
+            label: "Privacy",
+            type: "concept",
+            summary: "Privacy is a concept that provides power and protection.",
+            description: "Privacy is a concept that provides power and protection.",
+            weight: 0.37,
+            families: ["document"],
+            display_bucket: "concept",
+            support_count: 1,
+            degree_count: 0,
+            importance_score: 1.0,
+            low_value_orphan: true,
+            ui_default_hidden: true,
+          },
+        ],
+        relationship_edges: [],
+        entity_type_counts: { concept: 1 },
+        processing_logs: ["Inserted document", "Extracted graph"],
+      },
+    })) as typeof fetch;
+
+    renderWithProviders(<PolicyUpload />);
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["Powered and protected by Privacy"], "short-note.txt", { type: "text/plain" })],
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
+
+    await waitFor(() => expect(screen.getByTestId("graph-node-count")).toHaveTextContent("1"));
+    expect(screen.getAllByText("Privacy").length).toBeGreaterThan(0);
   });
 
   it("shows an inline error when upload extraction fails", async () => {
@@ -1349,6 +1427,17 @@ function createPolicyFetch({
           base_url: "http://127.0.0.1:11434/v1/",
           api_key_configured: true,
           api_key_masked: "ol...ama",
+        }),
+      };
+    }
+
+    if (url.includes("/api/v2/session/") && url.endsWith("/analysis-questions")) {
+      return {
+        ok: true,
+        json: async () => ({
+          session_id: "session-screen1",
+          use_case: "public-policy-testing",
+          questions: [],
         }),
       };
     }

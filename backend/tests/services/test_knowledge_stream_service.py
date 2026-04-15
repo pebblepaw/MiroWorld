@@ -240,6 +240,86 @@ def test_console_process_knowledge_publishes_stream_events(tmp_path: Path, monke
     assert state["total_edges"] == 1
 
 
+def test_console_process_knowledge_rejects_unusable_policy_summary_on_screen1(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = _make_settings(tmp_path)
+    service = ConsoleService(settings)
+    session_id = "session-screen1-refusal"
+    service.create_session(
+        requested_session_id=session_id,
+        mode="live",
+        model_provider="google",
+        model_name="gemini-2.5-flash-lite",
+        api_key="test-key",
+    )
+    service._upsert_session_config(
+        session_id,
+        {
+            "country": "usa",
+            "use_case": "public-policy-testing",
+        },
+    )
+
+    async def fake_process_document(
+        self: LightRAGService,
+        simulation_id: str,
+        document_text: str,
+        source_path: str | None,
+        document_id: str | None = None,
+        guiding_prompt: str | None = None,
+        use_case_id: str | None = None,
+        demographic_focus: str | None = None,
+        live_mode: bool = False,
+        event_callback=None,
+    ) -> dict[str, object]:
+        assert simulation_id == session_id
+        assert use_case_id == "public-policy-testing"
+        return {
+            "simulation_id": session_id,
+            "document_id": "doc-1",
+            "document": {
+                "document_id": "doc-1",
+                "source_path": "briefing.txt",
+                "text_length": len(document_text),
+                "paragraph_count": 1,
+            },
+            "summary": "I am sorry, but I do not have enough information to answer your request.",
+            "entity_nodes": [{"id": "node-1", "label": "Press Release", "type": "document"}],
+            "relationship_edges": [],
+            "entity_type_counts": {"document": 1},
+            "processing_logs": ["chunk 1 complete"],
+        }
+
+    monkeypatch.setattr(LightRAGService, "process_document", fake_process_document)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            service.process_knowledge(
+                session_id,
+                document_text="A press release, not a policy proposal.",
+                source_path="briefing.txt",
+            )
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "Not enough policy details in this document." in str(exc_info.value.detail)
+
+    stream = KnowledgeStreamService(settings)
+    replay = list(stream.sse_iter(session_id))
+    state = stream.get_state(session_id)
+
+    assert _event_names(replay) == [
+        "knowledge_started",
+        "knowledge_document_started",
+        "knowledge_failed",
+    ]
+    assert state["status"] == "failed"
+    assert "Not enough policy details in this document." in str(state["last_error"])
+    assert service.store.get_knowledge_artifact(session_id) is None
+
+
 def test_console_process_knowledge_records_runtime_failure_detail(tmp_path: Path, monkeypatch) -> None:
     settings = _make_settings(tmp_path)
     service = ConsoleService(settings)

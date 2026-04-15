@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any
 
 from miroworld.config import Settings
@@ -12,6 +13,21 @@ GENERIC_GEOGRAPHY_FIELDS = ("planning_area", "state", "province", "region", "dis
 
 def _slug(value: Any) -> str:
     return " ".join(str(value or "").strip().lower().split())
+
+
+def _humanize_slug_value(value: Any) -> str:
+    parts = [
+        part
+        for part in re.split(r"[_\-]+", str(value or "").strip())
+        if part
+    ]
+    words: list[str] = []
+    for part in parts:
+        if part[:1].isalpha():
+            words.append(part[:1].upper() + part[1:].lower())
+        else:
+            words.append(part.lower())
+    return " ".join(words).strip()
 
 
 @dataclass
@@ -152,3 +168,48 @@ class CountryMetadataService:
 
     def is_geography_field(self, country: str | dict[str, Any] | None, field_name: str) -> bool:
         return _slug(field_name) == self.geography_field(country)
+
+    def text_cleaning_config(self, country: str | dict[str, Any] | None) -> dict[str, Any]:
+        payload = self.country_payload(country)
+        raw = payload.get("text_cleaning")
+        return raw if isinstance(raw, dict) else {}
+
+    def categorical_field_cleaning(self, country: str | dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+        raw = self.text_cleaning_config(country).get("categorical_fields")
+        if not isinstance(raw, dict):
+            return {}
+        cleaned: dict[str, dict[str, Any]] = {}
+        for field_name, config in raw.items():
+            key = str(field_name or "").strip()
+            if key and isinstance(config, dict):
+                cleaned[key] = config
+        return cleaned
+
+    def clean_categorical_value(self, country: str | dict[str, Any] | None, field_name: str, value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+
+        config = self.categorical_field_cleaning(country).get(str(field_name or "").strip())
+        if not isinstance(config, dict):
+            return text
+
+        overrides = config.get("overrides")
+        if isinstance(overrides, dict):
+            override_lookup = {
+                _slug(raw_key): str(raw_value).strip()
+                for raw_key, raw_value in overrides.items()
+                if str(raw_key).strip() and str(raw_value).strip()
+            }
+            override = override_lookup.get(_slug(text))
+            if override:
+                return override
+
+        strategy = str(config.get("strategy") or "").strip().lower()
+        if strategy in {"preserve", "identity", ""}:
+            return text
+        if strategy == "geography_display":
+            return self.display_geography_value(country, text)
+        if strategy == "slug_title":
+            return _humanize_slug_value(text) or text
+        return text

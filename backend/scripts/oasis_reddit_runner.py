@@ -123,12 +123,12 @@ def _to_profile(persona: dict[str, Any], idx: int, country: str = "the country")
     age = int(persona.get("age") or random.randint(21, 70))
     name = _extract_persona_display_name(persona, idx)
     username = _build_username(name, idx)
-    planning_area = str(persona.get("planning_area") or country_label)
+    planning_area = str(persona.get("geography_value") or persona.get("planning_area") or country_label)
     occupation = str(persona.get("occupation") or "Resident")
     industry = str(persona.get("industry") or "")
     household_type = str(persona.get("household_type") or "").strip()
     income_bracket = str(persona.get("income_bracket") or "").strip()
-    education = str(persona.get("highest_education") or "").strip()
+    education = str(persona.get("education_level") or persona.get("highest_education") or "").strip()
     agent_id = str(persona.get("agent_id") or f"agent-{idx + 1:04d}")
     relevance = float(persona.get("mckainsey_relevance_score") or 0.0)
     matched_nodes = [
@@ -369,6 +369,7 @@ def _sanitize_subject_context(text: str) -> str:
         filtered = pattern.sub("", filtered)
 
     filtered = re.sub(r"\b(analysis question\s*\d*\s*:)\b", "", filtered, flags=re.IGNORECASE)
+    filtered = re.sub(r"(?<=[\.\:\;\!\?])\s+\*\s+(?=[A-Z0-9])", " ", filtered)
     filtered = re.sub(r"\s{2,}", " ", filtered).strip(" .;:-")
     if not filtered:
         return ""

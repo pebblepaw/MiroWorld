@@ -26,6 +26,13 @@ BACKEND_ROOT = Path(__file__).resolve().parents[3]
 logger = logging.getLogger(__name__)
 
 
+def _brief_field(label: str, value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return f"{label}: {text}"
+
+
 @dataclass
 class SimulationService:
     settings: Settings
@@ -262,13 +269,21 @@ class SimulationService:
                         file_paths.append(text)
 
             salient_labels = ", ".join(context_labels[:4]) or "general subject context"
-            persona_highlights = {
-                "planning_area": persona.get("planning_area"),
-                "occupation": persona.get("occupation"),
-                "age": persona.get("age"),
-                "income_bracket": persona.get("income_bracket"),
-                "household_type": persona.get("household_type"),
-            }
+            persona_profile = [
+                item
+                for item in [
+                    _brief_field("Name", persona.get("display_name")),
+                    _brief_field("Location", persona.get("geography_value") or persona.get("planning_area")),
+                    _brief_field("Occupation", persona.get("occupation")),
+                    _brief_field("Age", persona.get("age")),
+                    _brief_field("Education", persona.get("education_level") or persona.get("highest_education")),
+                    _brief_field("Marital status", persona.get("marital_status")),
+                    _brief_field("Industry", persona.get("industry")),
+                    _brief_field("Income", persona.get("income_bracket")),
+                    _brief_field("Household", persona.get("household_type")),
+                ]
+                if item
+            ]
             compact_dossier = str(persona.get("mckainsey_context") or "").strip()
             if not compact_dossier:
                 compact_dossier = str(reason.get("semantic_summary") or "").strip()
@@ -276,7 +291,7 @@ class SimulationService:
                 compact_dossier = f"{compact_dossier[:180].rstrip()}..."
             matched_facet_text = ", ".join(matched_context_nodes[:4]) or "none"
             brief = (
-                f"Persona highlights: {json.dumps(persona_highlights, ensure_ascii=False)}. "
+                f"Persona profile: {'; '.join(persona_profile) or 'Not provided'}. "
                 f"Matched facets: {matched_facet_text}. "
                 f"Relevant knowledge nodes: {salient_labels}. "
                 f"Subject relevance note: {compact_dossier or 'not provided'}."

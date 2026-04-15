@@ -13,12 +13,12 @@ import {
   getBundledDemoSimulationPosts,
   getSimulationMetrics,
   getSimulationState,
+  getTokenUsageEstimate,
   isLiveBootMode,
   isStaticDemoBootMode,
   SimulationState,
   startSimulation,
 } from "@/lib/console-api";
-import { estimateStaticSimulationCostUsd } from "@/lib/llm-pricing";
 import { formatPlainText } from "@/lib/plain-text";
 
 type FeedComment = {
@@ -227,7 +227,6 @@ export default function Simulation() {
   const {
     sessionId,
     modelProvider,
-    modelName,
     useCase,
     knowledgeArtifact,
     populationArtifact,
@@ -253,6 +252,8 @@ export default function Simulation() {
   const [feedThreads, setFeedThreads] = useState<FeedThread[]>(() => simPosts.map((post) => simPostToFeedThread(post)));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [costEstimateUsd, setCostEstimateUsd] = useState<number | null>(isStaticDemoBootMode() ? 0 : null);
+  const [costEstimateUnavailable, setCostEstimateUnavailable] = useState(false);
   const selectedRound = simSelectedRound;
   const setSelectedRound = setSimSelectedRound;
   const sortBy = simSortBy;
@@ -336,6 +337,18 @@ export default function Simulation() {
     () => estimateRuntimeBreakdown(populationArtifact?.sample_count ?? 0, simulationRounds, modelProvider),
     [modelProvider, populationArtifact?.sample_count, simulationRounds],
   );
+  const costBadgeText = useMemo(() => {
+    if (isStaticDemoBootMode()) {
+      return "~$0.00 cost";
+    }
+    if (typeof costEstimateUsd === "number") {
+      return `~$${costEstimateUsd.toFixed(2)} cost`;
+    }
+    if (costEstimateUnavailable) {
+      return "Cost unavailable";
+    }
+    return "Estimating cost...";
+  }, [costEstimateUnavailable, costEstimateUsd]);
   const estimatedTime = runtimeEstimate.totalSeconds;
   const hottestThread = simulationState?.top_threads?.[0] as { title?: string; engagement?: number } | undefined;
 
@@ -469,6 +482,49 @@ export default function Simulation() {
     }, 2000);
     return () => window.clearInterval(timer);
   }, [loading, running, sessionId]);
+
+  useEffect(() => {
+    if (isStaticDemoBootMode()) {
+      setCostEstimateUsd(0);
+      setCostEstimateUnavailable(false);
+      return;
+    }
+
+    const agentCount = populationArtifact?.sample_count ?? 0;
+    if (!sessionId || agentCount <= 0 || simulationRounds <= 0) {
+      setCostEstimateUsd(null);
+      setCostEstimateUnavailable(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCostEstimateUnavailable(false);
+
+    void getTokenUsageEstimate(sessionId, agentCount, simulationRounds)
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        if (typeof payload?.with_caching_usd !== "number" || !Number.isFinite(payload.with_caching_usd)) {
+          setCostEstimateUsd(null);
+          setCostEstimateUnavailable(true);
+          return;
+        }
+        setCostEstimateUsd(payload.with_caching_usd);
+        setCostEstimateUnavailable(false);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setCostEstimateUsd(null);
+        setCostEstimateUnavailable(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [populationArtifact?.sample_count, sessionId, simulationRounds]);
 
   const processStages = useMemo<ProcessStage[]>(() => {
     const hasRun = simulationState !== null;
@@ -784,7 +840,7 @@ export default function Simulation() {
                     <span className="text-muted-foreground font-mono">{populationArtifact?.sample_count ?? 250} agents × {simulationRounds} rounds</span>
                   </div>
                   <div className="justify-self-start lg:justify-self-end font-mono text-primary/85 bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
-                    ~${estimateStaticSimulationCostUsd(populationArtifact?.sample_count ?? 250, simulationRounds, modelProvider, modelName).toFixed(2)} cost
+                    {costBadgeText}
                   </div>
                 </div>
               </GlassCard>

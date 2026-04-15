@@ -81,7 +81,18 @@ class TokenTracker:
         pricing = self._pricing_payload().get("models") or {}
         if not isinstance(pricing, dict):
             pricing = {}
-        resolved = pricing.get(model) or pricing.get("gemini-2.0-flash") or {}
+        aliases = self._pricing_payload().get("aliases") or {}
+        if not isinstance(aliases, dict):
+            aliases = {}
+
+        normalized_model = str(model or "").strip()
+        resolved = pricing.get(normalized_model)
+        if resolved is None:
+            alias_target = aliases.get(normalized_model)
+            if alias_target is not None:
+                resolved = pricing.get(str(alias_target).strip())
+        if resolved is None:
+            raise ValueError(f"No pricing configured for model '{normalized_model}'.")
         return {
             "input": float((resolved or {}).get("input", 0.0) or 0.0),
             "output": float((resolved or {}).get("output", 0.0) or 0.0),

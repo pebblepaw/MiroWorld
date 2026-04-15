@@ -45,3 +45,30 @@ def test_start_simulation_rejects_refusal_like_knowledge_summary(tmp_path) -> No
 
     assert exc_info.value.status_code == 422
     assert "Knowledge extraction did not produce a usable summary" in str(exc_info.value.detail)
+
+
+def test_merge_knowledge_artifacts_strips_inline_markdown_bullets_from_summary(tmp_path) -> None:
+    service = _make_service(tmp_path)
+
+    artifact = service._merge_knowledge_artifacts(
+        "session-sim-validation",
+        artifacts=[
+            {
+                "summary": (
+                    "AI-Powered Social Media Simulation: AI citizens interact by posting. "
+                    "* Direct Interaction: Enables users to chat directly with agents."
+                ),
+                "document": {"document_id": "doc-1", "source_path": "memory://doc-1"},
+                "entity_nodes": [],
+                "relationship_edges": [],
+                "processing_logs": [],
+            }
+        ],
+        guiding_prompt=None,
+        demographic_focus=None,
+    )
+
+    assert artifact["summary"] == (
+        "AI-Powered Social Media Simulation: AI citizens interact by posting. "
+        "Direct Interaction: Enables users to chat directly with agents."
+    )

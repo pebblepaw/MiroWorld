@@ -189,6 +189,17 @@ geography:
       aliases: ["central"]
       members: ["Ang Mo Kio", "Bishan", "Bukit Merah", "Bukit Timah", "Clementi", "Geylang", "Kallang", "Marine Parade", "Queenstown", "Toa Payoh"]
 
+text_cleaning:
+  categorical_fields:
+    occupation:
+      strategy: "preserve"
+    education_level:
+      strategy: "preserve"
+    marital_status:
+      strategy: "preserve"
+    industry:
+      strategy: "preserve"
+
 filter_fields:
   - field: "age"
     type: "range"

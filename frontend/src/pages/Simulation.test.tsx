@@ -99,6 +99,26 @@ function SeedStage3Context() {
   return null;
 }
 
+function SeedStage3ContextWithModel({
+  provider,
+  model,
+}: {
+  provider: "google" | "openrouter" | "openai" | "ollama";
+  model: string;
+}) {
+  const {
+    setModelProvider,
+    setModelName,
+  } = useApp();
+
+  useEffect(() => {
+    setModelProvider(provider);
+    setModelName(model);
+  }, [model, provider, setModelName, setModelProvider]);
+
+  return <SeedStage3Context />;
+}
+
 function SimulationPostsProbe() {
   const { simPosts } = useApp();
   return (
@@ -1049,7 +1069,147 @@ describe("Simulation", () => {
     expect(screen.queryByText("7.2/10")).not.toBeInTheDocument();
   });
 
-  it("hydrates demo-static simulation cost from bundled provider data and derives reaction counts from loaded threads", async () => {
+  it("uses the backend token estimate in live mode and refreshes it when rounds change", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/simulation/state")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen3",
+            status: "completed",
+            event_count: 0,
+            last_round: 0,
+            planned_rounds: 3,
+            current_round: 0,
+            counters: { posts: 0, comments: 0, reactions: 0, active_authors: 0 },
+            checkpoint_status: {},
+            latest_metrics: {},
+            top_threads: [],
+            discussion_momentum: {},
+            recent_events: [],
+          }),
+        } as Response;
+      }
+      if (url.includes("/token-usage/session-screen3/estimate?")) {
+        const rounds = new URL(url).searchParams.get("rounds");
+        return {
+          ok: true,
+          json: async () => ({
+            with_caching_usd: rounds === "10" ? 2.75 : 0.88,
+            without_caching_usd: rounds === "10" ? 5.50 : 1.76,
+            savings_pct: 50,
+            model: "gemini-2.5-flash-lite",
+          }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    global.fetch = fetchSpy as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedStage3ContextWithModel provider="google" model="gemini-2.5-flash-lite" />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("~$0.88 cost")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "10" }));
+
+    await waitFor(() => expect(screen.getByText("~$2.75 cost")).toBeInTheDocument());
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v2/token-usage/session-screen3/estimate?agents=3&rounds=10"),
+    );
+  });
+
+  it("uses the backend token estimate in demo mode", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "demo");
+
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/simulation/state")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen3",
+            status: "completed",
+            event_count: 0,
+            last_round: 0,
+            planned_rounds: 3,
+            current_round: 0,
+            counters: { posts: 0, comments: 0, reactions: 0, active_authors: 0 },
+            checkpoint_status: {},
+            latest_metrics: {},
+            top_threads: [],
+            discussion_momentum: {},
+            recent_events: [],
+          }),
+        } as Response;
+      }
+      if (url.includes("/token-usage/session-screen3/estimate?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            with_caching_usd: 1.11,
+            without_caching_usd: 2.22,
+            savings_pct: 50,
+            model: "gpt-4o-mini",
+          }),
+        } as Response;
+      }
+      if (url.endsWith("/demo-output.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session: { session_id: "demo-session" },
+            source_run: {
+              country: "singapore",
+              provider: "ollama",
+              model: "qwen3:4b-instruct-2507-q4_K_M",
+              use_case: "public-policy-testing",
+              rounds: 3,
+            },
+            population: { session_id: "demo-session", sample_count: 0, sampled_personas: [] },
+            simulationState: {
+              session_id: "demo-session",
+              status: "completed",
+              event_count: 0,
+              last_round: 3,
+              planned_rounds: 3,
+              current_round: 3,
+              counters: { posts: 0, comments: 0, reactions: 0, active_authors: 0 },
+              checkpoint_status: {},
+              latest_metrics: {},
+              top_threads: [],
+              discussion_momentum: {},
+              recent_events: [],
+            },
+            analytics: { cascades: { viral_posts: [] } },
+          }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    global.fetch = fetchSpy as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedStage3ContextWithModel provider="openai" model="gpt-4o-mini" />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("~$1.11 cost")).toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v2/token-usage/session-screen3/estimate?agents=3&rounds=3"),
+    );
+  });
+
+  it("keeps the current demo-static ollama estimate at $0 and derives reaction counts from loaded threads", async () => {
     vi.stubEnv("VITE_BOOT_MODE", "demo-static");
 
     const fetchSpy = vi.fn(async () => ({
@@ -1058,8 +1218,8 @@ describe("Simulation", () => {
         session: { session_id: "demo-session" },
         source_run: {
           country: "singapore",
-          provider: "google",
-          model: "gemini-2.5-pro",
+          provider: "ollama",
+          model: "qwen3:4b-instruct-2507-q4_K_M",
           use_case: "public-policy-testing",
           rounds: 3,
         },
@@ -1146,21 +1306,13 @@ describe("Simulation", () => {
       </AppProvider>,
     );
 
-    const initialCost = await screen.findByText(/~\$\d+\.\d{2} cost/i);
-    const initialCostText = initialCost.textContent;
-    expect(initialCostText).not.toContain("~$0.00 cost");
+    expect(await screen.findByText("~$0.00 cost")).toBeInTheDocument();
 
     const reactionsCard = await screen.findByText("Reactions");
     await waitFor(() => {
       const card = reactionsCard.closest("div.p-3.rounded-lg.bg-muted\\/40.border.border-border");
       expect(card).not.toBeNull();
       expect(within(card as HTMLElement).getByText("2")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "10" }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/~\$\d+\.\d{2} cost/i).textContent).not.toBe(initialCostText);
     });
   });
 

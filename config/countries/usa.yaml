@@ -178,6 +178,29 @@ geography:
       label: "Wyoming"
       aliases: ["wy", "wyoming"]
 
+text_cleaning:
+  categorical_fields:
+    occupation:
+      strategy: "slug_title"
+      overrides:
+        not_in_workforce: "Not In Workforce"
+        no_occupation: "No Occupation"
+    education_level:
+      strategy: "slug_title"
+      overrides:
+        9th_12th_no_diploma: "9th-12th, No Diploma"
+        high_school: "High School"
+        some_college: "Some College"
+        bachelors: "Bachelor's Degree"
+        graduate: "Graduate Degree"
+    marital_status:
+      strategy: "slug_title"
+      overrides:
+        married_present: "Married"
+        never_married: "Never Married"
+    bachelors_field:
+      strategy: "slug_title"
+
 filter_fields:
   - field: "age"
     type: "range"
@@ -190,22 +213,28 @@ filter_fields:
   - field: "occupation"
     type: "dropdown"
     label: "Occupation"
-  - field: "gender"
+  - field: "sex"
     type: "single-select-chips"
     label: "Gender"
-  - field: "ethnicity"
-    type: "multi-select-chips"
-    label: "Ethnicity"
+  - field: "education_level"
+    type: "dropdown"
+    label: "Education"
+  - field: "marital_status"
+    type: "dropdown"
+    label: "Marital Status"
 
 filterable_columns:
   - field: "state"
     description: "US state or territory."
     type: "categorical"
-  - field: "gender"
-    description: "Gender of the person."
+  - field: "sex"
+    description: "Sex of the person."
     type: "categorical"
-  - field: "ethnicity"
-    description: "Ethnicity or racial identity."
+  - field: "education_level"
+    description: "Highest education level attained."
+    type: "categorical"
+  - field: "marital_status"
+    description: "Marital status."
     type: "categorical"
   - field: "min_age"
     description: "Minimum age constraint."
@@ -238,10 +267,13 @@ ui:
       type: "geography"
     - key: "sex"
       label: "Gender"
-      persona_field: "gender"
-    - key: "ethnicity"
-      label: "Ethnicity"
-      persona_field: "ethnicity"
+      persona_field: "sex"
+    - key: "education_level"
+      label: "Education"
+      persona_field: "education_level"
+    - key: "marital_status"
+      label: "Marital Status"
+      persona_field: "marital_status"
   tooltip_fields:
     - field: "occupation"
       label: "Occupation"
@@ -256,8 +288,8 @@ ui:
     - field: "education_level"
       label: "Education"
       section: "grid"
-    - field: "ethnicity"
-      label: "Ethnicity"
+    - field: "cultural_background"
+      label: "Culture"
       section: "grid"
     - field: "marital_status"
       label: "Marital Status"

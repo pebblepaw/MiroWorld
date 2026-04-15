@@ -49,6 +49,7 @@ MAX_BASELINE_CANDIDATES = 1200
 MIN_AFFECTED_GROUPS_CANDIDATES = 400
 MIN_BASELINE_CANDIDATES = 600
 logger = logging.getLogger(__name__)
+INLINE_MARKDOWN_BULLET_RE = re.compile(r"(?<=[\.\:\;\!\?])\s+\*\s+(?=[A-Z0-9])")
 
 
 class ConsoleService:
@@ -485,7 +486,14 @@ class ConsoleService:
         )
         return not any(re.search(pattern, cleaned) for pattern in refusal_patterns)
 
-    def _invalid_knowledge_summary_detail(self) -> str:
+    def _invalid_knowledge_summary_detail(self, *, use_case: str | None = None) -> str:
+        normalized_use_case = str(use_case or "").strip().lower()
+        if normalized_use_case == "public-policy-testing":
+            return (
+                "Knowledge extraction did not produce a usable summary for simulation. "
+                "Not enough policy details in this document. Re-run Screen 1 with a clearer policy document "
+                "or guiding prompt before starting Screen 3."
+            )
         return (
             "Knowledge extraction did not produce a usable summary for simulation. "
             "Re-run Screen 1 with a clearer document or guiding prompt before starting Screen 3."
@@ -753,8 +761,14 @@ class ConsoleService:
 
     def estimate_token_usage(self, session_id: str, *, agents: int, rounds: int) -> dict[str, Any]:
         model_payload = self._session_model_payload(session_id)
-        tracker = TokenTracker(model=str(model_payload.get("model_name") or "gemini-2.0-flash"))
-        return tracker.estimate_cost(agent_count=agents, rounds=rounds)
+        model_name = str(model_payload.get("model_name") or "").strip()
+        if not model_name:
+            raise HTTPException(status_code=422, detail="No model is configured for this session.")
+        tracker = TokenTracker(model=model_name)
+        try:
+            return tracker.estimate_cost(agent_count=agents, rounds=rounds)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     def record_runtime_token_usage(
         self,
@@ -765,7 +779,9 @@ class ConsoleService:
         cached_tokens: int = 0,
     ) -> None:
         model_payload = self._session_model_payload(session_id)
-        model_name = str(model_payload.get("model_name") or "gemini-2.0-flash")
+        model_name = str(model_payload.get("model_name") or "").strip()
+        if not model_name:
+            raise HTTPException(status_code=422, detail="No model is configured for this session.")
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -807,7 +823,9 @@ class ConsoleService:
 
     def get_runtime_token_usage(self, session_id: str) -> dict[str, Any]:
         model_payload = self._session_model_payload(session_id)
-        model_name = str(model_payload.get("model_name") or "gemini-2.0-flash")
+        model_name = str(model_payload.get("model_name") or "").strip()
+        if not model_name:
+            raise HTTPException(status_code=422, detail="No model is configured for this session.")
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -1082,6 +1100,19 @@ class ConsoleService:
             guiding_prompt=resolved_guiding_prompt,
             demographic_focus=demographic_focus,
         )
+        if not self._knowledge_summary_is_usable(artifact.get("summary")):
+            detail = self._invalid_knowledge_summary_detail(use_case=session_use_case)
+            self.knowledge_streams.append_events(
+                session_id,
+                [
+                    {
+                        "event_type": "knowledge_failed",
+                        "session_id": session_id,
+                        "detail": detail,
+                    }
+                ],
+            )
+            raise HTTPException(status_code=422, detail=detail)
         self.store.save_knowledge_artifact(session_id, artifact)
         self.store.upsert_console_session(session_id=session_id, mode=session.get("mode", "demo") if session else "demo", status="knowledge_ready")
         self.knowledge_streams.append_events(
@@ -1192,6 +1223,7 @@ class ConsoleService:
             merged = dict(artifacts[0])
             merged["session_id"] = session_id
             merged["guiding_prompt"] = guiding_prompt
+            merged["summary"] = self._clean_knowledge_summary_text(merged.get("summary"))
             return merged
 
         summaries: list[str] = []
@@ -1203,7 +1235,7 @@ class ConsoleService:
         seen_edges: set[tuple[str, str, str, str]] = set()
 
         for artifact in artifacts:
-            summary = str(artifact.get("summary") or "").strip()
+            summary = self._clean_knowledge_summary_text(artifact.get("summary"))
             if summary:
                 summaries.append(summary)
 
@@ -1253,7 +1285,7 @@ class ConsoleService:
         return {
             "session_id": session_id,
             "document": merged_document,
-            "summary": "\n\n".join(summaries),
+            "summary": self._clean_knowledge_summary_text("\n\n".join(summaries)),
             "guiding_prompt": guiding_prompt,
             "entity_nodes": entity_nodes,
             "relationship_edges": relationship_edges,
@@ -1261,6 +1293,18 @@ class ConsoleService:
             "processing_logs": processing_logs,
             "demographic_focus_summary": demographic_focus,
         }
+
+    def _clean_knowledge_summary_text(self, value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        cleaned = INLINE_MARKDOWN_BULLET_RE.sub(" ", text)
+        cleaned = re.sub(r"^\s*[-*+]\s+", "", cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+        cleaned = re.sub(r"__(.*?)__", r"\1", cleaned)
+        cleaned = re.sub(r"\s+\n", "\n", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
 
     def preview_population(self, session_id: str, request: Any) -> dict[str, Any]:
         knowledge = self.store.get_knowledge_artifact(session_id)
@@ -1372,7 +1416,10 @@ class ConsoleService:
         if not sampled_rows:
             raise HTTPException(status_code=422, detail="No sampled personas available for simulation start")
         if not self._knowledge_summary_is_usable(subject_summary):
-            raise HTTPException(status_code=422, detail=self._invalid_knowledge_summary_detail())
+            raise HTTPException(
+                status_code=422,
+                detail=self._invalid_knowledge_summary_detail(use_case=self._session_use_case(session_id)),
+            )
 
         events_dir = Path(runtime_settings.oasis_db_dir).parent / "events"
         events_dir.mkdir(parents=True, exist_ok=True)

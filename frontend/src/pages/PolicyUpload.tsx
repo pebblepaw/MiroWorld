@@ -710,9 +710,16 @@ export default function PolicyUpload() {
   }, [showRelationshipLabels]);
 
   const familyScopedNodes = graphReady
-    ? knowledgeArtifact.entity_nodes.filter(
-        (node) => !node.ui_default_hidden && matchesFamilyFilter(node.facet_kind, familyFilter),
-      )
+    ? (() => {
+        const visibleNodes = knowledgeArtifact.entity_nodes.filter(
+          (node) => !node.ui_default_hidden && matchesFamilyFilter(node.facet_kind, familyFilter),
+        );
+        if (visibleNodes.length > 0) {
+          return visibleNodes;
+        }
+        // Short uploads can legitimately yield a single low-value orphan. Show it when it is all we have.
+        return knowledgeArtifact.entity_nodes.filter((node) => matchesFamilyFilter(node.facet_kind, familyFilter));
+      })()
     : [];
 
   const availableBuckets: DisplayBucket[] = graphReady
@@ -1229,8 +1236,11 @@ export default function PolicyUpload() {
     : [];
 
   const topEntities = graphReady
-    ? [...knowledgeArtifact.entity_nodes]
-      .filter((node) => !node.ui_default_hidden)
+    ? [...(
+        knowledgeArtifact.entity_nodes.some((node) => !node.ui_default_hidden)
+          ? knowledgeArtifact.entity_nodes.filter((node) => !node.ui_default_hidden)
+          : knowledgeArtifact.entity_nodes
+      )]
       .sort((left, right) => {
         const rightImportance = normalizeImportance(right.importance_score, right.weight);
         const leftImportance = normalizeImportance(left.importance_score, left.weight);
@@ -1475,7 +1485,7 @@ export default function PolicyUpload() {
                 <><Sparkles className="w-3.5 h-3.5 mr-2" /> Start Extraction</>
               )}
             </Button>
-            {graphReady && (
+            {graphReady && !knowledgeLoading && (
               <Button
                 onClick={handleProceed}
                 variant="outline"

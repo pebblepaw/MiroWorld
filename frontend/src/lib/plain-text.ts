@@ -4,6 +4,8 @@ export function formatPlainText(value: unknown): string {
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")
     .replace(/^\s{0,3}[-*+]\s+/gm, "")
     .replace(/^\s{0,3}\d+\.\s+/gm, "")
+    .replace(/(^|[\s(])#([A-Za-z0-9_]+)/g, "$1$2")
+    .replace(/(?<=[.:;!?])\s+\*\s+(?=[A-Z0-9])/g, " ")
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/__(.*?)__/g, "$1")
     .replace(/`([^`]+)`/g, "$1")

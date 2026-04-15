@@ -178,6 +178,17 @@ class PersonaRelevanceService:
         if display_value and display_value != "Unknown":
             payload["geography_value"] = display_value
             payload["planning_area"] = display_value
+
+        for field_name in self.countries.categorical_field_cleaning(country):
+            if field_name not in payload:
+                continue
+            cleaned_value = self.countries.clean_categorical_value(country, field_name, payload.get(field_name))
+            if cleaned_value:
+                payload[field_name] = cleaned_value
+
+        education_value = str(payload.get("education_level") or "").strip()
+        if education_value and not str(payload.get("highest_education") or "").strip():
+            payload["highest_education"] = education_value
         return payload
 
     def parse_sampling_instructions(
