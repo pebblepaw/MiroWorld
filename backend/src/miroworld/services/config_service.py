@@ -193,9 +193,71 @@ class ConfigService:
             return default
         return str(payload).strip()
 
-    def get_system_prompt(self, use_case_id: str) -> str:
+    def get_use_case_prompt_terms(self, use_case_id: str | None) -> dict[str, str]:
+        normalized = str(use_case_id or "").strip().lower()
+        if not normalized:
+            return {}
+        payload = self.get_use_case(normalized)
+        raw_terms = payload.get("prompt_terms")
+        if not isinstance(raw_terms, dict):
+            return {}
+        terms: dict[str, str] = {}
+        for key, value in raw_terms.items():
+            clean_key = str(key or "").strip()
+            clean_value = str(value or "").strip()
+            if clean_key and clean_value:
+                terms[clean_key] = clean_value
+        return terms
+
+    def render_prompt_template(
+        self,
+        template: str | None,
+        *,
+        country_id: str | None = None,
+        use_case_id: str | None = None,
+        extra_replacements: dict[str, Any] | None = None,
+    ) -> str:
+        text = str(template or "").strip()
+        if not text:
+            return ""
+
+        replacements = {
+            "country_id": str(country_id or "").strip().lower(),
+            "country_code": str(country_id or "").strip().lower(),
+            "country_name": str(country_id or "").strip(),
+            "geography_field": "planning_area",
+            "geography_label": "Planning Area",
+        }
+
+        if country_id:
+            try:
+                country_cfg = self.get_country(country_id)
+                geography_cfg = self.get_country_geography_config(country_cfg)
+                replacements.update(
+                    {
+                        "country_id": str(country_cfg.get("code") or country_id).strip().lower(),
+                        "country_code": str(country_cfg.get("code") or country_id).strip().lower(),
+                        "country_name": str(country_cfg.get("name") or country_id).strip(),
+                        "geography_field": str(geography_cfg.get("field") or "planning_area").strip(),
+                        "geography_label": str(geography_cfg.get("label") or "Planning Area").strip(),
+                    }
+                )
+            except FileNotFoundError:
+                pass
+
+        replacements.update(self.get_use_case_prompt_terms(use_case_id))
+        for key, value in (extra_replacements or {}).items():
+            replacements[str(key)] = str(value)
+
+        rendered = text
+        for key, value in replacements.items():
+            rendered = rendered.replace(f"{{{key}}}", value)
+        return rendered.strip()
+
+    def get_system_prompt(self, use_case_id: str, *, country_id: str | None = None) -> str:
         payload = self.get_use_case(use_case_id)
-        return str(payload.get("guiding_prompt") or payload.get("system_prompt") or "").strip()
+        template = str(payload.get("guiding_prompt") or payload.get("system_prompt") or "").strip()
+        return self.render_prompt_template(template, country_id=country_id, use_case_id=use_case_id)
 
     def get_analysis_questions(self, use_case_id: str) -> list[dict[str, Any]]:
         payload = self.get_use_case(use_case_id)

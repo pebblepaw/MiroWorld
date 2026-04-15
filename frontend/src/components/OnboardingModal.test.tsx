@@ -412,4 +412,66 @@ describe("OnboardingModal", () => {
     expect(screen.getByTestId("session-id")).toHaveTextContent("none");
     expect(screen.queryByText(/demo/i)).not.toBeInTheDocument();
   });
+
+  it("starts a country download immediately when a missing live dataset is selected", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith("/api/v2/countries")) {
+        return makeResponse([
+          { name: "Singapore", code: "sg", flag_emoji: "🇸🇬", dataset_path: "configs/countries/singapore.yaml", available: true, dataset_ready: true, download_required: false, download_status: "ready" },
+          { name: "USA", code: "usa", flag_emoji: "🇺🇸", dataset_path: "configs/countries/usa.yaml", available: true, dataset_ready: false, download_required: true, download_status: "missing" },
+        ]);
+      }
+
+      if (url.endsWith("/api/v2/providers")) {
+        return makeResponse(providersResponse);
+      }
+
+      if (url.endsWith("/api/v2/countries/usa/download")) {
+        return makeResponse({
+          country: "usa",
+          name: "United States",
+          code: "usa",
+          dataset_ready: false,
+          download_required: true,
+          download_status: "downloading",
+          download_error: null,
+          missing_dependency: null,
+        });
+      }
+
+      if (url.endsWith("/api/v2/countries/usa/download-status")) {
+        return makeResponse({
+          country: "usa",
+          name: "United States",
+          code: "usa",
+          dataset_ready: false,
+          download_required: true,
+          download_status: "downloading",
+          download_error: null,
+          missing_dependency: null,
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <Harness />
+      </AppProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: /usa/i }));
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).endsWith("/api/v2/countries/usa/download")),
+      ).toBe(true),
+    );
+    expect(await screen.findByText(/downloading usa dataset/i)).toBeInTheDocument();
+  });
 });

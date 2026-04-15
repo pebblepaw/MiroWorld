@@ -67,7 +67,7 @@ class SimulationService:
             interactions: list[dict[str, Any]] = []
 
             for round_no in range(1, req.rounds + 1):
-                round_delta = self._run_round(req.policy_summary, agents, round_no, interactions)
+                round_delta = self._run_round(req.subject_summary, agents, round_no, interactions)
                 for agent in agents:
                     agent["opinion_post"] = max(1.0, min(10.0, agent["opinion_post"] + round_delta * 0.05))
 
@@ -78,7 +78,7 @@ class SimulationService:
             net_opinion_shift = (sum(post) / len(post)) - (sum(pre) / len(pre))
             runtime = "heuristic"
 
-        self.store.upsert_simulation(req.simulation_id, req.policy_summary, req.rounds, len(agents), runtime=runtime)
+        self.store.upsert_simulation(req.simulation_id, req.subject_summary, req.rounds, len(agents), runtime=runtime)
         self.store.replace_agents(req.simulation_id, agents)
         self.store.replace_interactions(req.simulation_id, interactions)
 
@@ -98,7 +98,7 @@ class SimulationService:
         self,
         *,
         simulation_id: str,
-        policy_summary: str,
+        subject_summary: str,
         rounds: int,
         personas: list[dict[str, Any]],
         events_path: Path | None = None,
@@ -108,7 +108,7 @@ class SimulationService:
         elapsed_offset_seconds: int = 0,
         tail_checkpoint_estimate_seconds: int = 0,
         seed_discussion_threads: list[str] | None = None,
-        country: str = "Singapore",
+        country: str = "the country",
     ) -> dict[str, Any]:
         resolved_seed_threads = [
             str(item).strip()
@@ -119,7 +119,7 @@ class SimulationService:
         if force_live or self.settings.enable_real_oasis:
             result = self._run_oasis_with_inputs(
                 simulation_id=simulation_id,
-                policy_summary=policy_summary,
+                subject_summary=subject_summary,
                 rounds=rounds,
                 personas=personas,
                 events_path=events_path,
@@ -157,7 +157,7 @@ class SimulationService:
                         }
                     )
             for round_no in range(1, rounds + 1):
-                round_delta = self._run_round(policy_summary, agents, round_no, interactions)
+                round_delta = self._run_round(subject_summary, agents, round_no, interactions)
                 for agent in agents:
                     agent["opinion_post"] = max(1.0, min(10.0, agent["opinion_post"] + round_delta * 0.05))
             pre = [a["opinion_pre"] for a in agents]
@@ -169,7 +169,7 @@ class SimulationService:
             elapsed_seconds = 0
             counters = {"posts": 0, "comments": 0, "reactions": 0, "active_authors": 0}
 
-        self.store.upsert_simulation(simulation_id, policy_summary, rounds, len(agents), runtime=runtime)
+        self.store.upsert_simulation(simulation_id, subject_summary, rounds, len(agents), runtime=runtime)
         self.store.replace_agents(simulation_id, agents)
         self.store.replace_interactions(simulation_id, interactions)
         payload = {
@@ -193,7 +193,7 @@ class SimulationService:
         self,
         *,
         simulation_id: str,
-        policy_summary: str,
+        subject_summary: str,
         knowledge_artifact: dict[str, Any],
         sampled_personas: list[dict[str, Any]],
     ) -> dict[str, dict[str, Any]]:
@@ -261,7 +261,7 @@ class SimulationService:
                     if text and text not in file_paths:
                         file_paths.append(text)
 
-            salient_labels = ", ".join(context_labels[:4]) or "general policy context"
+            salient_labels = ", ".join(context_labels[:4]) or "general subject context"
             persona_highlights = {
                 "planning_area": persona.get("planning_area"),
                 "occupation": persona.get("occupation"),
@@ -279,7 +279,7 @@ class SimulationService:
                 f"Persona highlights: {json.dumps(persona_highlights, ensure_ascii=False)}. "
                 f"Matched facets: {matched_facet_text}. "
                 f"Relevant knowledge nodes: {salient_labels}. "
-                f"Policy relevance note: {compact_dossier or 'not provided'}."
+                f"Subject relevance note: {compact_dossier or 'not provided'}."
             ).strip()
             bundles[agent_id] = {
                 "agent_id": agent_id,
@@ -301,9 +301,10 @@ class SimulationService:
         *,
         simulation_id: str,
         checkpoint_kind: str,
-        policy_summary: str,
+        subject_summary: str,
         agent_context_bundles: dict[str, dict[str, Any]],
         checkpoint_questions: list[dict[str, Any]] | None = None,
+        use_case_id: str | None = None,
         on_token_usage: Callable[[int, int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
         if not agent_context_bundles:
@@ -317,31 +318,51 @@ class SimulationService:
             chunk_ids = agent_ids[start : start + batch_size]
             pending_ids = list(chunk_ids)
             chunk_records_by_agent: dict[str, dict[str, Any]] = {}
+            last_raw_response = ""
+            last_error: Exception | None = None
+            last_prompt = ""
 
-            for _attempt in range(max_attempts):
+            for attempt_idx in range(max_attempts):
                 if not pending_ids:
                     break
                 bundle_chunk = [agent_context_bundles[agent_id] for agent_id in pending_ids]
-                prompt = self._build_checkpoint_prompt(
-                    simulation_id=simulation_id,
-                    checkpoint_kind=checkpoint_kind,
-                    policy_summary=policy_summary,
-                    bundle_chunk=bundle_chunk,
-                    checkpoint_questions=resolved_questions,
+                use_repair_prompt = self._should_try_checkpoint_json_repair(
+                    raw_response=last_raw_response,
+                    error=last_error,
                 )
-                response_format = {"type": "json_object"} if self.settings.llm_provider == "ollama" else None
+                if use_repair_prompt:
+                    prompt = self._build_checkpoint_repair_prompt(
+                        simulation_id=simulation_id,
+                        checkpoint_kind=checkpoint_kind,
+                        subject_summary=subject_summary,
+                        bundle_chunk=bundle_chunk,
+                        checkpoint_questions=resolved_questions,
+                        original_prompt=last_prompt,
+                        original_response=last_raw_response,
+                        validation_errors=str(last_error or "Invalid checkpoint response."),
+                        use_case_id=use_case_id,
+                    )
+                    system_prompt = self._checkpoint_repair_system_prompt(use_case_id=use_case_id)
+                else:
+                    prompt = self._build_checkpoint_prompt(
+                        simulation_id=simulation_id,
+                        checkpoint_kind=checkpoint_kind,
+                        subject_summary=subject_summary,
+                        bundle_chunk=bundle_chunk,
+                        checkpoint_questions=resolved_questions,
+                        use_case_id=use_case_id,
+                    )
+                    system_prompt = self._checkpoint_system_prompt(use_case_id=use_case_id)
+                response_format = self._checkpoint_response_format()
+                raw = ""
                 try:
+                    last_prompt = prompt
                     raw = self.llm.complete_required(
                         prompt,
-                        system_prompt=self.config.get_system_prompt_value(
-                            "checkpoint_interview",
-                            "prompts",
-                            "checkpoint_classifier",
-                            "system_prompt",
-                            default="You classify the opinions of simulated residents about a policy. Return valid JSON only.",
-                        ),
+                        system_prompt=system_prompt,
                         response_format=response_format,
                     )
+                    last_raw_response = raw
                     if on_token_usage is not None:
                         on_token_usage(
                             _estimate_tokens(prompt),
@@ -362,8 +383,22 @@ class SimulationService:
                         checkpoint_questions=resolved_questions,
                         allow_missing=True,
                     )
+                    last_error = None
+                    last_raw_response = ""
                 except Exception as exc:  # noqa: BLE001
-                    if _attempt + 1 >= max_attempts:
+                    last_error = exc
+                    self._log_checkpoint_attempt_failure(
+                        simulation_id=simulation_id,
+                        checkpoint_kind=checkpoint_kind,
+                        pending_ids=pending_ids,
+                        attempt_number=attempt_idx + 1,
+                        max_attempts=max_attempts,
+                        prompt=prompt,
+                        raw_response=raw or last_raw_response,
+                        error=exc,
+                        repair_mode=use_repair_prompt,
+                    )
+                    if attempt_idx + 1 >= max_attempts:
                         raise RuntimeError(
                             "Opinion checkpoint failed after retries. "
                             f"provider={self.settings.llm_provider} model={self.settings.llm_model} "
@@ -396,10 +431,79 @@ class SimulationService:
             return configured
         return max(1, int(self.settings.default_checkpoint_batch_size))
 
+    def _checkpoint_response_format(self) -> dict[str, str] | None:
+        provider = str(self.settings.llm_provider or "").strip().lower()
+        if provider in {"ollama", "google", "openai"}:
+            return {"type": "json_object"}
+        return None
+
+    def _checkpoint_system_prompt(self, *, use_case_id: str | None = None) -> str:
+        return self.config.render_prompt_template(
+            self.config.get_system_prompt_value(
+                "checkpoint_interview",
+                "prompts",
+                "checkpoint_classifier",
+                "system_prompt",
+                default="You classify how simulated residents react to a summarized subject. Return valid JSON only.",
+            ),
+            use_case_id=use_case_id,
+        )
+
+    def _checkpoint_repair_system_prompt(self, *, use_case_id: str | None = None) -> str:
+        return self.config.render_prompt_template(
+            self.config.get_system_prompt_value(
+                "checkpoint_interview",
+                "prompts",
+                "checkpoint_classifier",
+                "repair_system_prompt",
+                default="Repair the response so it matches the requested JSON schema exactly. Return valid JSON only.",
+            ),
+            use_case_id=use_case_id,
+        )
+
+    def _should_try_checkpoint_json_repair(self, *, raw_response: str, error: Exception | None) -> bool:
+        if not str(raw_response or "").strip() or error is None:
+            return False
+        if isinstance(error, json.JSONDecodeError):
+            return True
+        error_text = str(error).strip().lower()
+        return "json" in error_text or "return a json array" in error_text
+
+    def _log_checkpoint_attempt_failure(
+        self,
+        *,
+        simulation_id: str,
+        checkpoint_kind: str,
+        pending_ids: list[str],
+        attempt_number: int,
+        max_attempts: int,
+        prompt: str,
+        raw_response: str,
+        error: Exception,
+        repair_mode: bool,
+    ) -> None:
+        preview = re.sub(r"\s+", " ", str(raw_response or "").strip())[:320]
+        logger.warning(
+            "Checkpoint attempt failed: simulation=%s checkpoint=%s provider=%s model=%s "
+            "attempt=%s/%s pending_agents=%s repair_mode=%s prompt_chars=%s raw_chars=%s raw_preview=%r error=%s",
+            simulation_id,
+            checkpoint_kind,
+            self.settings.llm_provider,
+            self.settings.llm_model,
+            attempt_number,
+            max_attempts,
+            len(pending_ids),
+            repair_mode,
+            len(prompt),
+            len(str(raw_response or "")),
+            preview,
+            error,
+        )
+
     def _run_oasis(self, req: SimulationRunRequest, personas: list[dict[str, Any]]) -> dict[str, Any]:
         return self._run_oasis_with_inputs(
             simulation_id=req.simulation_id,
-            policy_summary=req.policy_summary,
+            subject_summary=req.subject_summary,
             rounds=req.rounds,
             personas=personas,
             events_path=None,
@@ -410,7 +514,7 @@ class SimulationService:
         self,
         *,
         simulation_id: str,
-        policy_summary: str,
+        subject_summary: str,
         rounds: int,
         personas: list[dict[str, Any]],
         events_path: Path | None,
@@ -419,7 +523,7 @@ class SimulationService:
         elapsed_offset_seconds: int = 0,
         tail_checkpoint_estimate_seconds: int = 0,
         seed_discussion_threads: list[str] | None = None,
-        country: str = "Singapore",
+        country: str = "the country",
     ) -> dict[str, Any]:
         provider_key = self.settings.resolved_gemini_key
         if not provider_key:
@@ -442,7 +546,7 @@ class SimulationService:
 
         payload = {
             "simulation_id": simulation_id,
-            "policy_summary": policy_summary,
+            "subject_summary": subject_summary,
             "rounds": rounds,
             "personas": personas,
             "controversy_boost": max(0.0, min(1.0, float(controversy_boost))),
@@ -764,9 +868,10 @@ class SimulationService:
         *,
         simulation_id: str,
         checkpoint_kind: str,
-        policy_summary: str,
+        subject_summary: str,
         bundle_chunk: list[dict[str, Any]],
         checkpoint_questions: list[dict[str, Any]] | None = None,
+        use_case_id: str | None = None,
     ) -> str:
         knowledge_digest = ""
         if bundle_chunk:
@@ -799,18 +904,68 @@ class SimulationService:
                     + "\n"
                 )
         context_line = f"Shared document context: {knowledge_digest}\n" if knowledge_digest else ""
-        return self.config.get_system_prompt_value(
-            "checkpoint_interview",
-            "prompts",
-            "checkpoint_interview",
-            "user_template",
-        ).format(
+        template = self.config.render_prompt_template(
+            self.config.get_system_prompt_value(
+                "checkpoint_interview",
+                "prompts",
+                "checkpoint_interview",
+                "user_template",
+            ),
+            use_case_id=use_case_id,
+        )
+        return template.format(
             simulation_id=simulation_id,
             checkpoint_kind=checkpoint_kind,
-            policy_summary=policy_summary,
+            subject_summary=subject_summary,
             context_line=context_line.strip(),
             question_block=question_block,
             agents_json=json.dumps(payload, ensure_ascii=False),
+        )
+
+    def _build_checkpoint_repair_prompt(
+        self,
+        *,
+        simulation_id: str,
+        checkpoint_kind: str,
+        subject_summary: str,
+        bundle_chunk: list[dict[str, Any]],
+        checkpoint_questions: list[dict[str, Any]] | None = None,
+        original_prompt: str,
+        original_response: str,
+        validation_errors: str,
+        use_case_id: str | None = None,
+    ) -> str:
+        template = self.config.render_prompt_template(
+            self.config.get_system_prompt_value(
+                "checkpoint_interview",
+                "prompts",
+                "checkpoint_interview",
+                "repair_user_template",
+            ),
+            use_case_id=use_case_id,
+        )
+        return template.format(
+            simulation_id=simulation_id,
+            checkpoint_kind=checkpoint_kind,
+            subject_summary=subject_summary,
+            checkpoint_questions=json.dumps(
+                [item for item in (checkpoint_questions or []) if isinstance(item, dict)],
+                ensure_ascii=False,
+            ),
+            agents_json=json.dumps(
+                [
+                    {
+                        "agent_id": bundle["agent_id"],
+                        "brief": bundle["brief"],
+                        "matched_context_nodes": list(bundle.get("matched_context_nodes", []))[:8],
+                    }
+                    for bundle in bundle_chunk
+                ],
+                ensure_ascii=False,
+            ),
+            original_prompt=original_prompt,
+            original_response=original_response,
+            validation_errors=validation_errors,
         )
 
     def _normalize_checkpoint_records(
@@ -914,7 +1069,7 @@ class SimulationService:
 
     def _run_round(
         self,
-        policy_summary: str,
+        subject_summary: str,
         agents: list[dict[str, Any]],
         round_no: int,
         interactions: list[dict[str, Any]],
@@ -930,7 +1085,7 @@ class SimulationService:
             deltas.append(delta)
 
             sentiment = "support" if agent["opinion_post"] >= 7 else "oppose" if agent["opinion_post"] <= 4 else "neutral"
-            content = f"Round {round_no} {sentiment} stance on policy: {policy_summary[:120]}"
+            content = f"Round {round_no} {sentiment} stance on subject: {subject_summary[:120]}"
 
             interactions.append(
                 {

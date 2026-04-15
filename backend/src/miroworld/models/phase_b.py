@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 class SimulationRunRequest(BaseModel):
     simulation_id: str
-    policy_summary: str
+    subject_summary: str
     agent_count: int = Field(default=50, ge=2, le=500)
     rounds: int = Field(default=10, ge=1, le=30)
     min_age: int | None = Field(default=None, ge=0, le=120)

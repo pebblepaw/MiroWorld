@@ -24,7 +24,7 @@ class SimulationStore:
                 """
                 CREATE TABLE IF NOT EXISTS simulations (
                     simulation_id TEXT PRIMARY KEY,
-                    policy_summary TEXT NOT NULL,
+                    subject_summary TEXT NOT NULL,
                     rounds INTEGER NOT NULL,
                     agent_count INTEGER NOT NULL,
                     runtime TEXT NOT NULL DEFAULT 'heuristic',
@@ -192,6 +192,9 @@ class SimulationStore:
             )
             # Backward-compatible migration for existing local DB files.
             columns = [r[1] for r in conn.execute("PRAGMA table_info(simulations)").fetchall()]
+            if "subject_summary" not in columns and "policy_summary" in columns:
+                conn.execute("ALTER TABLE simulations RENAME COLUMN policy_summary TO subject_summary")
+                columns = [r[1] for r in conn.execute("PRAGMA table_info(simulations)").fetchall()]
             if "runtime" not in columns:
                 conn.execute("ALTER TABLE simulations ADD COLUMN runtime TEXT NOT NULL DEFAULT 'heuristic'")
 
@@ -228,7 +231,7 @@ class SimulationStore:
     def upsert_simulation(
         self,
         simulation_id: str,
-        policy_summary: str,
+        subject_summary: str,
         rounds: int,
         agent_count: int,
         runtime: str = "heuristic",
@@ -236,15 +239,15 @@ class SimulationStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO simulations(simulation_id, policy_summary, rounds, agent_count, runtime)
+                INSERT INTO simulations(simulation_id, subject_summary, rounds, agent_count, runtime)
                 VALUES(?, ?, ?, ?, ?)
                 ON CONFLICT(simulation_id) DO UPDATE SET
-                    policy_summary=excluded.policy_summary,
+                    subject_summary=excluded.subject_summary,
                     rounds=excluded.rounds,
                     agent_count=excluded.agent_count,
                     runtime=excluded.runtime
                 """,
-                (simulation_id, policy_summary, rounds, agent_count, runtime),
+                (simulation_id, subject_summary, rounds, agent_count, runtime),
             )
 
     def replace_agents(self, simulation_id: str, agents: list[dict[str, Any]]) -> None:

@@ -14,14 +14,14 @@ def main() -> None:
     parser.add_argument("--simulation-id", default="debug-phase-b")
     parser.add_argument("--agent-count", type=int, default=20)
     parser.add_argument("--rounds", type=int, default=3)
-    parser.add_argument("--policy", default="Debug policy summary")
+    parser.add_argument("--subject", default="Debug subject summary")
     parser.add_argument("--out", default="data/demo-run/debug_phase_b_response.json")
     args = parser.parse_args()
 
     client = TestClient(app)
     payload = {
         "simulation_id": args.simulation_id,
-        "policy_summary": args.policy,
+        "subject_summary": args.subject,
         "agent_count": args.agent_count,
         "rounds": args.rounds,
     }

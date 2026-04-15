@@ -80,7 +80,7 @@ def test_run_oasis_with_inputs_uses_sidecar_jobs_when_configured(tmp_path: Path,
 
     result = service._run_oasis_with_inputs(
         simulation_id="sim-sidecar",
-        policy_summary="AI strategy policy summary",
+        subject_summary="AI strategy policy summary",
         rounds=1,
         personas=[{"agent_id": "agent-0001", "planning_area": "Yishun"}],
         events_path=None,

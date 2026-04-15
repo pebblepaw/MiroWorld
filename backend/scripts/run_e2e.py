@@ -16,7 +16,7 @@ def main() -> None:
         "/api/v1/phase-b/simulations/run",
         json={
             "simulation_id": simulation_id,
-            "policy_summary": "Pilot congestion pricing with low-income transport rebates",
+            "subject_summary": "Pilot congestion pricing with low-income transport rebates",
             "agent_count": 50,
             "rounds": 10,
         },

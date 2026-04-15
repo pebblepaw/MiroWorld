@@ -1,18 +1,50 @@
 description: "Prompt templates for checkpoint opinion classification during simulation."
 prompts:
   checkpoint_classifier:
-    description: "System prompt for classifying agent checkpoint responses into the expected JSON schema."
+    description: "System prompts for classifying checkpoint responses into the expected JSON schema."
     system_prompt: |
-      You classify the opinions of simulated residents about a policy. Return valid JSON only.
+      You classify how simulated residents react to a summarized subject.
+      Return valid JSON only.
+      Do not include markdown fences, commentary, or prose outside the JSON object.
+    repair_system_prompt: |
+      You repair checkpoint-classification output so it matches the requested JSON schema exactly.
+      Return valid JSON only.
+      Do not include markdown fences, commentary, or prose outside the JSON object.
   checkpoint_interview:
-    description: "User prompt template for checkpoint scoring and question answering."
+    description: "User prompt templates for checkpoint scoring and question answering."
     user_template: |
       Simulation: {simulation_id}
       Checkpoint kind: {checkpoint_kind}
-      Policy summary: {policy_summary}
+      {summary_label}: {subject_summary}
       {context_line}
-      {question_block}For each agent, assess their stance on the policy and return JSON only using this schema:
+      {question_block}For each agent, assess their stance toward {evaluation_target} and return JSON only using this schema:
       {{"records":[{{"agent_id": str, "stance_score": number, "stance_class": "approve|neutral|dissent", "confidence": number, "primary_driver": str, "confirmed_name": str, "metric_answers": {{metric_name: number|string}}, "matched_context_nodes": [str]}}]}}
+
+      Rules:
+      - `stance_score` must be normalized to 0.0-1.0.
+      - `confidence` must be normalized to 0.0-1.0.
+      - Populate `metric_answers` for every `metric_name` listed above when the evidence supports it.
+      - Use `confirmed_name` only when the persona name is clear from the brief; otherwise return an empty string.
+      - Return exactly one record per agent in `Agents`.
 
       Agents:
       {agents_json}
+
+    repair_user_template: |
+      The previous checkpoint response did not satisfy the required JSON schema for {evaluation_target}.
+
+      Simulation: {simulation_id}
+      Checkpoint kind: {checkpoint_kind}
+      {summary_label}: {subject_summary}
+
+      Original prompt:
+      {original_prompt}
+
+      Original invalid output:
+      {original_response}
+
+      Validation errors:
+      {validation_errors}
+
+      Return valid JSON only using this schema:
+      {{"records":[{{"agent_id": str, "stance_score": number, "stance_class": "approve|neutral|dissent", "confidence": number, "primary_driver": str, "confirmed_name": str, "metric_answers": {{metric_name: number|string}}, "matched_context_nodes": [str]}}]}}

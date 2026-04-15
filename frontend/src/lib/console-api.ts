@@ -1714,7 +1714,7 @@ export async function previewPopulation(
 export async function startSimulation(
   sessionId: string,
   payload: {
-    policy_summary: string;
+    subject_summary: string;
     rounds: number;
     controversy_boost?: number;
     mode?: ConsoleMode;
@@ -1727,6 +1727,7 @@ export async function startSimulation(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      subject_summary: payload.subject_summary,
       rounds: payload.rounds,
       controversy_boost: payload.controversy_boost ?? 0,
       mode: payload.mode,

@@ -434,15 +434,62 @@ class ConsoleService:
 
         session_cfg = self._read_session_config(session_id)
         use_case = str(session_cfg.get("use_case") or "").strip()
+        country = str(session_cfg.get("country") or "").strip().lower() or None
         if not use_case:
             return None
 
         try:
             config_service = ConfigService(self.settings)
-            default_prompt = str(config_service.get_system_prompt(use_case) or "").strip()
+            default_prompt = str(config_service.get_system_prompt(use_case, country_id=country) or "").strip()
         except Exception:  # noqa: BLE001
             return None
         return default_prompt or None
+
+    def _default_guiding_prompt(self, *, use_case: str | None, country: str | None) -> str | None:
+        normalized_use_case = str(use_case or "").strip().lower()
+        if not normalized_use_case:
+            return None
+        try:
+            config_service = ConfigService(self.settings)
+            prompt = str(config_service.get_system_prompt(normalized_use_case, country_id=country) or "").strip()
+        except Exception:  # noqa: BLE001
+            return None
+        return prompt or None
+
+    def _guiding_prompt_matches_default(
+        self,
+        *,
+        prompt: str | None,
+        use_case: str | None,
+        country: str | None,
+    ) -> bool:
+        cleaned = str(prompt or "").strip()
+        if not cleaned:
+            return True
+        default_prompt = self._default_guiding_prompt(use_case=use_case, country=country)
+        return bool(default_prompt) and cleaned == default_prompt
+
+    def _knowledge_summary_is_usable(self, summary: str | None) -> bool:
+        cleaned = " ".join(str(summary or "").split()).strip().lower()
+        if not cleaned:
+            return False
+        refusal_patterns = (
+            r"^i\s+(?:am|['’]?m)\s+sorry\b",
+            r"^sorry\b",
+            r"\bcannot fulfill this request\b",
+            r"\bcan['’]?t fulfill this request\b",
+            r"\bi cannot extract\b",
+            r"\bi cannot classify\b",
+            r"\bdoes not contain information about\b",
+            r"\bnot enough information\b",
+        )
+        return not any(re.search(pattern, cleaned) for pattern in refusal_patterns)
+
+    def _invalid_knowledge_summary_detail(self) -> str:
+        return (
+            "Knowledge extraction did not produce a usable summary for simulation. "
+            "Re-run Screen 1 with a clearer document or guiding prompt before starting Screen 3."
+        )
 
     def update_v2_session_config(
         self,
@@ -464,26 +511,37 @@ class ConsoleService:
 
         patch: dict[str, Any] = {}
         config_service = ConfigService(self.settings)
+        effective_country = str(existing_cfg.get("country") or "").strip().lower() or None
+        effective_use_case = str(existing_cfg.get("use_case") or "").strip().lower() or None
+        prompt_was_default = self._guiding_prompt_matches_default(
+            prompt=existing_cfg.get("guiding_prompt"),
+            use_case=effective_use_case,
+            country=effective_country,
+        )
 
         if country is not None:
             country_payload = config_service.get_country(country)
             patch["country"] = str(country_payload.get("code") or country).strip().lower()
             self.country_datasets.ensure_country_ready(patch["country"])
+            effective_country = patch["country"]
 
         if use_case is not None:
             use_case_payload = config_service.get_use_case(use_case)
             resolved_use_case = str(use_case_payload.get("code", use_case)).strip().lower()
             patch["use_case"] = resolved_use_case
-            if guiding_prompt is None and not self._read_session_config(session_id).get("guiding_prompt"):
-                default_prompt = str(config_service.get_system_prompt(resolved_use_case) or "").strip()
-                if default_prompt:
-                    patch["guiding_prompt"] = default_prompt
+            effective_use_case = resolved_use_case
             if analysis_questions is None:
                 patch["analysis_questions"] = [
                     item
                     for item in config_service.get_analysis_questions(resolved_use_case)
                     if isinstance(item, dict)
                 ]
+
+        if guiding_prompt is None and (country is not None or use_case is not None) and prompt_was_default:
+            patch["guiding_prompt"] = self._default_guiding_prompt(
+                use_case=effective_use_case,
+                country=effective_country,
+            )
 
         if provider is not None:
             patch["provider"] = "gemini" if normalize_provider(provider) == "google" else normalize_provider(provider)
@@ -571,10 +629,14 @@ class ConsoleService:
             api_key=resolved_api_key,
         )
         use_case_payload = config.get_use_case(use_case)
-        stored_prompt = str(config.get_system_prompt(str(use_case_payload.get("code", use_case))) or "").strip() or None
+        resolved_use_case = str(use_case_payload.get("code", use_case)).strip().lower()
+        stored_prompt = self._default_guiding_prompt(
+            use_case=resolved_use_case,
+            country=selected_country,
+        )
         analysis_questions = [
             item
-            for item in config.get_analysis_questions(str(use_case_payload.get("code", use_case)))
+            for item in config.get_analysis_questions(resolved_use_case)
             if isinstance(item, dict)
         ]
         if mode == "demo" and self.demo.is_demo_available():
@@ -585,7 +647,7 @@ class ConsoleService:
             payload["session_id"],
             {
                 "country": selected_country,
-                "use_case": str(use_case_payload.get("code", use_case)).strip().lower(),
+                "use_case": resolved_use_case,
                 "provider": "gemini" if resolved_provider == "google" else resolved_provider,
                 "model": model,
                 "guiding_prompt": stored_prompt,
@@ -900,6 +962,7 @@ class ConsoleService:
             self.create_session(session_id)
             session = self.store.get_console_session(session_id)
         resolved_guiding_prompt = self._resolve_guiding_prompt(session_id, guiding_prompt)
+        session_use_case = self._session_use_case(session_id)
         live_mode = self._is_live_session(session_id)
         resolved_documents = self._resolve_knowledge_documents(
             document_text=document_text,
@@ -976,6 +1039,7 @@ class ConsoleService:
                     source_path=str(item.get("source_path")) if item.get("source_path") else None,
                     document_id=document_id,
                     guiding_prompt=resolved_guiding_prompt,
+                    use_case_id=session_use_case,
                     demographic_focus=demographic_focus,
                     live_mode=live_mode,
                     event_callback=emit_knowledge_event,
@@ -1288,7 +1352,7 @@ class ConsoleService:
         self,
         session_id: str,
         *,
-        policy_summary: str,
+        subject_summary: str,
         rounds: int,
         controversy_boost: float = 0.0,
         mode: str | None = None,
@@ -1307,6 +1371,8 @@ class ConsoleService:
         personas = [dict(row["persona"], agent_id=row.get("agent_id")) for row in sampled_rows]
         if not sampled_rows:
             raise HTTPException(status_code=422, detail="No sampled personas available for simulation start")
+        if not self._knowledge_summary_is_usable(subject_summary):
+            raise HTTPException(status_code=422, detail=self._invalid_knowledge_summary_detail())
 
         events_dir = Path(runtime_settings.oasis_db_dir).parent / "events"
         events_dir.mkdir(parents=True, exist_ok=True)
@@ -1358,7 +1424,7 @@ class ConsoleService:
             target=self._run_simulation_background,
             args=(
                 session_id,
-                policy_summary,
+                subject_summary,
                 rounds,
                 sampled_rows,
                 personas,
@@ -2086,7 +2152,7 @@ class ConsoleService:
     def _run_simulation_background(
         self,
         session_id: str,
-        policy_summary: str,
+        subject_summary: str,
         rounds: int,
         sampled_rows: list[dict[str, Any]],
         personas: list[dict[str, Any]],
@@ -2114,10 +2180,10 @@ class ConsoleService:
             metrics_service = MetricsService(config_service)
             knowledge = self.store.get_knowledge_artifact(session_id) or {}
             country_id, country_cfg, _dataset_path = self._session_country_config(session_id)
-            country_display_name = str(country_cfg.get("name") or country_id).strip() or "Singapore"
+            country_display_name = str(country_cfg.get("name") or country_id).strip() or "the country"
             context_bundles = simulation_service.build_context_bundles(
                 simulation_id=session_id,
-                policy_summary=policy_summary,
+                subject_summary=subject_summary,
                 knowledge_artifact=knowledge,
                 sampled_personas=sampled_rows,
             )
@@ -2155,9 +2221,10 @@ class ConsoleService:
             baseline = simulation_service.run_opinion_checkpoint(
                 simulation_id=session_id,
                 checkpoint_kind="baseline",
-                policy_summary=policy_summary,
+                subject_summary=subject_summary,
                 agent_context_bundles=context_bundles,
                 checkpoint_questions=checkpoint_questions,
+                use_case_id=use_case,
                 on_token_usage=_record_tokens,
             )
             baseline_elapsed = max(1, int(time.monotonic() - baseline_started_at))
@@ -2209,7 +2276,7 @@ class ConsoleService:
 
             simulation_result = simulation_service.run_with_personas(
                 simulation_id=session_id,
-                policy_summary=policy_summary,
+                subject_summary=subject_summary,
                 rounds=rounds,
                 personas=enriched_personas,
                 events_path=events_path,
@@ -2245,9 +2312,10 @@ class ConsoleService:
             final = simulation_service.run_opinion_checkpoint(
                 simulation_id=session_id,
                 checkpoint_kind="final",
-                policy_summary=policy_summary,
+                subject_summary=subject_summary,
                 agent_context_bundles=final_bundles,
                 checkpoint_questions=checkpoint_questions,
+                use_case_id=use_case,
                 on_token_usage=_record_tokens,
             )
             final_elapsed = max(1, int(time.monotonic() - final_started_at))

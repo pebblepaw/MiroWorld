@@ -245,22 +245,22 @@ def main() -> None:
     # ── 5. Run simulation ─────────────────────────────────────────────
     simulation_state = None
     if not args.skip_simulation:
-        # Resolve policy_summary from knowledge artifact or scraped content
-        policy_summary = ""
+        # Resolve subject_summary from knowledge artifact or scraped content
+        subject_summary = ""
         if knowledge:
-            policy_summary = str(knowledge.get("summary") or "").strip()
-        if not policy_summary and knowledge:
+            subject_summary = str(knowledge.get("summary") or "").strip()
+        if not subject_summary and knowledge:
             # Fallback: use the scraped document text (first 2000 chars)
             doc = knowledge.get("document") or {}
-            policy_summary = str(doc.get("text") or doc.get("content") or "").strip()[:2000]
-        if not policy_summary:
-            policy_summary = f"Policy analysis from {source_url}"
+            subject_summary = str(doc.get("text") or doc.get("content") or "").strip()[:2000]
+        if not subject_summary:
+            subject_summary = f"Analysis summary from {source_url}"
         _log(f"Starting simulation ({rounds} rounds, {agent_count} agents)...")
         resp = requests.post(f"{api}/session/{session_id}/simulate", json={
             "rounds": rounds,
             "controversy_boost": 0.0,
             "mode": "live",
-            "policy_summary": policy_summary,
+            "subject_summary": subject_summary,
         }, timeout=60)
         sim_start = _ok("simulate", resp)
         _log(f"  Simulation started, status={sim_start.get('status')}")

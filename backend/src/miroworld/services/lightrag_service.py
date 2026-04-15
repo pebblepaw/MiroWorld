@@ -427,6 +427,7 @@ class LightRAGService:
         source_path: str | None,
         document_id: str | None = None,
         guiding_prompt: str | None = None,
+        use_case_id: str | None = None,
         demographic_focus: str | None = None,
         live_mode: bool = False,
         event_callback=None,
@@ -528,28 +529,38 @@ class LightRAGService:
                     },
                 )
 
-        summary_prompt = self._config.get_system_prompt_value(
-            "graph_extraction",
-            "prompts",
-            "document_summary",
-            "default_prompt",
-        )
-        if provider == "ollama":
-            summary_prompt = self._config.get_system_prompt_value(
+        summary_prompt = self._config.render_prompt_template(
+            self._config.get_system_prompt_value(
                 "graph_extraction",
                 "prompts",
                 "document_summary",
-                "ollama_prompt",
+                "default_prompt",
+            ),
+            use_case_id=use_case_id,
+        )
+        if provider == "ollama":
+            summary_prompt = self._config.render_prompt_template(
+                self._config.get_system_prompt_value(
+                    "graph_extraction",
+                    "prompts",
+                    "document_summary",
+                    "ollama_prompt",
+                ),
+                use_case_id=use_case_id,
             )
         if normalized_guiding_prompt:
             summary_prompt = (
                 f"{summary_prompt} "
-                + self._config.get_system_prompt_value(
-                    "graph_extraction",
-                    "prompts",
-                    "document_summary",
-                    "guiding_focus_suffix",
-                ).format(guiding_prompt=normalized_guiding_prompt)
+                + self._config.render_prompt_template(
+                    self._config.get_system_prompt_value(
+                        "graph_extraction",
+                        "prompts",
+                        "document_summary",
+                        "guiding_focus_suffix",
+                    ),
+                    use_case_id=use_case_id,
+                    extra_replacements={"guiding_prompt": normalized_guiding_prompt},
+                )
             ).strip()
         summary = await self._rag.aquery(
             summary_prompt,

@@ -475,7 +475,7 @@ def simulation_start(
     
     payload = ConsoleService(settings).start_simulation(
         session_id,
-        policy_summary=req.policy_summary,
+        subject_summary=req.subject_summary,
         rounds=req.rounds,
         controversy_boost=req.controversy_boost,
         mode=req.mode,
@@ -496,17 +496,17 @@ def simulate(
             return SimulationStateResponse(**state)
 
     service = ConsoleService(settings)
-    policy_summary = str(req.policy_summary or "").strip()
-    if not policy_summary:
+    subject_summary = str(req.subject_summary or "").strip()
+    if not subject_summary:
         knowledge = service.store.get_knowledge_artifact(session_id)
         if knowledge:
-            policy_summary = str(knowledge.get("summary") or "").strip()
-    if not policy_summary:
-        raise HTTPException(status_code=422, detail="Policy summary is required to start a simulation.")
+            subject_summary = str(knowledge.get("summary") or "").strip()
+    if not subject_summary:
+        raise HTTPException(status_code=422, detail="Subject summary is required to start a simulation.")
 
     payload = service.start_simulation(
         session_id,
-        policy_summary=policy_summary,
+        subject_summary=subject_summary,
         rounds=req.rounds,
         controversy_boost=req.controversy_boost,
         mode=req.mode,

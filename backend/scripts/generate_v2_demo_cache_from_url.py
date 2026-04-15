@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import time
 from datetime import UTC, datetime
@@ -69,6 +70,9 @@ def _agent_id_from_oasis_alias(value: Any) -> str | None:
         raw_number = text.removeprefix("sg_agent_").strip()
         if raw_number.isdigit():
             return f"agent-{int(raw_number):04d}"
+    generic_match = re.match(r".*_(\d+)$", text)
+    if generic_match:
+        return f"agent-{int(generic_match.group(1)):04d}"
     return None
 
 
@@ -522,7 +526,7 @@ def main() -> None:
         client.post(
             f"/api/v2/console/session/{session_id}/simulation/start",
             json={
-                "policy_summary": str(knowledge.get("summary") or "").strip(),
+                "subject_summary": str(knowledge.get("summary") or "").strip(),
                 "rounds": args.rounds,
                 "controversy_boost": args.controversy_boost,
                 "mode": "live",

@@ -256,10 +256,10 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     }
   }, []);
 
-  const handleDownloadDataset = useCallback(async () => {
-    if (!country || downloading) return;
+  const handleDownloadDataset = useCallback(async (countryId: string, missingDependency?: CountryCard['missingDependency']) => {
+    if (!countryId || downloading) return;
 
-    if (countryMissingDep === 'huggingface_api_key') {
+    if (missingDependency === 'huggingface_api_key') {
       setLaunchError(missingHuggingFaceMessage);
       return;
     }
@@ -268,7 +268,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     setLaunchError('');
 
     try {
-      await downloadCountryDataset(country);
+      await downloadCountryDataset(countryId);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to start dataset download.';
       if (message.includes('huggingface_api_key')) {
@@ -282,7 +282,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
 
     // Poll for download completion
     const poll = async () => {
-      const status = await refreshCountryStatus(country);
+      const status = await refreshCountryStatus(countryId);
       if (!status) {
         pollRef.current = setTimeout(poll, 2000);
         return;
@@ -297,7 +297,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
       }
     };
     pollRef.current = setTimeout(poll, 1500);
-  }, [country, downloading, countryMissingDep, missingHuggingFaceMessage, refreshCountryStatus]);
+  }, [downloading, missingHuggingFaceMessage, refreshCountryStatus]);
 
   // Clean up polling on unmount or close
   useEffect(() => {
@@ -516,6 +516,9 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
 
                       setLaunchError('');
                       setCountry(c.id);
+                      if (liveMode && !c.datasetReady && c.downloadStatus !== 'downloading') {
+                        void handleDownloadDataset(c.id, c.missingDependency);
+                      }
                     }}
                     title={!c.available ? 'Coming soon' : needsDownload ? 'Dataset download required' : undefined}
                     className={`
@@ -576,7 +579,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                       </div>
                     ) : (
                       <Button
-                        onClick={() => void handleDownloadDataset()}
+                        onClick={() => void handleDownloadDataset(country, countryMissingDep)}
                         variant="outline"
                         size="sm"
                         className="shrink-0 border-amber-400 dark:border-amber-600 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50"

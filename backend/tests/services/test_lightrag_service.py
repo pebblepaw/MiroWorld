@@ -27,11 +27,15 @@ def _rate_limit_error(message: str = "rate limit exceeded") -> RateLimitError:
 
 
 class _DummyRag:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
     async def ainsert(self, *_args, **_kwargs) -> None:
         return None
 
     async def aquery(self, prompt: str, param=None) -> str:  # noqa: ANN001
         del param
+        self.prompts.append(prompt)
         return f"summary for: {prompt}"
 
 
@@ -79,6 +83,44 @@ def test_process_document_falls_back_in_live_mode_when_native_graph_is_empty(
     assert payload["relationship_edges"] == [{"source": "node-1", "target": "node-2", "type": "affects"}]
     assert any("fallback extraction" in log for log in payload["processing_logs"])
     assert any("Live mode accepted fallback graph extraction" in log for log in payload["processing_logs"])
+
+
+def test_process_document_renders_use_case_aware_summary_prompt(tmp_path: Path, monkeypatch) -> None:
+    settings = _make_settings(tmp_path)
+    settings.llm_provider = "google"
+    service = LightRAGService(settings)
+    rag = _DummyRag()
+    service._rag = rag
+
+    async def fake_ensure_ready() -> None:
+        return None
+
+    async def fake_load_document_native_graph(_rag, _document_id):  # noqa: ANN001
+        return None
+
+    async def fake_build_graph_from_text(**_kwargs):  # noqa: ANN002
+        return (
+            [{"id": "node-1", "label": "Task Board", "type": "feature"}],
+            [],
+        )
+
+    monkeypatch.setattr(service, "ensure_ready", fake_ensure_ready)
+    monkeypatch.setattr(lightrag_module, "_load_document_native_graph", fake_load_document_native_graph)
+    monkeypatch.setattr(lightrag_module, "_build_graph_from_text", fake_build_graph_from_text)
+
+    asyncio.run(
+        service.process_document(
+            simulation_id="session-product",
+            document_text="A product poster for a collaboration app.",
+            source_path="poster.pdf",
+            document_id="doc-product",
+            use_case_id="product-market-research",
+        )
+    )
+
+    assert rag.prompts
+    assert "product or service concept" in rag.prompts[0].lower()
+    assert "policy measures" not in rag.prompts[0].lower()
 
 
 def test_ensure_ready_falls_back_to_secondary_google_embedding_model_on_rate_limit(

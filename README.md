@@ -64,6 +64,36 @@ cd frontend && npm install && cd ..
 
 If you want to use countries whose Nemotron parquet files are not already present locally, set `HUGGINGFACE_API_KEY` in `.env`. The backend uses that key to download the selected country dataset on demand.
 
+### Country Datasets
+
+Screen 0 now auto-starts the dataset download when you click a country whose parquet files are missing. This requires `HUGGINGFACE_API_KEY` in `.env`, because the backend downloads the files from Hugging Face.
+
+If you prefer to pre-download the datasets yourself, use the official Hugging Face dataset repos and keep the original `data/train-*` folder structure:
+
+- Singapore source: `nvidia/Nemotron-Personas-Singapore`
+- USA source: `nvidia/Nemotron-Personas-USA`
+
+Recommended local targets:
+
+- Singapore: `backend/data/nemotron/singapore`
+- USA: `backend/data/nemotron/usa`
+
+Example commands:
+
+```bash
+huggingface-cli download nvidia/Nemotron-Personas-Singapore \
+  --repo-type dataset \
+  --local-dir backend/data/nemotron/singapore \
+  --include "data/train-*" "README.md"
+
+huggingface-cli download nvidia/Nemotron-Personas-USA \
+  --repo-type dataset \
+  --local-dir backend/data/nemotron/usa \
+  --include "data/train-*" "README.md"
+```
+
+After either auto-download or manual download, restart `./quick_start.sh` if the backend was already running before the parquet files appeared.
+
 ### Launch
 
 Demo mode uses the bundled cached artifacts and is the fastest smoke test:
@@ -107,6 +137,10 @@ Notes:
 - For live Docker runs, the default `.env.example` is already oriented toward OpenRouter. Set `OPENROUTER_API_KEY` and switch `BOOT_MODE=live`.
 - If you want Docker to use a host Ollama daemon instead, set `LLM_PROVIDER="ollama"` and `LLM_BASE_URL="http://host.docker.internal:11434/v1/"` in `.env`.
 - The backend healthcheck also verifies that the OASIS sidecar is reachable.
+- Country dataset downloads inside Docker still happen through the backend container, so `HUGGINGFACE_API_KEY` must also be present in the root `.env` if you want Screen 0 to auto-download missing countries.
+- The compose file stores `/app/backend/data` in the named volume `backend_data`. That means host-side parquet files are not picked up automatically unless you either:
+  1. let Screen 0 download the selected country into the Docker volume, or
+  2. replace the named volume with a bind mount such as `./backend/data:/app/backend/data` before starting Docker.
 
 ## LLM Provider Setup
 

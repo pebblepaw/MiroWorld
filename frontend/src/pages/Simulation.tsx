@@ -700,7 +700,7 @@ export default function Simulation() {
     setSimulationState(null);
     try {
       const state = await startSimulation(sessionId, {
-        policy_summary: knowledgeArtifact.summary,
+        subject_summary: knowledgeArtifact.summary,
         rounds: simulationRounds,
         controversy_boost: controversyBoost,
       });

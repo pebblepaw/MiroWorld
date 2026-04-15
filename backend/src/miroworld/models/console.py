@@ -117,14 +117,14 @@ class PopulationArtifactResponse(BaseModel):
 
 
 class SimulationStartRequest(BaseModel):
-    policy_summary: str
+    subject_summary: str
     rounds: int = Field(default=10, ge=1, le=30)
     controversy_boost: float = Field(default=0.0, ge=0.0, le=1.0)
     mode: Literal["demo", "live"] | None = None
 
 
 class SimulationQuickStartRequest(BaseModel):
-    policy_summary: str | None = None
+    subject_summary: str | None = None
     rounds: int = Field(default=10, ge=1, le=30)
     controversy_boost: float = Field(default=0.0, ge=0.0, le=1.0)
     mode: Literal["demo", "live"] | None = None

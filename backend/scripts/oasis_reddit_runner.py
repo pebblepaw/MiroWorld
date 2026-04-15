@@ -18,7 +18,7 @@ from typing import Any
 @dataclass
 class RunnerInput:
     simulation_id: str
-    policy_summary: str
+    subject_summary: str
     rounds: int
     personas: list[dict[str, Any]]
     model_name: str
@@ -31,7 +31,7 @@ class RunnerInput:
     tail_checkpoint_estimate_seconds: int = 0
     oasis_semaphore: int = 128
     seed_discussion_threads: list[str] | None = None
-    country: str = "Singapore"
+    country: str = "the country"
 
 
 @dataclass(frozen=True)
@@ -101,15 +101,29 @@ VOICE_STYLE_CUES = [
     "Use balanced reasoning and mention one trade-off clearly.",
     "Use plain language and include one neighborhood-level impact.",
     "Use concise bullet-like phrasing in sentence form.",
-    "Use thoughtful tone and compare today versus before-policy conditions.",
+    "Use thoughtful tone and compare today versus earlier conditions.",
 ]
 
 
-def _to_profile(persona: dict[str, Any], idx: int, country: str = "Singapore") -> dict[str, Any]:
+def _build_username(name: str, idx: int) -> str:
+    tokens = re.findall(r"[a-z0-9]+", str(name or "").lower())
+    stem = "_".join(tokens[:3]).strip("_")
+    if not stem:
+        stem = "resident"
+    return f"{stem}_{idx + 1}"
+
+
+def _normalize_country_label(country: str | None) -> str:
+    label = str(country or "").strip()
+    return label or "the country"
+
+
+def _to_profile(persona: dict[str, Any], idx: int, country: str = "the country") -> dict[str, Any]:
+    country_label = _normalize_country_label(country)
     age = int(persona.get("age") or random.randint(21, 70))
-    username = f"sg_agent_{idx + 1}"
     name = _extract_persona_display_name(persona, idx)
-    planning_area = str(persona.get("planning_area") or country)
+    username = _build_username(name, idx)
+    planning_area = str(persona.get("planning_area") or country_label)
     occupation = str(persona.get("occupation") or "Resident")
     industry = str(persona.get("industry") or "")
     household_type = str(persona.get("household_type") or "").strip()
@@ -137,7 +151,7 @@ def _to_profile(persona: dict[str, Any], idx: int, country: str = "Singapore") -
     if education:
         persona_text += f" Education background: {education}."
     if dossier:
-        persona_text += f" Policy dossier: {dossier}"
+        persona_text += f" Subject dossier: {dossier}"
     if matched_nodes:
         persona_text += f" Relevant knowledge graph nodes: {', '.join(matched_nodes[:6])}."
     if relevance >= 0.75:
@@ -145,7 +159,7 @@ def _to_profile(persona: dict[str, Any], idx: int, country: str = "Singapore") -
     elif relevance >= 0.45:
         persona_text += " This issue is moderately relevant to you, so you should engage when the discussion touches your situation."
     else:
-        persona_text += f" You may not be directly affected, but you should still react when community discussion surfaces broader {country}-wide implications."
+        persona_text += f" You may not be directly affected, but you should still react when community discussion surfaces broader {country_label}-wide implications."
     style_cue = VOICE_STYLE_CUES[idx % len(VOICE_STYLE_CUES)]
     persona_text += f" Writing cue: {style_cue}"
     persona_text += " Never claim to be an AI. Never reuse another user's wording verbatim."
@@ -164,7 +178,7 @@ def _to_profile(persona: dict[str, Any], idx: int, country: str = "Singapore") -
         "age": age,
         "gender": str(persona.get("sex") or persona.get("gender") or "unknown"),
         "mbti": str(persona.get("mbti") or "ISFJ"),
-        "country": country,
+        "country": country_label,
         "karma": int(persona.get("karma") or random.randint(20, 5000)),
         "created_at": "2024-01-01",
     }
@@ -237,8 +251,8 @@ def _limit_words(text: str, max_words: int = 100) -> str:
     return " ".join(words[:max_words]).rstrip(" ,.;:") + "…"
 
 
-def _split_policy_sentences(text: str) -> list[str]:
-    cleaned = _sanitize_policy_context(text)
+def _split_subject_sentences(text: str) -> list[str]:
+    cleaned = _sanitize_subject_context(text)
     if not cleaned:
         return []
     sentences = [
@@ -258,7 +272,7 @@ def _question_keywords(question_text: str) -> set[str]:
 
 
 def _ensure_sentence(text: str) -> str:
-    cleaned = _sanitize_policy_context(text)
+    cleaned = _sanitize_subject_context(text)
     if not cleaned:
         return ""
     if cleaned.endswith((".", "!", "?")):
@@ -266,15 +280,16 @@ def _ensure_sentence(text: str) -> str:
     return f"{cleaned}."
 
 
-def _build_seed_title(question_text: str, country: str = "Singapore") -> str:
+def _build_seed_title(question_text: str, country: str = "the country") -> str:
+    country_label = _normalize_country_label(country)
     question = _normalize_seed_question(question_text)
     if question:
         return f"{question} (Seeded post)"
-    return f"{country} policy impacts (Seeded post)"
+    return f"{country_label} topic impacts (Seeded post)"
 
 
-def _select_relevant_policy_sentences(policy_summary: str, question_text: str, limit: int = 2) -> list[str]:
-    sentences = _split_policy_sentences(policy_summary)
+def _select_relevant_subject_sentences(subject_summary: str, question_text: str, limit: int = 2) -> list[str]:
+    sentences = _split_subject_sentences(subject_summary)
     if not sentences:
         return []
     keywords = _question_keywords(question_text)
@@ -295,53 +310,56 @@ def _select_relevant_policy_sentences(policy_summary: str, question_text: str, l
     return selected
 
 
-def _seed_perspective_sentence(profile: dict[str, Any] | None, country: str = "Singapore") -> str:
+def _seed_perspective_sentence(profile: dict[str, Any] | None, country: str = "the country") -> str:
+    country_label = _normalize_country_label(country)
     profile = profile or {}
     occupation = str(profile.get("occupation") or "resident").strip()
-    planning_area = str(profile.get("planning_area") or profile.get("planningArea") or country).strip()
+    planning_area = str(profile.get("planning_area") or profile.get("planningArea") or country_label).strip()
     if occupation and planning_area:
         return f"As a {occupation.lower()} in {planning_area}, the everyday impact is what matters most to me."
     if occupation:
         return f"As a {occupation.lower()}, the everyday impact is what matters most to me."
-    return f"As a resident in {country}, the everyday impact is what matters most to me."
+    return f"As a resident in {country_label}, the everyday impact is what matters most to me."
 
 
 def _build_seed_post_content(
-    policy_summary: str,
+    subject_summary: str,
     index: int,
-    country: str = "Singapore",
+    country: str = "the country",
     profile: dict[str, Any] | None = None,
 ) -> str:
     del index
-    policy_sentences = _select_relevant_policy_sentences(policy_summary, "", limit=2)
-    parts = [_seed_perspective_sentence(profile, country)]
-    if policy_sentences:
-        parts.extend(policy_sentences)
+    country_label = _normalize_country_label(country)
+    subject_sentences = _select_relevant_subject_sentences(subject_summary, "", limit=2)
+    parts = [_seed_perspective_sentence(profile, country_label)]
+    if subject_sentences:
+        parts.extend(subject_sentences)
     else:
-        parts.append(f"I want to discuss how this policy could affect different {country} households in practice.")
+        parts.append(f"I want to discuss how this could affect different {country_label} households in practice.")
     parts.append("I want to hear how other residents think this would play out in daily life.")
     return _limit_words(" ".join(part for part in parts if part), max_words=100)
 
 
 def _build_analysis_seed_post_content(
-    policy_summary: str,
+    subject_summary: str,
     question_text: str,
     index: int,
     profile: dict[str, Any] | None = None,
-    country: str = "Singapore",
+    country: str = "the country",
 ) -> str:
     del index
-    policy_sentences = _select_relevant_policy_sentences(policy_summary, question_text, limit=2)
-    parts = [_seed_perspective_sentence(profile, country)]
-    if policy_sentences:
-        parts.extend(policy_sentences)
+    country_label = _normalize_country_label(country)
+    subject_sentences = _select_relevant_subject_sentences(subject_summary, question_text, limit=2)
+    parts = [_seed_perspective_sentence(profile, country_label)]
+    if subject_sentences:
+        parts.extend(subject_sentences)
     else:
-        parts.append("I want to focus on the parts of the policy that would change costs, access, and everyday routines.")
+        parts.append("I want to focus on the parts that would change costs, access, and everyday routines.")
     parts.append("I want to hear how fellow citizens think this would affect daily life in practice.")
     return _limit_words(" ".join(part for part in parts if part), max_words=100)
 
 
-def _sanitize_policy_context(text: str) -> str:
+def _sanitize_subject_context(text: str) -> str:
     cleaned = " ".join(str(text or "").split()).strip()
     if not cleaned:
         return ""
@@ -358,9 +376,9 @@ def _sanitize_policy_context(text: str) -> str:
 
 
 def _resolve_seed_posts(
-    policy_summary: str,
+    subject_summary: str,
     seed_discussion_threads: list[str] | None,
-    country: str = "Singapore",
+    country: str = "the country",
     seed_profiles: list[dict[str, Any]] | None = None,
 ) -> list[SeedPostSpec]:
     seed_posts: list[SeedPostSpec] = []
@@ -372,7 +390,7 @@ def _resolve_seed_posts(
         seed_posts.append(
             SeedPostSpec(
                 title=_build_seed_title(question, country),
-                content=_build_analysis_seed_post_content(policy_summary, question, index, profile=profile, country=country),
+                content=_build_analysis_seed_post_content(subject_summary, question, index, profile=profile, country=country),
             )
         )
     if seed_posts:
@@ -380,7 +398,7 @@ def _resolve_seed_posts(
     return [
         SeedPostSpec(
             title=_build_seed_title("", country),
-            content=_build_seed_post_content(policy_summary, 0, country, profile=(seed_profiles or [{}])[0]),
+            content=_build_seed_post_content(subject_summary, 0, country, profile=(seed_profiles or [{}])[0]),
         )
     ]
 
@@ -703,10 +721,10 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
-    # Seed the policy into the discussion thread before autonomous rounds.
+    # Seed the subject into the discussion thread before autonomous rounds.
     all_seed_agents = [agent for _, agent in env.agent_graph.get_agents()]
     seed_posts = _resolve_seed_posts(
-        payload.policy_summary,
+        payload.subject_summary,
         payload.seed_discussion_threads,
         payload.country,
         seed_profiles=ordered_personas,
@@ -952,7 +970,7 @@ async def run_simulation(payload: RunnerInput) -> dict[str, Any]:
             }
         )
 
-    prompt_chars = len(payload.policy_summary or "")
+    prompt_chars = len(payload.subject_summary or "")
     generated_chars = sum(len(str(event.get("content", "") or "")) for event in interactions)
     token_usage = {
         "input_tokens": max(1, int(prompt_chars / 4)) * max(1, len(ordered_personas)),

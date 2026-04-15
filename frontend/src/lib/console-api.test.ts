@@ -33,7 +33,7 @@ describe("console-api live-mode routing", () => {
 
     await expect(
       startSimulation("session-1", {
-        policy_summary: "summary",
+        subject_summary: "summary",
         rounds: 3,
       }),
     ).rejects.toThrow("simulate missing");

@@ -30,7 +30,7 @@ def run_case(client: TestClient, agents: int, rounds: int, runs: int = 3) -> dic
             "/api/v1/phase-b/simulations/run",
             json={
                 "simulation_id": simulation_id,
-                "policy_summary": "Benchmark policy scenario",
+                "subject_summary": "Benchmark policy scenario",
                 "agent_count": agents,
                 "rounds": rounds,
             },

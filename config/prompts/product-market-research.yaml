@@ -13,6 +13,13 @@ guiding_prompt: |
   Identify product features, target users, pain points, objections, and evidence-backed opportunities.
   Do not include AI self-reference, inability disclaimers, or first-person opinions.
 
+prompt_terms:
+  summary_label: "Product summary"
+  summary_subject: "product or service concept"
+  subject_components: "features and use cases"
+  audience_label: "target users"
+  evaluation_target: "the product or service concept"
+
 agent_personality_modifiers:
   - "Evaluate this product based on your actual daily habits and pain points."
   - "Be direct about willingness to use or pay for this."

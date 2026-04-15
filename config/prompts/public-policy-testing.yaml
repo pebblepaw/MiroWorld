@@ -10,8 +10,15 @@ system_prompt: |
 
 guiding_prompt: |
   Extract a neutral factual policy brief from the source document.
-  Include key policy measures, target cohorts, implementation mechanisms, and likely social impact in Singapore.
+  Include key policy measures, target cohorts, implementation mechanisms, and likely social impact in {country_name}.
   Do not include AI self-reference, inability disclaimers, or first-person opinions.
+
+prompt_terms:
+  summary_label: "Policy summary"
+  summary_subject: "policy proposal"
+  subject_components: "policy measures and implementation details"
+  audience_label: "target groups"
+  evaluation_target: "the policy"
 
 agent_personality_modifiers:
   - "Express genuine concern about how this policy affects your daily life and family."
