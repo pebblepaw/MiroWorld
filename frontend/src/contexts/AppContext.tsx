@@ -5,7 +5,6 @@ import {
   isStaticDemoBootMode,
   KnowledgeArtifact,
   ModelProviderId,
-  normalizeProviderId,
   normalizeUseCaseId,
   PopulationArtifact,
   SimulationState,
@@ -353,8 +352,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const demoSessionId = String(session.session_id ?? simulation.session_id ?? '').trim();
       const demoCountry = normalizeCountryId(String(sourceRun.country ?? 'singapore'));
       const demoUseCase = normalizeUseCaseId(String(sourceRun.use_case ?? 'public-policy-testing'));
-      const demoProvider = normalizeProviderId(String(sourceRun.provider ?? 'google')) as ModelProviderId;
-      const demoModel = String(sourceRun.model ?? '').trim();
       const demoRounds = Number(sourceRun.rounds ?? simulation.planned_rounds ?? 0);
       const demoQuestions = normalizeAnalysisQuestions(demo.analysis_questions ?? sourceRun.analysis_questions);
       const demoPopulation = demoPopulationToArtifact(population, demoSessionId);
@@ -387,12 +384,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         if (demoUseCase) {
           next.useCase = demoUseCase;
-        }
-        if (demoProvider) {
-          next.modelProvider = demoProvider;
-        }
-        if (demoModel) {
-          next.modelName = demoModel;
         }
         if (demoQuestions.length > 0) {
           next.analysisQuestions = demoQuestions;

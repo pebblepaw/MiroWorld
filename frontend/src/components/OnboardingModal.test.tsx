@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppProvider, useApp } from "@/contexts/AppContext";
 import { OnboardingModal } from "@/components/OnboardingModal";
+import { resetBundledDemoState } from "@/lib/console-api";
 
 const countriesResponse = [
   { name: "Singapore", code: "sg", flag_emoji: "🇸🇬", dataset_path: "configs/countries/singapore.yaml", available: true },
@@ -45,6 +46,7 @@ describe("OnboardingModal", () => {
 
   beforeEach(() => {
     window.sessionStorage.clear();
+    resetBundledDemoState();
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
 
@@ -67,9 +69,67 @@ describe("OnboardingModal", () => {
 
   afterEach(() => {
     window.sessionStorage.clear();
+    resetBundledDemoState();
     global.fetch = originalFetch;
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it("defaults demo-static onboarding to Ollama so launch does not require an API key", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "demo-static");
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith("/demo-output.json")) {
+        return makeResponse({
+          session: { session_id: "demo-session" },
+          source_run: {
+            country: "singapore",
+            use_case: "public-policy-testing",
+            provider: "google",
+            model: "gemini-2.5-flash",
+            rounds: 20,
+          },
+          analysis_questions: [],
+          population: {
+            session_id: "demo-session",
+            sample_count: 1,
+            sample_seed: 7,
+            sampled_personas: [],
+          },
+          simulationState: {
+            session_id: "demo-session",
+            status: "completed",
+            planned_rounds: 20,
+            current_round: 20,
+            counters: {
+              posts: 0,
+              comments: 0,
+              reactions: 0,
+              active_authors: 0,
+            },
+            top_threads: [],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <Harness />
+      </AppProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("session-id")).toHaveTextContent("demo-session"));
+    const [providerSelect, modelSelect] = await screen.findAllByRole("combobox");
+    expect(providerSelect).toHaveValue("ollama");
+    expect(modelSelect).toHaveValue("qwen3:4b-instruct-2507-q4_K_M");
+    expect(screen.queryByPlaceholderText("sk-...")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /launch simulation environment/i }));
+    expect(screen.queryByText(/api key is required/i)).not.toBeInTheDocument();
   });
 
   it("loads live catalogs, hides the API key for Ollama, and creates a canonical session", async () => {
