@@ -151,9 +151,34 @@ const DEFAULT_APP_STATE: AppState = {
 };
 
 const SESSION_STORAGE_KEY = 'miroworld-app-state';
+const STATIC_DEMO_BUNDLE_KEY_STORAGE = 'miroworld-demo-static-bundle-key';
+const STATIC_DEMO_SESSION_CACHE_PREFIXES = ['miroworld-report-', 'miroworld-analytics-'];
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function clearStaticDemoSessionCaches(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    const keysToRemove: string[] = [];
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (!key) {
+        continue;
+      }
+      if (STATIC_DEMO_SESSION_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) {
+      window.sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage access failures.
+  }
 }
 
 function normalizeCountryId(country: string): string {
@@ -335,9 +360,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const demoPopulation = demoPopulationToArtifact(population, demoSessionId);
       const demoAgents = demoPopulation?.sampled_personas.map((row) => demoPersonaToAgent(asRecord(row), demoCountry)) ?? [];
       const demoState = demoSimulationState(simulation, demoSessionId);
+      const demoBundleKey = demoSessionId || [demoCountry, demoUseCase, demoModel].filter(Boolean).join('|');
+
+      let bundleChanged = false;
+      if (demoBundleKey) {
+        try {
+          const persistedBundleKey = window.sessionStorage.getItem(STATIC_DEMO_BUNDLE_KEY_STORAGE);
+          bundleChanged = persistedBundleKey !== demoBundleKey;
+          if (bundleChanged) {
+            clearStaticDemoSessionCaches();
+          }
+          window.sessionStorage.setItem(STATIC_DEMO_BUNDLE_KEY_STORAGE, demoBundleKey);
+        } catch {
+          bundleChanged = false;
+        }
+      }
 
       setState((previous) => {
-        const next = { ...previous };
+        const next = bundleChanged ? { ...DEFAULT_APP_STATE } : { ...previous };
 
         if (demoSessionId) {
           next.sessionId = demoSessionId;
