@@ -5,7 +5,7 @@
 <!-- <h1 align="center">MiroWorld</h1> -->
 
 <p align="center"><a href="https://pebblepaw.github.io/MiroWorld/"><img src="https://img.shields.io/badge/GitHub%20Pages-Demo-0a66c2?logo=github&logoColor=white" alt="GitHub Pages Demo" /></a>
-  <a href="POSTER.pdf"><img src="https://img.shields.io/badge/Poster-PDF-red?logo=adobeacrobatreader&logoColor=white" alt="Poster PDF" /></a>
+  <a href="Poster.png"><img src="https://img.shields.io/badge/Poster-PDF-red?logo=adobeacrobatreader&logoColor=white" alt="Poster PDF" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a></p>
 
 ## Overview
