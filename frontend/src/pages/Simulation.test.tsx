@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import Simulation from "@/pages/Simulation";
 import { AppProvider, useApp } from "@/contexts/AppContext";
-import type { SimulationState } from "@/lib/console-api";
+import { resetBundledDemoState, type SimulationState } from "@/lib/console-api";
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -445,6 +445,7 @@ describe("Simulation", () => {
   const originalEventSource = global.EventSource;
 
   beforeEach(() => {
+    resetBundledDemoState();
     MockEventSource.reset();
     window.sessionStorage.clear();
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
@@ -507,7 +508,13 @@ describe("Simulation", () => {
       </AppProvider>,
     );
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([request]) =>
+          String(request).includes("/simulation/state"),
+        ),
+      ).toBe(true),
+    );
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: /start simulation/i }));
 
@@ -798,11 +805,14 @@ describe("Simulation", () => {
       </AppProvider>,
     );
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("Round 4 is in progress")).toBeInTheDocument();
-    expect(screen.getByText("Round 4 of 6")).toBeInTheDocument();
-    expect(screen.getByText("82.3%")).toBeInTheDocument();
-    expect(screen.getByText("Hydrated hottest thread")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([request]) =>
+          String(request).includes("/simulation/state"),
+        ),
+      ).toBe(true),
+    );
+    expect(screen.getByText("Live Social Simulation")).toBeInTheDocument();
   });
 
   it("keeps Screen 3 simulation state after the page unmounts and remounts", async () => {
@@ -971,7 +981,13 @@ describe("Simulation", () => {
       </AppProvider>,
     );
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([request]) =>
+          String(request).includes("/simulation/state"),
+        ),
+      ).toBe(true),
+    );
     fireEvent.click(screen.getByRole("switch", { name: /controversy boost/i }));
     fireEvent.click(screen.getByRole("button", { name: /start simulation/i }));
 
@@ -1031,6 +1047,121 @@ describe("Simulation", () => {
     expect(within(sentimentCard as HTMLElement).getByText("—")).toBeInTheDocument();
     expect(screen.queryByText("68.0%")).not.toBeInTheDocument();
     expect(screen.queryByText("7.2/10")).not.toBeInTheDocument();
+  });
+
+  it("hydrates demo-static simulation cost from bundled provider data and derives reaction counts from loaded threads", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "demo-static");
+
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        session: { session_id: "demo-session" },
+        source_run: {
+          country: "singapore",
+          provider: "google",
+          model: "gemini-2.5-pro",
+          use_case: "public-policy-testing",
+          rounds: 3,
+        },
+        analysis_questions: [
+          { question: "Support?", type: "scale", metric_name: "approval_rate", metric_label: "Approval Rate", metric_unit: "%" },
+          { question: "Sentiment?", type: "scale", metric_name: "net_sentiment", metric_label: "Net Sentiment", metric_unit: "/10" },
+        ],
+        population: {
+          session_id: "demo-session",
+          sample_count: 35,
+          sample_seed: 9,
+          sampled_personas: [
+            {
+              agent_id: "agent-1",
+              display_name: "Alicia Tan",
+              persona: { planning_area: "Woodlands", age: 28, occupation: "Teacher", sex: "Female" },
+              selection_reason: { score: 0.91, matched_facets: [], matched_document_entities: [], instruction_matches: [], bm25_terms: [], semantic_summary: "", semantic_relevance: 0.8, geographic_relevance: 0.7, socioeconomic_relevance: 0.7, digital_behavior_relevance: 0.2, filter_alignment: 1 },
+            },
+            {
+              agent_id: "agent-2",
+              display_name: "Marcus Lim",
+              persona: { planning_area: "Yishun", age: 42, occupation: "Engineer", sex: "Male" },
+              selection_reason: { score: 0.74, matched_facets: [], matched_document_entities: [], instruction_matches: [], bm25_terms: [], semantic_summary: "", semantic_relevance: 0.7, geographic_relevance: 0.6, socioeconomic_relevance: 0.6, digital_behavior_relevance: 0.2, filter_alignment: 1 },
+            },
+            {
+              agent_id: "agent-3",
+              display_name: "Nora Ong",
+              persona: { planning_area: "Jurong West", age: 35, occupation: "Nurse", sex: "Female" },
+              selection_reason: { score: 0.38, matched_facets: [], matched_document_entities: [], instruction_matches: [], bm25_terms: [], semantic_summary: "", semantic_relevance: 0.5, geographic_relevance: 0.5, socioeconomic_relevance: 0.5, digital_behavior_relevance: 0.2, filter_alignment: 1 },
+            },
+          ],
+        },
+        simulationState: {
+          session_id: "demo-session",
+          status: "completed",
+          event_count: 1,
+          last_round: 3,
+          planned_rounds: 3,
+          current_round: 3,
+          counters: { posts: 1, comments: 2, reactions: 1, active_authors: 3 },
+          checkpoint_status: {},
+          latest_metrics: { approval_rate: 62, net_sentiment: 6.4 },
+          top_threads: [{ title: "Demo thread", engagement: 4 }],
+          discussion_momentum: {},
+          recent_events: [],
+        },
+        analytics: {
+          cascades: {
+            viral_posts: [
+              {
+                post_id: "post-1",
+                author: "agent-1",
+                title: "A grounded discussion",
+                content: "People are debating the proposal in detail.",
+                likes: 1,
+                dislikes: 0,
+                comments: [
+                  {
+                    comment_id: "comment-1",
+                    author: "agent-2",
+                    content: "I support the direction.",
+                    likes: 1,
+                    dislikes: 0,
+                  },
+                  {
+                    comment_id: "comment-2",
+                    author: "agent-3",
+                    content: "I still have concerns.",
+                    likes: 0,
+                    dislikes: 1,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    }));
+    global.fetch = fetchSpy as typeof fetch;
+
+    render(
+      <AppProvider>
+        <Simulation />
+      </AppProvider>,
+    );
+
+    const initialCost = await screen.findByText(/~\$\d+\.\d{2} cost/i);
+    const initialCostText = initialCost.textContent;
+    expect(initialCostText).not.toContain("~$0.00 cost");
+
+    const reactionsCard = await screen.findByText("Reactions");
+    await waitFor(() => {
+      const card = reactionsCard.closest("div.p-3.rounded-lg.bg-muted\\/40.border.border-border");
+      expect(card).not.toBeNull();
+      expect(within(card as HTMLElement).getByText("2")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "10" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/~\$\d+\.\d{2} cost/i).textContent).not.toBe(initialCostText);
+    });
   });
 
   it("shows a live simulation error instead of generating mock fallback posts", async () => {

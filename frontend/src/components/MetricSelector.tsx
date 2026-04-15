@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getAnalysisQuestions } from "@/lib/console-api";
+import { useApp } from "@/contexts/AppContext";
 
 interface AnalysisQuestion {
   question: string;
@@ -17,19 +18,32 @@ interface MetricSelectorProps {
 }
 
 export function MetricSelector({ sessionId, value, onChange, className }: MetricSelectorProps) {
-  const [questions, setQuestions] = useState<AnalysisQuestion[]>([]);
+  const { analysisQuestions: appQuestions } = useApp();
+  const fallbackQuestions = appQuestions.filter(
+    (q) => (q.type === "scale" || q.type === "yes-no") && q.metric_name,
+  );
+  const [questions, setQuestions] = useState<AnalysisQuestion[]>(fallbackQuestions);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (fallbackQuestions.length > 0) {
+      setQuestions((current) => current.length > 0 ? current : fallbackQuestions);
+    }
+  }, [fallbackQuestions]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setQuestions(fallbackQuestions);
+      return;
+    }
     getAnalysisQuestions(sessionId)
       .then((data) => {
         const qs = ((data.questions || []) as AnalysisQuestion[]).filter(
           (q) => (q.type === "scale" || q.type === "yes-no") && q.metric_name
         );
-        setQuestions(qs);
+        setQuestions(qs.length > 0 ? qs : fallbackQuestions);
       })
-      .catch(() => setQuestions([]));
-  }, [sessionId]);
+      .catch(() => setQuestions(fallbackQuestions));
+  }, [fallbackQuestions, sessionId]);
 
   if (questions.length <= 1) return null;
 

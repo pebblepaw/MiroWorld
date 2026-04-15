@@ -40,6 +40,8 @@ stitch_frontend_reference.zip
 backend/.cache/*
 archive/*
 output/playwright/
+artifacts/
+tests/manual/
 Sample_Inputs/*
 /Sample_Inputs/
 mcp_tools.json

@@ -18,6 +18,7 @@ import {
   SimulationState,
   startSimulation,
 } from "@/lib/console-api";
+import { estimateStaticSimulationCostUsd } from "@/lib/llm-pricing";
 import { formatPlainText } from "@/lib/plain-text";
 
 type FeedComment = {
@@ -226,6 +227,7 @@ export default function Simulation() {
   const {
     sessionId,
     modelProvider,
+    modelName,
     useCase,
     knowledgeArtifact,
     populationArtifact,
@@ -290,12 +292,43 @@ export default function Simulation() {
     return threads;
   }, [feedThreads, selectedRound, sortBy]);
 
-  const counters = simulationState?.counters ?? { posts: 0, comments: 0, reactions: 0, active_authors: 0 };
+  const liveMode = isLiveBootMode();
+  const counters = useMemo(() => {
+    const fallback = simulationState?.counters ?? { posts: 0, comments: 0, reactions: 0, active_authors: 0 };
+    if (liveMode || feedThreads.length === 0) {
+      return fallback;
+    }
+
+    const authors = new Set<string>();
+    let comments = 0;
+    let reactions = 0;
+
+    for (const thread of feedThreads) {
+      if (thread.actorName.trim()) {
+        authors.add(thread.actorName.trim());
+      }
+      reactions += Math.max(0, thread.likes) + Math.max(0, thread.dislikes);
+      comments += thread.comments.length;
+
+      for (const comment of thread.comments) {
+        if (comment.actorName.trim()) {
+          authors.add(comment.actorName.trim());
+        }
+        reactions += Math.max(0, comment.likes) + Math.max(0, comment.dislikes);
+      }
+    }
+
+    return {
+      posts: feedThreads.length,
+      comments,
+      reactions,
+      active_authors: authors.size,
+    };
+  }, [feedThreads, liveMode, simulationState?.counters]);
   const running = simulationState?.status === "running";
   const completed = simulationState?.status === "completed";
   const baselineStatus = simulationState?.checkpoint_status?.baseline?.status ?? "pending";
   const finalStatus = simulationState?.checkpoint_status?.final?.status ?? "pending";
-  const liveMode = isLiveBootMode();
   const metricCards = useMemo(() => metricConfigForUseCase(useCase, !liveMode), [liveMode, useCase]);
   const roundProgressLabel = useMemo(() => readRoundProgressLabel(simulationState), [simulationState]);
 
@@ -751,7 +784,7 @@ export default function Simulation() {
                     <span className="text-muted-foreground font-mono">{populationArtifact?.sample_count ?? 250} agents × {simulationRounds} rounds</span>
                   </div>
                   <div className="justify-self-start lg:justify-self-end font-mono text-primary/85 bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
-                    ~${estimateCostUsd(populationArtifact?.sample_count ?? 250, simulationRounds, modelProvider).toFixed(2)} cost
+                    ~${estimateStaticSimulationCostUsd(populationArtifact?.sample_count ?? 250, simulationRounds, modelProvider, modelName).toFixed(2)} cost
                   </div>
                 </div>
               </GlassCard>
@@ -1294,34 +1327,6 @@ function estimateRuntimeBreakdown(agentCount: number, rounds: number, provider: 
     finalCheckpointSeconds,
     totalSeconds: baselineCheckpointSeconds + roundWindowSeconds + finalCheckpointSeconds,
   };
-}
-
-/** Estimate simulation cost using cached Gemini pricing (per-million token rates). */
-function estimateCostUsd(agentCount: number, rounds: number, provider: string): number {
-  const normalizedProvider = String(provider || "ollama").toLowerCase();
-  if (normalizedProvider === "ollama") return 0;
-
-  // Rates from config/llm_pricing.yaml for gemini-2.0-flash (USD per million tokens)
-  const pricing =
-    normalizedProvider === "openai"
-      ? { input: 0.15, output: 0.60, cachedInput: 0.15 } // gpt-4o-mini, no caching discount
-      : { input: 0.075, output: 0.30, cachedInput: 0.01875 }; // gemini-2.0-flash
-
-  const totalCalls = Math.max(0, agentCount) * Math.max(1, rounds);
-  const avgInput = 3000;
-  const avgOutput = 500;
-  const cachedRatio = 0.6;
-
-  const totalInput = totalCalls * avgInput;
-  const totalOutput = totalCalls * avgOutput;
-  const cachedTokens = Math.round(totalInput * cachedRatio);
-  const nonCachedInput = totalInput - cachedTokens;
-
-  return (
-    (nonCachedInput / 1_000_000) * pricing.input +
-    (cachedTokens / 1_000_000) * pricing.cachedInput +
-    (totalOutput / 1_000_000) * pricing.output
-  );
 }
 
 function mergeRoundActivity(existingRounds: number[], roundNo: number): number[] {

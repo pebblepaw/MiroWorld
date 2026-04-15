@@ -1,6 +1,15 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode, SetStateAction } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode, SetStateAction } from 'react';
 import { Agent, SimPost } from '@/data/mockData';
-import { KnowledgeArtifact, ModelProviderId, PopulationArtifact, SimulationState } from '@/lib/console-api';
+import {
+  getBundledDemoOutput,
+  isStaticDemoBootMode,
+  KnowledgeArtifact,
+  ModelProviderId,
+  normalizeProviderId,
+  normalizeUseCaseId,
+  PopulationArtifact,
+  SimulationState,
+} from '@/lib/console-api';
 
 export type AnalysisQuestion = {
   question: string;
@@ -143,6 +152,146 @@ const DEFAULT_APP_STATE: AppState = {
 
 const SESSION_STORAGE_KEY = 'miroworld-app-state';
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function normalizeCountryId(country: string): string {
+  const normalized = String(country || '').trim().toLowerCase();
+  if (normalized === 'sg') return 'singapore';
+  if (normalized === 'us') return 'usa';
+  return normalized || 'singapore';
+}
+
+function formatLabel(raw: string): string {
+  return raw
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function resolveDemoGeography(persona: Record<string, unknown>, country: string): string {
+  const normalizedCountry = normalizeCountryId(country);
+  const preferredKeys = normalizedCountry === 'usa'
+    ? ['state', 'geography', 'planning_area', 'location', 'region', 'area']
+    : ['planning_area', 'geography', 'state', 'location', 'region', 'area'];
+  for (const key of preferredKeys) {
+    const value = String(persona[key] ?? '').trim();
+    if (value) {
+      return value;
+    }
+  }
+  return 'Unknown';
+}
+
+function resolveDemoDisplayName(row: Record<string, unknown>): string {
+  const direct = String(row.display_name ?? '').trim();
+  if (direct) return direct;
+  const persona = asRecord(row.persona);
+  const personaName = String(persona.display_name ?? persona.name ?? '').trim();
+  if (personaName) return personaName;
+  return formatLabel(String(persona.occupation ?? row.agent_id ?? 'Resident'));
+}
+
+function normalizeAnalysisQuestions(value: unknown): AnalysisQuestion[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item, index) => {
+    const entry = asRecord(item);
+    const question = String(entry.question ?? '').trim();
+    const type = entry.type === 'yes-no' || entry.type === 'open-ended' ? entry.type : 'scale';
+    return {
+      question,
+      type,
+      metric_name: String(entry.metric_name ?? entry.metricName ?? `demo_metric_${index + 1}`),
+      metric_label: entry.metric_label ? String(entry.metric_label) : undefined,
+      metric_unit: entry.metric_unit ? String(entry.metric_unit) : undefined,
+      threshold: typeof entry.threshold === 'number' ? entry.threshold : undefined,
+      threshold_direction: entry.threshold_direction ? String(entry.threshold_direction) : undefined,
+      report_title: String(entry.report_title ?? question ?? `Question ${index + 1}`),
+      tooltip: entry.tooltip ? String(entry.tooltip) : undefined,
+      source: (entry.source as AnalysisQuestion['source']) ?? 'preset',
+      metadataStatus: 'ready',
+    };
+  });
+}
+
+function demoPopulationToArtifact(value: Record<string, unknown>, sessionId: string): PopulationArtifact | null {
+  const sampledPersonas = Array.isArray(value.sampled_personas) ? (value.sampled_personas as PopulationArtifact['sampled_personas']) : [];
+  if (sampledPersonas.length === 0 && !Number(value.sample_count ?? 0)) {
+    return null;
+  }
+  return {
+    session_id: String(value.session_id ?? sessionId),
+    candidate_count: Number(value.candidate_count ?? sampledPersonas.length),
+    sample_count: Number(value.sample_count ?? sampledPersonas.length),
+    sample_mode: (value.sample_mode as PopulationArtifact['sample_mode']) ?? 'affected_groups',
+    sample_seed: Number(value.sample_seed ?? 0),
+    parsed_sampling_instructions: (value.parsed_sampling_instructions as PopulationArtifact['parsed_sampling_instructions']) ?? {
+      hard_filters: {},
+      soft_boosts: {},
+      soft_penalties: {},
+      exclusions: {},
+      distribution_targets: {},
+      notes_for_ui: [],
+    },
+    coverage: (value.coverage as PopulationArtifact['coverage']) ?? {
+      planning_areas: [],
+      age_buckets: {},
+    },
+    sampled_personas: sampledPersonas,
+    agent_graph: (value.agent_graph as PopulationArtifact['agent_graph']) ?? { nodes: [], links: [] },
+    representativeness: (value.representativeness as PopulationArtifact['representativeness']) ?? { status: 'unknown' },
+    selection_diagnostics: (value.selection_diagnostics as PopulationArtifact['selection_diagnostics']) ?? {},
+  };
+}
+
+function demoPersonaToAgent(row: Record<string, unknown>, country: string): Agent {
+  const persona = asRecord(row.persona);
+  const selectionReason = asRecord(row.selection_reason);
+  const score = Number(selectionReason.score ?? 0.5);
+  const approvalScore = Math.round(Math.max(0, Math.min(1, score)) * 100);
+  return {
+    id: String(row.agent_id ?? `demo-agent-${Math.random()}`),
+    name: resolveDemoDisplayName(row),
+    age: Number(persona.age ?? 0),
+    gender: String(persona.sex ?? persona.gender ?? 'Unknown'),
+    ethnicity: String(persona.ethnicity ?? persona.cultural_background ?? persona.country ?? 'Unknown'),
+    occupation: formatLabel(String(persona.occupation ?? 'Resident')),
+    planningArea: formatLabel(resolveDemoGeography(persona, country)),
+    incomeBracket: String(persona.income_bracket ?? persona.salary ?? persona.household_income ?? 'Not specified'),
+    housingType: String(persona.housing_type ?? 'Not specified'),
+    sentiment: approvalScore >= 67 ? 'positive' : approvalScore >= 40 ? 'neutral' : 'negative',
+    approvalScore,
+  };
+}
+
+function demoSimulationState(value: Record<string, unknown>, sessionId: string): SimulationState | null {
+  if (Object.keys(value).length === 0) {
+    return null;
+  }
+  return {
+    session_id: String(value.session_id ?? sessionId),
+    status: String(value.status ?? 'completed'),
+    event_count: Number(value.event_count ?? 0),
+    last_round: Number(value.last_round ?? 0),
+    platform: (value.platform as string | null | undefined) ?? 'reddit',
+    planned_rounds: Number(value.planned_rounds ?? 0),
+    current_round: Number(value.current_round ?? value.last_round ?? 0),
+    elapsed_seconds: Number(value.elapsed_seconds ?? 0),
+    estimated_total_seconds: Number(value.estimated_total_seconds ?? value.elapsed_seconds ?? 0),
+    estimated_remaining_seconds: Number(value.estimated_remaining_seconds ?? 0),
+    counters: (value.counters as SimulationState['counters']) ?? { posts: 0, comments: 0, reactions: 0, active_authors: 0 },
+    checkpoint_status: (value.checkpoint_status as SimulationState['checkpoint_status']) ?? {},
+    top_threads: Array.isArray(value.top_threads) ? (value.top_threads as Array<Record<string, unknown>>) : [],
+    discussion_momentum: (value.discussion_momentum as Record<string, unknown>) ?? {},
+    latest_metrics: (value.latest_metrics as Record<string, unknown>) ?? {},
+    recent_events: Array.isArray(value.recent_events) ? (value.recent_events as Array<Record<string, unknown>>) : [],
+  };
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(() => {
     try {
@@ -156,6 +305,85 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     return DEFAULT_APP_STATE;
   });
+  const staticDemoHydratedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isStaticDemoBootMode() || staticDemoHydratedRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    staticDemoHydratedRef.current = true;
+
+    void getBundledDemoOutput().then((rawDemo) => {
+      if (cancelled) {
+        return;
+      }
+
+      const demo = asRecord(rawDemo);
+      const session = asRecord(demo.session);
+      const sourceRun = asRecord(demo.source_run);
+      const population = asRecord(demo.population);
+      const simulation = asRecord(demo.simulationState);
+      const demoSessionId = String(session.session_id ?? simulation.session_id ?? '').trim();
+      const demoCountry = normalizeCountryId(String(sourceRun.country ?? 'singapore'));
+      const demoUseCase = normalizeUseCaseId(String(sourceRun.use_case ?? 'public-policy-testing'));
+      const demoProvider = normalizeProviderId(String(sourceRun.provider ?? 'google')) as ModelProviderId;
+      const demoModel = String(sourceRun.model ?? '').trim();
+      const demoRounds = Number(sourceRun.rounds ?? simulation.planned_rounds ?? 0);
+      const demoQuestions = normalizeAnalysisQuestions(demo.analysis_questions ?? sourceRun.analysis_questions);
+      const demoPopulation = demoPopulationToArtifact(population, demoSessionId);
+      const demoAgents = demoPopulation?.sampled_personas.map((row) => demoPersonaToAgent(asRecord(row), demoCountry)) ?? [];
+      const demoState = demoSimulationState(simulation, demoSessionId);
+
+      setState((previous) => {
+        const next = { ...previous };
+
+        if (demoSessionId) {
+          next.sessionId = demoSessionId;
+        }
+        if (demoCountry) {
+          next.country = demoCountry;
+        }
+        if (demoUseCase) {
+          next.useCase = demoUseCase;
+        }
+        if (demoProvider) {
+          next.modelProvider = demoProvider;
+        }
+        if (demoModel) {
+          next.modelName = demoModel;
+        }
+        if (demoQuestions.length > 0) {
+          next.analysisQuestions = demoQuestions;
+        }
+        if (demoPopulation) {
+          next.populationArtifact = demoPopulation;
+          next.agentCount = demoPopulation.sample_count;
+          next.sampleSeed = demoPopulation.sample_seed;
+        }
+        if (demoAgents.length > 0) {
+          next.agents = demoAgents;
+          next.agentsGenerated = true;
+        }
+        if (demoRounds > 0) {
+          next.simulationRounds = demoRounds;
+        }
+        if (demoState) {
+          next.simulationState = demoState;
+          next.simulationComplete = demoState.status === 'completed';
+        }
+
+        return next;
+      });
+    }).catch(() => {
+      staticDemoHydratedRef.current = false;
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const persisted = {
@@ -169,6 +397,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       embedModelName: state.embedModelName,
       modelApiKey: state.modelApiKey,
       modelBaseUrl: state.modelBaseUrl,
+      analysisQuestions: state.analysisQuestions,
       knowledgeGraphReady: state.knowledgeGraphReady,
       agentCount: state.agentCount,
       sampleMode: state.sampleMode,

@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppProvider, useApp } from "@/contexts/AppContext";
+import { resetBundledDemoState } from "@/lib/console-api";
 import Analytics from "@/pages/Analytics";
 
 function SeedAnalyticsContext() {
@@ -76,6 +77,7 @@ describe("Analytics", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+    resetBundledDemoState();
     window.sessionStorage.clear();
   });
 
@@ -513,6 +515,120 @@ describe("Analytics", () => {
     expect(screen.getByTitle("Supporter One · positive")).toHaveStyle({ backgroundColor: "hsl(var(--data-green))" });
     expect(screen.getByTitle("Neutral Two · neutral")).toHaveStyle({ backgroundColor: "hsl(0 0% 45%)" });
     expect(screen.getByTitle("Dissenter Three · negative")).toHaveStyle({ backgroundColor: "hsl(var(--data-red))" });
+  });
+
+  it("hydrates metric filters and demographic map from bundled demo data after a demo-static reload", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "demo-static");
+    window.sessionStorage.setItem(
+      "miroworld-app-state",
+      JSON.stringify({
+        sessionId: "demo-session",
+        currentStep: 5,
+        completedSteps: [1, 2, 3, 4],
+      }),
+    );
+
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        session: { session_id: "demo-session" },
+        source_run: {
+          country: "singapore",
+          provider: "google",
+          model: "gemini-2.5-flash-lite",
+          use_case: "public-policy-testing",
+          rounds: 3,
+        },
+        analysis_questions: [
+          { question: "Support?", type: "scale", metric_name: "approval_rate", metric_label: "Approval Rate", metric_unit: "%" },
+          { question: "Sentiment?", type: "scale", metric_name: "net_sentiment", metric_label: "Net Sentiment", metric_unit: "/10" },
+          { question: "Job worry?", type: "yes-no", metric_name: "ai_job_worry", metric_label: "AI Job Replacement Concern", metric_unit: "%" },
+        ],
+        population: {
+          session_id: "demo-session",
+          sample_seed: 7,
+          sampled_personas: [
+            {
+              agent_id: "agent-1",
+              display_name: "Supporter One",
+              persona: { planning_area: "Woodlands", age: 30, occupation: "Teacher", sex: "Female", industry: "Education" },
+              selection_reason: { score: 0.81, matched_facets: [], matched_document_entities: [], instruction_matches: [], bm25_terms: [], semantic_summary: "", semantic_relevance: 0.8, geographic_relevance: 0.7, socioeconomic_relevance: 0.7, digital_behavior_relevance: 0.2, filter_alignment: 1 },
+            },
+            {
+              agent_id: "agent-2",
+              display_name: "Neutral Two",
+              persona: { planning_area: "Queenstown", age: 42, occupation: "Nurse", sex: "Male", industry: "Healthcare" },
+              selection_reason: { score: 0.54, matched_facets: [], matched_document_entities: [], instruction_matches: [], bm25_terms: [], semantic_summary: "", semantic_relevance: 0.6, geographic_relevance: 0.5, socioeconomic_relevance: 0.5, digital_behavior_relevance: 0.2, filter_alignment: 1 },
+            },
+            {
+              agent_id: "agent-3",
+              display_name: "Dissenter Three",
+              persona: { planning_area: "Jurong West", age: 36, occupation: "Manager", sex: "Female", industry: "Business" },
+              selection_reason: { score: 0.21, matched_facets: [], matched_document_entities: [], instruction_matches: [], bm25_terms: [], semantic_summary: "", semantic_relevance: 0.3, geographic_relevance: 0.4, socioeconomic_relevance: 0.4, digital_behavior_relevance: 0.2, filter_alignment: 1 },
+            },
+          ],
+        },
+        analytics: {
+          polarization: {
+            points: [
+              { round: "Start", index: 0.02, severity: "low" },
+              { round: "R1", index: 0.06, severity: "low" },
+            ],
+          },
+          opinion_flow: {
+            initial: { supporter: 1, neutral: 1, dissenter: 1 },
+            final: { supporter: 2, neutral: 1, dissenter: 0 },
+            flows: [{ from: "neutral", to: "supporter", count: 1 }],
+          },
+          influence: { top_influencers: [] },
+          cascades: { viral_posts: [] },
+          agent_stances: {
+            stances: [
+              { agent_id: "agent-1", score: 8 },
+              { agent_id: "agent-2", score: 5 },
+              { agent_id: "agent-3", score: 3 },
+            ],
+          },
+          by_metric: {
+            approval_rate: {
+              polarization: {
+                points: [
+                  { round: "Start", index: 0.03, severity: "low" },
+                  { round: "R1", index: 0.08, severity: "low" },
+                ],
+              },
+              opinion_flow: {
+                initial: { supporter: 2, neutral: 1, dissenter: 0 },
+                final: { supporter: 1, neutral: 1, dissenter: 1 },
+                flows: [{ from: "supporter", to: "dissenter", count: 1 }],
+              },
+              agent_stances: {
+                stances: [
+                  { agent_id: "agent-1", score: 8 },
+                  { agent_id: "agent-2", score: 6 },
+                  { agent_id: "agent-3", score: 4 },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    }));
+    global.fetch = fetchSpy as typeof fetch;
+
+    render(
+      <AppProvider>
+        <Analytics />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Simulation Analytics")).toBeInTheDocument();
+    expect(await screen.findByText("Metric")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Approval Rate (%)" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText(/Education|Healthcare|Business/).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText(/No demographic data yet/i)).not.toBeInTheDocument();
   });
 
   it("shows a live analytics error instead of filling in demo leaders and viral posts", async () => {

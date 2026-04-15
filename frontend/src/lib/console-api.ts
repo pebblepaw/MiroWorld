@@ -633,6 +633,11 @@ const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 let demoOutputPromise: Promise<DemoOutput> | null = null;
 let demoSessionConfig: DemoSessionConfig | null = null;
 
+export function resetBundledDemoState(): void {
+  demoOutputPromise = null;
+  demoSessionConfig = null;
+}
+
 function demoOutputPath(): string {
   const base = String(import.meta.env.BASE_URL || "/");
   return `${base.endsWith("/") ? base : `${base}/`}demo-output.json`;
@@ -990,13 +995,34 @@ async function getDemoViralPosts(): Promise<Array<Record<string, unknown>>> {
   return posts.map((post) => ({ ...(post as Record<string, unknown>) }));
 }
 
+function resolveConversationAuthorName(
+  agent: DemoAgentRecord | undefined,
+  authoredName: unknown,
+  authoredId: string,
+): string {
+  const payloadName = String(authoredName ?? "").trim();
+  const agentName = String(agent?.agent_name ?? "").trim();
+  const agentOccupation = String(agent?.occupation ?? "").trim();
+
+  if (agentName && agentName !== authoredId && agentName !== agentOccupation) {
+    return agentName;
+  }
+  if (payloadName) {
+    return payloadName;
+  }
+  if (agentName) {
+    return agentName;
+  }
+  return authoredId;
+}
+
 export async function getBundledDemoSimulationPosts(): Promise<SimPost[]> {
   const [lookup, posts] = await Promise.all([getDemoAgentLookup(), getDemoViralPosts()]);
   return posts.slice(0, 16).map((item, index) => {
     const post = item as Record<string, unknown>;
     const authorId = String(post.author ?? post.author_agent_id ?? `agent-${index + 1}`);
     const agent = lookup.get(authorId);
-    const authorName = String(agent?.agent_name ?? post.author_name ?? post.author ?? authorId).trim() || authorId;
+    const authorName = resolveConversationAuthorName(agent, post.author_name, authorId);
     const comments = Array.isArray(post.comments) ? post.comments : [];
     return {
       id: String(post.post_id ?? `demo-post-${index + 1}`),
@@ -1017,7 +1043,7 @@ export async function getBundledDemoSimulationPosts(): Promise<SimPost[]> {
         const commentAgent = lookup.get(commentAgentId);
         return {
           id: String(entry.comment_id ?? `${post.post_id}-comment-${commentIndex + 1}`),
-          agentName: String(commentAgent?.agent_name ?? entry.author_name ?? entry.author ?? commentAgentId).trim() || commentAgentId,
+          agentName: resolveConversationAuthorName(commentAgent, entry.author_name, commentAgentId),
           agentOccupation: commentAgent?.occupation ?? "",
           content: String(entry.content ?? entry.body ?? ""),
           upvotes: Math.max(0, Number(entry.upvotes ?? entry.likes ?? 0)),
