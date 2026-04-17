@@ -117,6 +117,17 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+function isRetryableHostedKnowledgeError(error: unknown): boolean {
+  const message = String(error instanceof Error ? error.message : error ?? "").toLowerCase();
+  return (
+    message.includes("504")
+    || message.includes("gateway timeout")
+    || message.includes("request could not be satisfied")
+    || message.includes("bad gateway")
+    || message.includes("service unavailable")
+  );
+}
+
 function getProcessingProviderLabel(provider: string) {
   const normalized = String(provider || '').trim().toLowerCase();
   if (normalized === 'google' || normalized === 'gemini') {
@@ -623,49 +634,76 @@ export default function PolicyUpload() {
     ): Promise<KnowledgeArtifact> => {
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       let requestSettled = false;
+      let requestArtifact: KnowledgeArtifact | null = null;
+      let requestError: unknown = null;
+      let notifyRequestSettled = () => {};
+      const requestSettledSignal = new Promise<void>((resolve) => {
+        notifyRequestSettled = resolve;
+      });
 
-      const requestPromise = requestFactory(controller?.signal)
+      void requestFactory(controller?.signal)
         .then((artifact) => {
-          requestSettled = true;
-          return artifact;
+          requestArtifact = artifact;
         })
         .catch((error) => {
-          requestSettled = true;
           if (controller?.signal.aborted) {
-            return new Promise<KnowledgeArtifact>(() => {
-              // Swallow the aborted request once the fallback artifact wins.
-            });
+            return;
           }
-          throw error;
+          requestError = error;
+        })
+        .finally(() => {
+          requestSettled = true;
+          notifyRequestSettled();
         });
 
-      const artifactPollPromise = (async () => {
+      const startedAt = Date.now();
+      const pollDelayMs = 3_000;
+      const timeoutMs = 10 * 60_000;
+
+      while (Date.now() - startedAt < timeoutMs) {
+        if (requestArtifact) {
+          return requestArtifact;
+        }
+
         if (!isLiveBootMode()) {
-          return requestPromise;
+          await requestSettledSignal;
+          break;
         }
 
-        const startedAt = Date.now();
-        const pollDelayMs = 3_000;
-        const timeoutMs = 10 * 60_000;
+        if (requestSettled && requestError && !isRetryableHostedKnowledgeError(requestError)) {
+          break;
+        }
 
-        while (!requestSettled && Date.now() - startedAt < timeoutMs) {
+        if (!requestSettled) {
+          await Promise.race([requestSettledSignal, delay(pollDelayMs)]);
+          if (requestArtifact) {
+            return requestArtifact;
+          }
+          if (requestSettled && requestError && !isRetryableHostedKnowledgeError(requestError)) {
+            break;
+          }
+        }
+
+        const artifact = await getKnowledgeArtifact(activeSessionId);
+        if (artifact) {
+          controller?.abort();
+          return artifact;
+        }
+
+        if (requestSettled) {
           await delay(pollDelayMs);
-          if (controller?.signal.aborted) {
-            return new Promise<KnowledgeArtifact>(() => {
-              // Stop polling once the primary request wins.
-            });
-          }
-          const artifact = await getKnowledgeArtifact(activeSessionId);
-          if (artifact) {
-            controller?.abort();
-            return artifact;
-          }
         }
+      }
 
-        return requestPromise;
-      })();
+      if (requestArtifact) {
+        return requestArtifact;
+      }
 
-      return Promise.race([requestPromise, artifactPollPromise]);
+      if (requestError) {
+        throw requestError instanceof Error ? requestError : new Error(String(requestError));
+      }
+
+      throw new Error("Timed out waiting for the knowledge artifact to be saved.");
     },
     [],
   );

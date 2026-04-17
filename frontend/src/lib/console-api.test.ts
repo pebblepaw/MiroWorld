@@ -186,6 +186,33 @@ describe("console-api live-mode routing", () => {
     await expect(getKnowledgeArtifact("session-1")).resolves.toBeNull();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("preserves the HTTP status detail for hosted knowledge gateway timeouts with html bodies", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    const { processKnowledgeDocuments } = await import("./console-api");
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v2/console/session/session-1/knowledge/process")) {
+        return new Response("<!doctype html><html><body><h1>504 Gateway Timeout ERROR</h1></body></html>", {
+          status: 504,
+          statusText: "Gateway Timeout",
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    global.fetch = fetchSpy as typeof fetch;
+
+    await expect(
+      processKnowledgeDocuments("session-1", {
+        documents: [{ document_text: "policy text", source_path: "brief.txt" }],
+      }),
+    ).rejects.toThrow("504 Gateway Timeout");
+  });
 });
 
 describe("console-api demo-static routing", () => {

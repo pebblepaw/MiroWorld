@@ -1222,9 +1222,13 @@ async function parseJson<T>(response: Response): Promise<T> {
         detail = JSON.stringify(body);
       }
     } catch {
-      const text = await response.text();
-      if (text) {
-        detail = text;
+      try {
+        const text = await response.text();
+        if (text) {
+          detail = text;
+        }
+      } catch {
+        // Preserve the original HTTP status detail when the body stream is no longer readable.
       }
     }
     throw new Error(detail);

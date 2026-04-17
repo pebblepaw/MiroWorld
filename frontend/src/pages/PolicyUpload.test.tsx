@@ -880,6 +880,93 @@ describe("PolicyUpload", () => {
     expect(screen.getByTestId("graph-node-count")).toHaveTextContent("7");
   });
 
+  it("keeps polling for the hosted knowledge artifact after a retryable gateway timeout", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    let artifactPollCount = 0;
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith("/api/v2/console/session")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1",
+            mode: "live",
+            status: "created",
+            model_provider: "google",
+            model_name: "gemini-2.5-flash-lite",
+            embed_model_name: "gemini-embedding-001",
+            base_url: "",
+            api_key_configured: true,
+            api_key_masked: "ge...ni",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/api/v2/session/") && url.endsWith("/analysis-questions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen1",
+            use_case: "public-policy-testing",
+            questions: [],
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/knowledge/process")) {
+        return new Response(
+          "<!doctype html><html><body><h1>504 Gateway Timeout ERROR</h1></body></html>",
+          {
+            status: 504,
+            statusText: "Gateway Timeout",
+            headers: { "Content-Type": "text/html" },
+          },
+        );
+      }
+
+      if (url.endsWith("/knowledge")) {
+        artifactPollCount += 1;
+        if (artifactPollCount < 2) {
+          return new Response("<!doctype html><html><body>index</body></html>", {
+            status: 200,
+            headers: { "Content-Type": "text/html" },
+          });
+        }
+        return {
+          ok: true,
+          headers: new Headers({ "Content-Type": "application/json" }),
+          json: async () => baseKnowledgeArtifact(),
+        } as Response;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ detail: `Unhandled fetch: ${url}` }),
+      } as Response;
+    }) as typeof fetch;
+
+    renderWithProviders(<PolicyUpload />);
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["hosted fallback"], "brief.txt", { type: "text/plain" })],
+      },
+    });
+    await screen.findByText("brief.txt");
+
+    fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
+
+    await waitFor(() => expect(artifactPollCount).toBeGreaterThanOrEqual(2), { timeout: 10_000 });
+    await waitFor(() => expect(screen.getByRole("button", { name: /proceed/i })).toBeInTheDocument(), { timeout: 10_000 });
+    expect(screen.getByTestId("graph-node-count")).toHaveTextContent("7");
+  }, 10_000);
+
   it("sends uploaded files through the backend upload parser path instead of browser-decoded document text", async () => {
     const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

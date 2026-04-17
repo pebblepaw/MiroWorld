@@ -148,6 +148,7 @@ function resolveInitialCountry(countryId: string, countries: CountryCard[]) {
 export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const app = useApp();
   const [countries, setCountries] = useState<CountryCard[]>(FALLBACK_COUNTRIES);
+  const [countriesLoaded, setCountriesLoaded] = useState(false);
   const [country, setCountry] = useState(() => resolveInitialCountry(app.country || "singapore", FALLBACK_COUNTRIES));
   const [downloadingCountryId, setDownloadingCountryId] = useState<string | null>(null);
   const [useCase, setUseCase] = useState(() => normalizeUseCaseId(app.useCase || "public-policy-testing"));
@@ -183,16 +184,21 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     }
 
     let cancelled = false;
+    setCountriesLoaded(false);
 
     void getV2Countries()
       .then((payload) => {
         if (!cancelled && payload.length > 0) {
           setCountries(buildCountryCatalog(payload));
         }
+        if (!cancelled) {
+          setCountriesLoaded(true);
+        }
       })
       .catch(() => {
         if (!cancelled) {
           setCountries(FALLBACK_COUNTRIES);
+          setCountriesLoaded(true);
         }
       });
 
@@ -256,6 +262,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
   const selectedCountry = countries.find((entry) => entry.id === country);
   const selectedCountryReady = Boolean(selectedCountry?.launchReady);
   const selectedCountryDownloading = downloadingCountryId === selectedCountry?.id || selectedCountry?.downloadStatus === "downloading";
+  const launchDisabled = launching || !countriesLoaded || !selectedCountryReady;
 
   async function handleDownload() {
     if (!selectedCountry) {
@@ -455,7 +462,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
         </div>
 
         <div className="border-t border-border bg-card p-6">
-          <Button onClick={() => void handleLaunch()} disabled={launching || !selectedCountryReady} className="h-12 w-full">
+          <Button onClick={() => void handleLaunch()} disabled={launchDisabled} className="h-12 w-full">
             {launching ? "Launching..." : "Launch Simulation Environment"}
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
