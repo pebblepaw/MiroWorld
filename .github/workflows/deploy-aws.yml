@@ -4,13 +4,25 @@ on:
   push:
     branches:
       - main
+      - hosted-supabase-zep-staging
     paths:
       - 'backend/**'
       - 'frontend/**'
       - 'config/**'
+      - 'infrastructure/**'
       - 'docker-compose.yml'
       - '.github/workflows/deploy-aws.yml'
   workflow_dispatch:
+    inputs:
+      deployment_target:
+        description: Deploy to production or staging.
+        required: false
+        type: choice
+        default: auto
+        options:
+          - auto
+          - prod
+          - staging
 
 concurrency:
   group: deploy-aws-${{ github.ref }}
@@ -24,15 +36,6 @@ env:
   AWS_REGION: us-east-1
   ECR_BACKEND: 050751893720.dkr.ecr.us-east-1.amazonaws.com/miroworld/backend
   ECR_FRONTEND: 050751893720.dkr.ecr.us-east-1.amazonaws.com/miroworld/frontend
-  ECS_CLUSTER: miroworld-cluster
-  ECS_SERVICE: miroworld-backend
-  ECS_BACKEND_CONTAINER: backend
-  ECS_EXECUTION_ROLE: miroworld-ecs-execution-role
-  S3_FRONTEND_BUCKET: miroworld-frontend-prod
-  CLOUDFRONT_DISTRIBUTION_ID: E3LWVUPHQA8GK2
-  CLOUDFRONT_DOMAIN: d3a03mb192176l.cloudfront.net
-  GEMINI_PARAM: /miroworld/backend/GEMINI_API
-  HUGGINGFACE_PARAM: /miroworld/backend/HUGGINGFACE_API_KEY
 
 jobs:
   build-and-deploy:
@@ -41,6 +44,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -48,213 +58,377 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Resolve deployment target
+        env:
+          INPUT_DEPLOYMENT_TARGET: ${{ github.event.inputs.deployment_target || 'auto' }}
+        run: |
+          set -euo pipefail
+
+          target="$INPUT_DEPLOYMENT_TARGET"
+          ref_name="${GITHUB_REF_NAME}"
+
+          if [[ "$target" == "auto" ]]; then
+            if [[ "$ref_name" == "main" ]]; then
+              target="prod"
+            elif [[ "$ref_name" == "hosted-supabase-zep-staging" ]]; then
+              target="staging"
+            else
+              echo "Unable to infer deployment target from branch '$ref_name'." >&2
+              exit 1
+            fi
+          fi
+
+          case "$target" in
+            prod)
+              {
+                echo "DEPLOY_ENV=prod"
+                echo "PROJECT_NAME=miroworld"
+                echo "STACK_NAME=miroworld-prod"
+                echo "ECS_CLUSTER=miroworld-cluster"
+                echo "ECS_SERVICE=miroworld-backend"
+                echo "S3_FRONTEND_BUCKET=miroworld-frontend-prod"
+                echo "CLOUDFRONT_DISTRIBUTION_ID=E3LWVUPHQA8GK2"
+                echo "CLOUDFRONT_DOMAIN=d3a03mb192176l.cloudfront.net"
+                echo "GEMINI_PARAM=/miroworld/backend/GEMINI_API"
+                echo "HUGGINGFACE_PARAM=/miroworld/backend/HUGGINGFACE_API_KEY"
+                echo "SUPABASE_URL_PARAM="
+                echo "SUPABASE_API_URL_PARAM="
+                echo "SUPABASE_PUBLISHABLE_KEY_PARAM="
+                echo "SUPABASE_SERVICE_ROLE_KEY_PARAM="
+                echo "SUPABASE_SCRET_KEY_PARAM="
+                echo "SUPABASE_POSTGRES_URL_PARAM="
+                echo "ZEP_CLOUD_PARAM="
+              } >> "$GITHUB_ENV"
+              ;;
+            staging)
+              {
+                echo "DEPLOY_ENV=staging"
+                echo "PROJECT_NAME=miroworld-staging"
+                echo "STACK_NAME=miroworld-staging"
+                echo "S3_FRONTEND_BUCKET=miroworld-frontend-staging"
+                echo "GEMINI_PARAM=/miroworld/staging/backend/GEMINI_API"
+                echo "HUGGINGFACE_PARAM="
+                echo "SUPABASE_URL_PARAM=/miroworld/staging/backend/SUPABASE_URL"
+                echo "SUPABASE_API_URL_PARAM=/miroworld/staging/backend/SUPABASE_API_URL"
+                echo "SUPABASE_PUBLISHABLE_KEY_PARAM=/miroworld/staging/backend/SUPABASE_PUBLISHABLE_KEY"
+                echo "SUPABASE_SERVICE_ROLE_KEY_PARAM=/miroworld/staging/backend/SUPABASE_SERVICE_ROLE_KEY"
+                echo "SUPABASE_SCRET_KEY_PARAM=/miroworld/staging/backend/SUPABASE_SCRET_KEY"
+                echo "SUPABASE_POSTGRES_URL_PARAM=/miroworld/staging/backend/SUPABASE_POSTGRES_URL"
+                echo "ZEP_CLOUD_PARAM=/miroworld/staging/backend/ZEP_CLOUD"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "Unsupported deployment target '$target'." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Load current stack outputs
+        run: |
+          set -euo pipefail
+
+          if aws cloudformation describe-stacks --stack-name "$STACK_NAME" >/tmp/miroworld-stack.json 2>/dev/null; then
+            python - <<'PY'
+            import json
+            import os
+
+            with open("/tmp/miroworld-stack.json", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+            outputs = {
+                row["OutputKey"]: row["OutputValue"]
+                for row in payload["Stacks"][0].get("Outputs", [])
+            }
+
+            mapping = {
+                "ECSClusterName": "ECS_CLUSTER",
+                "BackendServiceName": "ECS_SERVICE",
+                "CloudFrontDistributionId": "CLOUDFRONT_DISTRIBUTION_ID",
+                "CloudFrontDomain": "CLOUDFRONT_DOMAIN",
+                "FrontendBucketName": "S3_FRONTEND_BUCKET",
+            }
+
+            with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+                for output_key, env_key in mapping.items():
+                    value = outputs.get(output_key)
+                    if value:
+                        env_file.write(f"{env_key}={value}\n")
+            PY
+          fi
+
+      - name: Ensure ECR repositories exist
+        run: |
+          set -euo pipefail
+
+          for repo in miroworld/backend miroworld/frontend; do
+            aws ecr describe-repositories --repository-names "$repo" >/dev/null 2>&1 || \
+              aws ecr create-repository --repository-name "$repo" >/dev/null
+          done
+
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build & push backend image
         run: |
+          set -euo pipefail
+
           docker build -f backend/Dockerfile \
-            -t $ECR_BACKEND:${{ github.sha }} \
-            -t $ECR_BACKEND:latest .
-          docker push $ECR_BACKEND:${{ github.sha }}
-          docker push $ECR_BACKEND:latest
+            -t "$ECR_BACKEND:${GITHUB_SHA}" \
+            -t "$ECR_BACKEND:latest" .
+          docker push "$ECR_BACKEND:${GITHUB_SHA}"
+          docker push "$ECR_BACKEND:latest"
 
-      - name: Build & push frontend image
-        working-directory: frontend
-        run: |
-          docker build --target production \
-            --build-arg VITE_API_BASE=https://${{ env.CLOUDFRONT_DOMAIN }} \
-            --build-arg VITE_BOOT_MODE=live \
-            -t $ECR_FRONTEND:${{ github.sha }} \
-            -t $ECR_FRONTEND:latest .
-          docker push $ECR_FRONTEND:${{ github.sha }}
-          docker push $ECR_FRONTEND:latest
-
-      - name: Sync backend runtime secrets to SSM
+      - name: Sync runtime secrets to SSM
         env:
           GEMINI_API: ${{ secrets.GEMINI_API }}
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          SECRET_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SECRET_NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SECRET_SUPABASE_API_URL: ${{ secrets.SUPABASE_API_URL }}
+          VAR_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VAR_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          VAR_SUPABASE_API_URL: ${{ vars.SUPABASE_API_URL }}
+          SECRET_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          SECRET_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          SECRET_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          VAR_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          VAR_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          VAR_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SECRET_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SECRET_SUPABASE_SCRET_KEY: ${{ secrets.SUPABASE_SCRET_KEY }}
+          VAR_SUPABASE_SERVICE_ROLE_KEY: ${{ vars.SUPABASE_SERVICE_ROLE_KEY }}
+          VAR_SUPABASE_SCRET_KEY: ${{ vars.SUPABASE_SCRET_KEY }}
+          SECRET_SUPABASE_POSTGRES_URL: ${{ secrets.SUPABASE_POSTGRES_URL }}
+          VAR_SUPABASE_POSTGRES_URL: ${{ vars.SUPABASE_POSTGRES_URL }}
+          SECRET_ZEP_CLOUD: ${{ secrets.ZEP_CLOUD }}
+          VAR_ZEP_CLOUD: ${{ vars.ZEP_CLOUD }}
         run: |
-          : "${GEMINI_API:?Missing GitHub secret GEMINI_API}"
-          : "${HUGGINGFACE_API_KEY:?Missing GitHub secret HUGGINGFACE_API_KEY}"
+          set -euo pipefail
 
-          aws ssm put-parameter \
-            --name "$GEMINI_PARAM" \
-            --type SecureString \
-            --value "$GEMINI_API" \
-            --overwrite
-
-          aws ssm put-parameter \
-            --name "$HUGGINGFACE_PARAM" \
-            --type SecureString \
-            --value "$HUGGINGFACE_API_KEY" \
-            --overwrite
-
-      - name: Grant ECS execution role access to runtime secrets
-        run: |
-          cat > ecs-runtime-secrets-policy.json <<EOF
-          {
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Effect": "Allow",
-                "Action": [
-                  "ssm:GetParameter",
-                  "ssm:GetParameters"
-                ],
-                "Resource": "*"
-              },
-              {
-                "Effect": "Allow",
-                "Action": "kms:Decrypt",
-                "Resource": "*",
-                "Condition": {
-                  "StringEquals": {
-                    "kms:ViaService": "ssm.${AWS_REGION}.amazonaws.com"
-                  }
-                }
-              }
-            ]
+          pick() {
+            for value in "$@"; do
+              if [[ -n "${value}" ]]; then
+                printf '%s' "$value"
+                return 0
+              fi
+            done
+            return 1
           }
-          EOF
 
-          aws iam put-role-policy \
-            --role-name $ECS_EXECUTION_ROLE \
-            --policy-name miroworld-ssm-runtime-secrets \
-            --policy-document file://ecs-runtime-secrets-policy.json
+          put_secret() {
+            local name="$1"
+            local value="$2"
+            aws ssm put-parameter \
+              --name "$name" \
+              --type SecureString \
+              --value "$value" \
+              --overwrite
+          }
 
-      - name: Register backend task definition revision
-        id: backend-task-def
+          : "${GEMINI_API:?Missing GitHub secret GEMINI_API}"
+
+          put_secret "$GEMINI_PARAM" "$GEMINI_API"
+
+          if [[ -n "${HUGGINGFACE_PARAM:-}" && -n "${HUGGINGFACE_API_KEY:-}" ]]; then
+            put_secret "$HUGGINGFACE_PARAM" "$HUGGINGFACE_API_KEY"
+          fi
+
+          if [[ "$DEPLOY_ENV" != "staging" ]]; then
+            exit 0
+          fi
+
+          supabase_url="$(pick \
+            "$SECRET_SUPABASE_URL" \
+            "$SECRET_NEXT_PUBLIC_SUPABASE_URL" \
+            "$SECRET_SUPABASE_API_URL" \
+            "$VAR_SUPABASE_URL" \
+            "$VAR_NEXT_PUBLIC_SUPABASE_URL" \
+            "$VAR_SUPABASE_API_URL")" || {
+            echo "Missing Supabase URL. Set SUPABASE_URL, NEXT_PUBLIC_SUPABASE_URL, or SUPABASE_API_URL." >&2
+            exit 1
+          }
+
+          supabase_publishable_key="$(pick \
+            "$SECRET_SUPABASE_PUBLISHABLE_KEY" \
+            "$SECRET_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
+            "$SECRET_NEXT_PUBLIC_SUPABASE_ANON_KEY" \
+            "$VAR_SUPABASE_PUBLISHABLE_KEY" \
+            "$VAR_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
+            "$VAR_NEXT_PUBLIC_SUPABASE_ANON_KEY")" || {
+            echo "Missing Supabase publishable key. Set SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY." >&2
+            exit 1
+          }
+
+          supabase_service_role_key="$(pick \
+            "$SECRET_SUPABASE_SERVICE_ROLE_KEY" \
+            "$SECRET_SUPABASE_SCRET_KEY" \
+            "$VAR_SUPABASE_SERVICE_ROLE_KEY" \
+            "$VAR_SUPABASE_SCRET_KEY")" || {
+            echo "Missing Supabase service role key. Set SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SCRET_KEY." >&2
+            exit 1
+          }
+
+          supabase_postgres_url="$(pick \
+            "$SECRET_SUPABASE_POSTGRES_URL" \
+            "$VAR_SUPABASE_POSTGRES_URL")" || {
+            echo "Missing Supabase Postgres URL. Set SUPABASE_POSTGRES_URL." >&2
+            exit 1
+          }
+
+          zep_cloud="$(pick \
+            "$SECRET_ZEP_CLOUD" \
+            "$VAR_ZEP_CLOUD")" || {
+            echo "Missing Zep Cloud secret. Set ZEP_CLOUD." >&2
+            exit 1
+          }
+
+          {
+            printf 'RESOLVED_SUPABASE_URL=%s\n' "$supabase_url"
+            printf 'RESOLVED_SUPABASE_PUBLISHABLE_KEY=%s\n' "$supabase_publishable_key"
+          } >> "$GITHUB_ENV"
+
+          put_secret "$SUPABASE_URL_PARAM" "$supabase_url"
+          put_secret "$SUPABASE_API_URL_PARAM" "$supabase_url"
+          put_secret "$SUPABASE_PUBLISHABLE_KEY_PARAM" "$supabase_publishable_key"
+          put_secret "$SUPABASE_SERVICE_ROLE_KEY_PARAM" "$supabase_service_role_key"
+          put_secret "$SUPABASE_SCRET_KEY_PARAM" "$supabase_service_role_key"
+          put_secret "$SUPABASE_POSTGRES_URL_PARAM" "$supabase_postgres_url"
+          put_secret "$ZEP_CLOUD_PARAM" "$zep_cloud"
+
+      - name: Deploy CloudFormation stack
         run: |
-          CURRENT_TASK_DEF_ARN=$(aws ecs describe-services \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --query 'services[0].taskDefinition' \
-            --output text \
-            --region $AWS_REGION)
+          set -euo pipefail
 
-          aws ecs describe-task-definition \
-            --task-definition "$CURRENT_TASK_DEF_ARN" \
-            --query 'taskDefinition' \
-            --output json \
-            --region $AWS_REGION > task-def-source.json
+          params=(
+            "ProjectName=$PROJECT_NAME"
+            "Environment=$DEPLOY_ENV"
+            "BackendImage=$ECR_BACKEND:${GITHUB_SHA}"
+            "FrontendBucketName=$S3_FRONTEND_BUCKET"
+            "GeminiParamName=$GEMINI_PARAM"
+            "HuggingFaceParamName=$HUGGINGFACE_PARAM"
+            "SupabaseUrlParamName=$SUPABASE_URL_PARAM"
+            "SupabaseApiUrlParamName=$SUPABASE_API_URL_PARAM"
+            "SupabasePublishableKeyParamName=$SUPABASE_PUBLISHABLE_KEY_PARAM"
+            "SupabaseServiceRoleKeyParamName=$SUPABASE_SERVICE_ROLE_KEY_PARAM"
+            "SupabaseScretKeyParamName=$SUPABASE_SCRET_KEY_PARAM"
+            "SupabasePostgresUrlParamName=$SUPABASE_POSTGRES_URL_PARAM"
+            "ZepCloudParamName=$ZEP_CLOUD_PARAM"
+          )
 
+          aws cloudformation deploy \
+            --stack-name "$STACK_NAME" \
+            --template-file infrastructure/cloudformation.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides "${params[@]}"
+
+      - name: Refresh stack outputs
+        run: |
+          set -euo pipefail
+
+          aws cloudformation describe-stacks --stack-name "$STACK_NAME" > /tmp/miroworld-stack.json
           python - <<'PY'
           import json
           import os
 
-          allowed_keys = [
-              "family",
-              "taskRoleArn",
-              "executionRoleArn",
-              "networkMode",
-              "containerDefinitions",
-              "volumes",
-              "placementConstraints",
-              "requiresCompatibilities",
-              "cpu",
-              "memory",
-              "tags",
-              "pidMode",
-              "ipcMode",
-              "proxyConfiguration",
-              "inferenceAccelerators",
-              "ephemeralStorage",
-              "runtimePlatform",
-          ]
-          secret_names = {
-              "GEMINI_API": os.environ["GEMINI_PARAM"],
-              "HUGGINGFACE_API_KEY": os.environ["HUGGINGFACE_PARAM"],
+          with open("/tmp/miroworld-stack.json", encoding="utf-8") as handle:
+              payload = json.load(handle)
+
+          outputs = {
+              row["OutputKey"]: row["OutputValue"]
+              for row in payload["Stacks"][0].get("Outputs", [])
           }
-          with open("task-def-source.json", encoding="utf-8") as handle:
-              source = json.load(handle)
 
-          task_def = {key: source[key] for key in allowed_keys if key in source}
-          container_name = os.environ["ECS_BACKEND_CONTAINER"]
-          backend_image = f"{os.environ['ECR_BACKEND']}:{os.environ['GITHUB_SHA']}"
+          required = {
+              "ECSClusterName": "ECS_CLUSTER",
+              "BackendServiceName": "ECS_SERVICE",
+              "CloudFrontDistributionId": "CLOUDFRONT_DISTRIBUTION_ID",
+              "CloudFrontDomain": "CLOUDFRONT_DOMAIN",
+              "FrontendBucketName": "S3_FRONTEND_BUCKET",
+          }
 
-          for container in task_def.get("containerDefinitions", []):
-              if container.get("name") != container_name:
-                  continue
-              container["image"] = backend_image
-
-              current_env = {
-                  item["name"]: item["value"]
-                  for item in container.get("environment", [])
-                  if item.get("name") not in secret_names
-              }
-              container["environment"] = [
-                  {"name": name, "value": value}
-                  for name, value in sorted(current_env.items())
-              ]
-
-              current_secrets = {
-                  item["name"]: item["valueFrom"]
-                  for item in container.get("secrets", [])
-              }
-              current_secrets.update(secret_names)
-              container["secrets"] = [
-                  {"name": name, "valueFrom": value_from}
-                  for name, value_from in sorted(current_secrets.items())
-              ]
-
-          with open("task-def.json", "w", encoding="utf-8") as handle:
-              json.dump(task_def, handle)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              for output_key, env_key in required.items():
+                  value = outputs.get(output_key)
+                  if not value:
+                      raise SystemExit(f"Missing CloudFormation output: {output_key}")
+                  env_file.write(f"{env_key}={value}\n")
           PY
 
-          TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text \
-            --region $AWS_REGION)
-
-          echo "task_definition_arn=$TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy backend to ECS
+      - name: Build & push prod frontend image
+        if: env.DEPLOY_ENV == 'prod'
+        working-directory: frontend
         run: |
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --task-definition ${{ steps.backend-task-def.outputs.task_definition_arn }} \
-            --force-new-deployment \
-            --region $AWS_REGION
+          set -euo pipefail
+
+          docker build --target production \
+            --build-arg VITE_API_BASE="https://${CLOUDFRONT_DOMAIN}" \
+            --build-arg VITE_BOOT_MODE=live \
+            -t "$ECR_FRONTEND:${GITHUB_SHA}" \
+            -t "$ECR_FRONTEND:latest" .
+          docker push "$ECR_FRONTEND:${GITHUB_SHA}"
+          docker push "$ECR_FRONTEND:latest"
+
+      - name: Build staged frontend assets
+        if: env.DEPLOY_ENV == 'staging'
+        working-directory: frontend
+        env:
+          VITE_API_BASE: https://${{ env.CLOUDFRONT_DOMAIN }}
+          VITE_BOOT_MODE: live
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.RESOLVED_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ env.RESOLVED_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+
+          npm ci
+          npm run build
+          echo "FRONTEND_DIST_DIR=$PWD/dist" >> "$GITHUB_ENV"
+
+      - name: Extract prod frontend assets
+        if: env.DEPLOY_ENV == 'prod'
+        run: |
+          set -euo pipefail
+
+          container_id=$(docker create "$ECR_FRONTEND:${GITHUB_SHA}")
+          docker cp "$container_id:/usr/share/nginx/html" ./frontend-dist
+          docker rm "$container_id"
+          echo "FRONTEND_DIST_DIR=$PWD/frontend-dist" >> "$GITHUB_ENV"
 
       - name: Deploy frontend to S3
         run: |
-          # Extract built files from frontend image
-          CONTAINER_ID=$(docker create $ECR_FRONTEND:${{ github.sha }})
-          docker cp $CONTAINER_ID:/usr/share/nginx/html ./frontend-dist
-          docker rm $CONTAINER_ID
+          set -euo pipefail
+          : "${FRONTEND_DIST_DIR:?Missing FRONTEND_DIST_DIR}"
 
-          # Sync to S3
-          aws s3 sync ./frontend-dist s3://$S3_FRONTEND_BUCKET \
+          aws s3 sync "$FRONTEND_DIST_DIR" "s3://$S3_FRONTEND_BUCKET" \
             --delete \
             --cache-control "public, max-age=31536000, immutable" \
             --exclude "index.html" \
             --exclude "*.json"
 
-          # Upload index.html and JSON with no-cache
-          aws s3 cp ./frontend-dist/index.html s3://$S3_FRONTEND_BUCKET/index.html \
+          aws s3 cp "$FRONTEND_DIST_DIR/index.html" "s3://$S3_FRONTEND_BUCKET/index.html" \
             --cache-control "no-cache, no-store, must-revalidate"
 
-          find ./frontend-dist -name '*.json' -exec sh -c \
-            'aws s3 cp "$1" "s3://'"$S3_FRONTEND_BUCKET"'/$(echo "$1" | sed "s|^./frontend-dist/||")" --cache-control "no-cache"' _ {} \;
+          export FRONTEND_DIST_DIR
+          find "$FRONTEND_DIST_DIR" -name '*.json' -exec sh -c \
+            'rel_path="${1#"$FRONTEND_DIST_DIR"/}"; aws s3 cp "$1" "s3://'"$S3_FRONTEND_BUCKET"'/$rel_path" --cache-control "no-cache"' _ {} \;
 
       - name: Invalidate CloudFront cache
         if: env.CLOUDFRONT_DISTRIBUTION_ID != ''
         run: |
+          set -euo pipefail
+
           aws cloudfront create-invalidation \
-            --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+            --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
             --paths "/index.html" "/*.json" "/assets/*"
 
       - name: Wait for ECS deployment
         run: |
+          set -euo pipefail
+
           echo "Waiting for ECS service to stabilize..."
           aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE \
-            --region $AWS_REGION
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"
           echo "Deployment complete!"
 
       - name: Warm Singapore dataset

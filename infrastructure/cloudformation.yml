@@ -27,6 +27,44 @@ Parameters:
   BackendDesiredCount:
     Type: Number
     Default: 1
+  GeminiParamName:
+    Type: String
+    Default: /miroworld/backend/GEMINI_API
+  HuggingFaceParamName:
+    Type: String
+    Default: /miroworld/backend/HUGGINGFACE_API_KEY
+  SupabaseUrlParamName:
+    Type: String
+    Default: ''
+  SupabaseApiUrlParamName:
+    Type: String
+    Default: ''
+  SupabasePublishableKeyParamName:
+    Type: String
+    Default: ''
+  SupabaseServiceRoleKeyParamName:
+    Type: String
+    Default: ''
+  SupabaseScretKeyParamName:
+    Type: String
+    Default: ''
+  SupabasePostgresUrlParamName:
+    Type: String
+    Default: ''
+  ZepCloudParamName:
+    Type: String
+    Default: ''
+
+Conditions:
+  IsStaging: !Equals [!Ref Environment, 'staging']
+  HasHuggingFaceParam: !Not [!Equals [!Ref HuggingFaceParamName, '']]
+  HasSupabaseUrlParam: !Not [!Equals [!Ref SupabaseUrlParamName, '']]
+  HasSupabaseApiUrlParam: !Not [!Equals [!Ref SupabaseApiUrlParamName, '']]
+  HasSupabasePublishableKeyParam: !Not [!Equals [!Ref SupabasePublishableKeyParamName, '']]
+  HasSupabaseServiceRoleKeyParam: !Not [!Equals [!Ref SupabaseServiceRoleKeyParamName, '']]
+  HasSupabaseScretKeyParam: !Not [!Equals [!Ref SupabaseScretKeyParamName, '']]
+  HasSupabasePostgresUrlParam: !Not [!Equals [!Ref SupabasePostgresUrlParamName, '']]
+  HasZepCloudParam: !Not [!Equals [!Ref ZepCloudParamName, '']]
 
 Resources:
   # === VPC =========================================================
@@ -199,6 +237,22 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: RuntimeSecretAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: '*'
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
 
   ECSTaskRole:
     Type: AWS::IAM::Role
@@ -251,6 +305,10 @@ Resources:
           Environment:
             - Name: PYTHONPATH
               Value: src
+            - Name: APP_STATE_BACKEND
+              Value: !If [IsStaging, postgres, sqlite]
+            - Name: HOSTED_AUTH_REQUIRED
+              Value: !If [IsStaging, 'true', 'false']
             - Name: LLM_PROVIDER
               Value: google
             - Name: LLM_MODEL
@@ -259,6 +317,51 @@ Resources:
               Value: gemini-embedding-001
             - Name: LLM_BASE_URL
               Value: https://generativelanguage.googleapis.com/v1beta/openai/
+          Secrets:
+            - Name: GEMINI_API
+              ValueFrom: !Ref GeminiParamName
+            - Name: LLM_API_KEY
+              ValueFrom: !Ref GeminiParamName
+            - !If
+              - HasHuggingFaceParam
+              - Name: HUGGINGFACE_API_KEY
+                ValueFrom: !Ref HuggingFaceParamName
+              - !Ref AWS::NoValue
+            - !If
+              - HasSupabaseUrlParam
+              - Name: SUPABASE_URL
+                ValueFrom: !Ref SupabaseUrlParamName
+              - !Ref AWS::NoValue
+            - !If
+              - HasSupabaseApiUrlParam
+              - Name: SUPABASE_API_URL
+                ValueFrom: !Ref SupabaseApiUrlParamName
+              - !Ref AWS::NoValue
+            - !If
+              - HasSupabasePublishableKeyParam
+              - Name: SUPABASE_PUBLISHABLE_KEY
+                ValueFrom: !Ref SupabasePublishableKeyParamName
+              - !Ref AWS::NoValue
+            - !If
+              - HasSupabaseServiceRoleKeyParam
+              - Name: SUPABASE_SERVICE_ROLE_KEY
+                ValueFrom: !Ref SupabaseServiceRoleKeyParamName
+              - !Ref AWS::NoValue
+            - !If
+              - HasSupabaseScretKeyParam
+              - Name: SUPABASE_SCRET_KEY
+                ValueFrom: !Ref SupabaseScretKeyParamName
+              - !Ref AWS::NoValue
+            - !If
+              - HasSupabasePostgresUrlParam
+              - Name: SUPABASE_POSTGRES_URL
+                ValueFrom: !Ref SupabasePostgresUrlParamName
+              - !Ref AWS::NoValue
+            - !If
+              - HasZepCloudParam
+              - Name: ZEP_CLOUD
+                ValueFrom: !Ref ZepCloudParamName
+              - !Ref AWS::NoValue
           LogConfiguration:
             LogDriver: awslogs
             Options:
