@@ -107,7 +107,7 @@ jobs:
                 echo "STACK_NAME=miroworld-staging"
                 echo "S3_FRONTEND_BUCKET=miroworld-frontend-staging"
                 echo "GEMINI_PARAM=/miroworld/staging/backend/GEMINI_API"
-                echo "HUGGINGFACE_PARAM="
+                echo "HUGGINGFACE_PARAM=/miroworld/staging/backend/HUGGINGFACE_API_KEY"
                 echo "SUPABASE_URL_PARAM=/miroworld/staging/backend/SUPABASE_URL"
                 echo "SUPABASE_API_URL_PARAM=/miroworld/staging/backend/SUPABASE_API_URL"
                 echo "SUPABASE_PUBLISHABLE_KEY_PARAM=/miroworld/staging/backend/SUPABASE_PUBLISHABLE_KEY"
