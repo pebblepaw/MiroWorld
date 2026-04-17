@@ -470,7 +470,7 @@ class ConsoleService:
         default_prompt = self._default_guiding_prompt(use_case=use_case, country=country)
         return bool(default_prompt) and cleaned == default_prompt
 
-    def _knowledge_summary_is_usable(self, summary: str | None) -> bool:
+    def _knowledge_summary_is_usable(self, summary: str | None, *, use_case: str | None = None) -> bool:
         cleaned = " ".join(str(summary or "").split()).strip().lower()
         if not cleaned:
             return False
@@ -484,16 +484,36 @@ class ConsoleService:
             r"\bdoes not contain information about\b",
             r"\bnot enough information\b",
         )
-        return not any(re.search(pattern, cleaned) for pattern in refusal_patterns)
+        if any(re.search(pattern, cleaned) for pattern in refusal_patterns):
+            return False
+
+        if not use_case:
+            return True
+
+        try:
+            validation = ConfigService(self.settings).get_use_case_summary_validation(use_case)
+        except Exception:  # noqa: BLE001
+            validation = {"required_patterns": []}
+
+        required_patterns = [
+            str(pattern).strip()
+            for pattern in validation.get("required_patterns", [])
+            if str(pattern).strip()
+        ]
+        if not required_patterns:
+            return True
+        return any(re.search(pattern, cleaned, flags=re.IGNORECASE) for pattern in required_patterns)
 
     def _invalid_knowledge_summary_detail(self, *, use_case: str | None = None) -> str:
         normalized_use_case = str(use_case or "").strip().lower()
-        if normalized_use_case == "public-policy-testing":
-            return (
-                "Knowledge extraction did not produce a usable summary for simulation. "
-                "Not enough policy details in this document. Re-run Screen 1 with a clearer policy document "
-                "or guiding prompt before starting Screen 3."
-            )
+        if normalized_use_case:
+            try:
+                validation = ConfigService(self.settings).get_use_case_summary_validation(normalized_use_case)
+            except Exception:  # noqa: BLE001
+                validation = {}
+            configured_detail = str(validation.get("invalid_summary_detail") or "").strip()
+            if configured_detail:
+                return configured_detail
         return (
             "Knowledge extraction did not produce a usable summary for simulation. "
             "Re-run Screen 1 with a clearer document or guiding prompt before starting Screen 3."
@@ -1100,7 +1120,7 @@ class ConsoleService:
             guiding_prompt=resolved_guiding_prompt,
             demographic_focus=demographic_focus,
         )
-        if not self._knowledge_summary_is_usable(artifact.get("summary")):
+        if not self._knowledge_summary_is_usable(artifact.get("summary"), use_case=session_use_case):
             detail = self._invalid_knowledge_summary_detail(use_case=session_use_case)
             self.knowledge_streams.append_events(
                 session_id,
@@ -1415,7 +1435,7 @@ class ConsoleService:
         personas = [dict(row["persona"], agent_id=row.get("agent_id")) for row in sampled_rows]
         if not sampled_rows:
             raise HTTPException(status_code=422, detail="No sampled personas available for simulation start")
-        if not self._knowledge_summary_is_usable(subject_summary):
+        if not self._knowledge_summary_is_usable(subject_summary, use_case=self._session_use_case(session_id)):
             raise HTTPException(
                 status_code=422,
                 detail=self._invalid_knowledge_summary_detail(use_case=self._session_use_case(session_id)),

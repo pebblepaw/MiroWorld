@@ -566,6 +566,7 @@ export default function PolicyUpload() {
   const analysisQuestionsRef = useRef<AnalysisQuestion[]>(analysisQuestions);
   const knowledgeLoadingRef = useRef<boolean>(knowledgeLoading);
   const lastPersistedQuestionsSnapshotRef = useRef<string>('');
+  const pendingQuestionPersistenceRef = useRef<Promise<void>>(Promise.resolve());
   const knowledgeArtifactRef = useRef<KnowledgeArtifact | null>(knowledgeArtifact);
   const knowledgeStreamRef = useRef<ReturnType<typeof subscribeKnowledgeStream> | null>(null);
 
@@ -610,7 +611,7 @@ export default function PolicyUpload() {
 
   const persistAnalysisQuestionsNow = useCallback((cleanQuestions: Record<string, unknown>[]) => {
     if (!sessionId) {
-      return;
+      return Promise.resolve();
     }
 
     if (
@@ -618,26 +619,30 @@ export default function PolicyUpload() {
       && hydratedSessionRef.current !== sessionId
       && analysisQuestionsState !== 'ready'
     ) {
-      return;
+      return Promise.resolve();
     }
 
     const snapshot = JSON.stringify(cleanQuestions);
 
     if (snapshot === lastPersistedQuestionsSnapshotRef.current) {
-      return;
+      return pendingQuestionPersistenceRef.current;
     }
 
     lastPersistedQuestionsSnapshotRef.current = snapshot;
-    void updateV2SessionConfig(sessionId, {
+    const persistPromise = updateV2SessionConfig(sessionId, {
       country: undefined,
       use_case: useCase,
       provider: modelProvider,
       model: modelName,
       api_key: modelApiKey || undefined,
       analysis_questions: cleanQuestions,
-    }).catch(() => {
-      // Persisting analysis questions is best-effort so extraction can continue.
-    });
+    })
+      .then(() => undefined)
+      .catch(() => {
+        // Persisting analysis questions is best-effort so extraction can continue.
+      });
+    pendingQuestionPersistenceRef.current = persistPromise;
+    return persistPromise;
   }, [analysisQuestionsState, modelApiKey, modelName, modelProvider, sessionId, useCase]);
 
   const persistAnalysisQuestions = useCallback((nextQuestions: AnalysisQuestion[]) => {
@@ -950,7 +955,7 @@ export default function PolicyUpload() {
         knowledgeStreamRef.current = streamSubscription;
       }
 
-      const knowledgePromise = (async () => {
+      const runKnowledgeExtraction = async () => {
         const artifacts: KnowledgeArtifact[] = [];
         let backendSessionId: string | null = null;
         const assertStreamHealthy = () => {
@@ -1016,12 +1021,11 @@ export default function PolicyUpload() {
           mergedArtifact.session_id = backendSessionId;
         }
         return mergedArtifact;
-      })();
+      };
 
-      const [artifact] = await Promise.all([
-        knowledgePromise,
-        Promise.allSettled(metadataGeneration),
-      ]);
+      await Promise.allSettled(metadataGeneration);
+      await pendingQuestionPersistenceRef.current;
+      const artifact = await runKnowledgeExtraction();
 
       if (streamFailureMessage) {
         throw new Error(streamFailureMessage);

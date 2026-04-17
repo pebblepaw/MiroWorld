@@ -10,15 +10,22 @@ system_prompt: |
 
 guiding_prompt: |
   Extract a neutral factual brief from the source content.
-  Identify product features, target users, pain points, objections, and evidence-backed opportunities.
+  Accept product pages, launch posts, reviews, comparisons, feature announcements, and product news when they contain concrete product or service detail.
+  Identify the concrete product or service details, target users, pain points, objections, and evidence-backed opportunities.
   Do not include AI self-reference, inability disclaimers, or first-person opinions.
 
 prompt_terms:
   summary_label: "Product summary"
-  summary_subject: "product or service concept"
-  subject_components: "features and use cases"
+  summary_subject: "product or service source"
+  subject_components: "product details, features, pricing, and use cases"
   audience_label: "target users"
-  evaluation_target: "the product or service concept"
+  evaluation_target: "the product or service"
+
+summary_validation:
+  required_patterns:
+    - "\\b(product|service|app|platform|device|software|hardware|tool|feature|features|pricing|subscription|price|launch|review|comparison|customer|user|buyer|electronics?)\\b"
+    - "\\b(camera|battery|display|chip|spec|specs|plan|tier|workflow|dashboard|automation|creator|mobile|laptop|phone|wearable)\\b"
+  invalid_summary_detail: "Knowledge extraction did not produce a usable summary for simulation. This source needs at least one concrete product or service detail. Re-run Screen 1 with a clearer source or guiding prompt before starting Screen 3."
 
 agent_personality_modifiers:
   - "Evaluate this product based on your actual daily habits and pain points."

@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 from lightrag import LightRAG, QueryParam
+from lightrag.base import DocStatus
 from lightrag.kg.shared_storage import initialize_pipeline_status
 from lightrag.llm.openai import openai_complete_if_cache, openai_embed
 from lightrag.types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
@@ -229,6 +230,8 @@ EMBEDDING_TEXT_MAX_CHARS = 1200
 OLLAMA_INGEST_DOC_MAX_CHARS = 9000
 OLLAMA_FALLBACK_GRAPH_DOC_MAX_CHARS = 4500
 OLLAMA_GUIDING_PROMPT_MAX_CHARS = 400
+LIGHTRAG_STATUS_POLL_SECONDS = 0.25
+LIGHTRAG_STATUS_TIMEOUT_SECONDS = 45.0
 GENERIC_PLACEHOLDER_LABELS = {
     "company",
     "concept",
@@ -420,6 +423,50 @@ class LightRAGService:
             await self._rag.initialize_storages()
             await initialize_pipeline_status()
 
+    async def _wait_for_chunk_processing(
+        self,
+        chunk_ids: list[str],
+        *,
+        sleep_func=asyncio.sleep,
+    ) -> None:
+        assert self._rag is not None
+
+        tracked_chunk_ids = {str(chunk_id).strip() for chunk_id in chunk_ids if str(chunk_id).strip()}
+        if not tracked_chunk_ids:
+            return
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + LIGHTRAG_STATUS_TIMEOUT_SECONDS
+        blocking_statuses = (DocStatus.PENDING, DocStatus.PROCESSING, DocStatus.PREPROCESSED)
+
+        while True:
+            failed_docs = await self._rag.get_docs_by_status(DocStatus.FAILED)
+            failed_chunk_ids = tracked_chunk_ids.intersection(failed_docs.keys())
+            if failed_chunk_ids:
+                failed_chunk_id = sorted(failed_chunk_ids)[0]
+                failed_record = failed_docs.get(failed_chunk_id)
+                error_msg = str(getattr(failed_record, "error_msg", "") or "").strip()
+                detail = f"LightRAG document chunk {failed_chunk_id} failed during processing"
+                if error_msg:
+                    detail = f"{detail}: {error_msg}"
+                raise RuntimeError(detail)
+
+            still_blocked: set[str] = set()
+            for status in blocking_statuses:
+                docs = await self._rag.get_docs_by_status(status)
+                still_blocked.update(tracked_chunk_ids.intersection(docs.keys()))
+
+            if not still_blocked:
+                return
+
+            if loop.time() >= deadline:
+                raise TimeoutError(
+                    "LightRAG document processing did not finish before summary generation timeout "
+                    f"for chunk(s): {', '.join(sorted(still_blocked))}"
+                )
+
+            await sleep_func(LIGHTRAG_STATUS_POLL_SECONDS)
+
     async def process_document(
         self,
         simulation_id: str,
@@ -431,6 +478,7 @@ class LightRAGService:
         demographic_focus: str | None = None,
         live_mode: bool = False,
         event_callback=None,
+        sleep_func=asyncio.sleep,
     ) -> dict[str, Any]:
         await self.ensure_ready()
         assert self._rag is not None
@@ -468,9 +516,11 @@ class LightRAGService:
 
         merged_nodes: dict[str, dict[str, Any]] = {}
         merged_edges: dict[tuple[str, str, str], dict[str, Any]] = {}
+        all_chunk_ids: list[str] = []
 
         for chunk_index, chunk_text in enumerate(chunks, start=1):
             chunk_id = f"{document_id}-chunk-{chunk_index:03d}"
+            all_chunk_ids.append(chunk_id)
             if event_callback is not None:
                 await event_callback(
                     "knowledge_chunk_started",
@@ -528,6 +578,9 @@ class LightRAGService:
                         "edge_delta_count": len(edge_delta),
                     },
                 )
+
+        await self._wait_for_chunk_processing(all_chunk_ids, sleep_func=sleep_func)
+        processing_logs.append("LightRAG finished processing all document chunks before summary generation.")
 
         summary_prompt = self._config.render_prompt_template(
             self._config.get_system_prompt_value(

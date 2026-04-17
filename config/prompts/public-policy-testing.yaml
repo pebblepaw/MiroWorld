@@ -9,16 +9,23 @@ system_prompt: |
   Focus on how this policy affects your daily life, family, and community.
 
 guiding_prompt: |
-  Extract a neutral factual policy brief from the source document.
-  Include key policy measures, target cohorts, implementation mechanisms, and likely social impact in {country_name}.
+  Extract a neutral factual civic brief from the source document.
+  Accept laws, regulations, taxes, speeches, public statements, campaign issue comparisons, and civic or political news explainers when they contain concrete issue detail.
+  Include the concrete policy or issue details, named actors or positions, affected groups, and likely social impact in {country_name}.
   Do not include AI self-reference, inability disclaimers, or first-person opinions.
 
 prompt_terms:
   summary_label: "Policy summary"
-  summary_subject: "policy proposal"
-  subject_components: "policy measures and implementation details"
-  audience_label: "target groups"
-  evaluation_target: "the policy"
+  summary_subject: "civic or political source"
+  subject_components: "policy details, issue positions, and implementation or impact details"
+  audience_label: "affected groups and communities"
+  evaluation_target: "the civic or political issue"
+
+summary_validation:
+  required_patterns:
+    - "\\b(policy|policies|law|laws|regulation|regulations|bill|budget|tax|taxes|tariff|tariffs|government|public|civic|politic(?:al|s))\\b"
+    - "\\b(immigration|border|asylum|deportation|health\\s?care|drug\\s?prices|econom(?:y|ic)|jobs|housing|education|energy|trade|labor|rights|wages|inflation|crime|safety|abortion|climate|welfare)\\b"
+  invalid_summary_detail: "Knowledge extraction did not produce a usable summary for simulation. This source needs at least one concrete civic or political detail. Re-run Screen 1 with a clearer source or guiding prompt before starting Screen 3."
 
 agent_personality_modifiers:
   - "Express genuine concern about how this policy affects your daily life and family."

@@ -39,3 +39,34 @@ prompt_terms:
         "Campaign brief | campaign concept | messages and claims | "
         "target audiences | the campaign concept"
     )
+
+
+def test_get_use_case_summary_validation_reads_yaml_fields(tmp_path: Path) -> None:
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / "system").mkdir(exist_ok=True)
+    (prompts_dir / "my-custom-case.yaml").write_text(
+        """
+name: "Custom Case"
+code: "my-custom-case"
+summary_validation:
+  required_patterns:
+    - "\\\\bpolicy\\\\b"
+    - "\\\\blaw\\\\b"
+  invalid_summary_detail: "Need at least one concrete civic detail."
+""".strip()
+    )
+
+    service = ConfigService(
+        Settings(
+            simulation_db_path=str(tmp_path / "simulation.db"),
+            config_prompts_dir=str(prompts_dir),
+        )
+    )
+
+    validation = service.get_use_case_summary_validation("my-custom-case")
+
+    assert validation == {
+        "required_patterns": [r"\bpolicy\b", r"\blaw\b"],
+        "invalid_summary_detail": "Need at least one concrete civic detail.",
+    }

@@ -240,7 +240,7 @@ describe("PolicyUpload", () => {
       createPolicyFetch({
         processError:
           "Knowledge extraction did not produce a usable summary for simulation. "
-          + "Not enough policy details in this document. Re-run Screen 1 with a clearer policy document or guiding prompt before starting Screen 3.",
+          + "This source needs at least one concrete civic or political detail. Re-run Screen 1 with a clearer source or guiding prompt before starting Screen 3.",
       }),
     ) as typeof fetch;
 
@@ -254,7 +254,7 @@ describe("PolicyUpload", () => {
     fireEvent.click(screen.getByRole("button", { name: /start extraction/i }));
 
     await screen.findByText(
-      /Not enough policy details in this document\. Re-run Screen 1 with a clearer policy document or guiding prompt before starting Screen 3\./i,
+      /This source needs at least one concrete civic or political detail\. Re-run Screen 1 with a clearer source or guiding prompt before starting Screen 3\./i,
     );
   });
 
@@ -322,7 +322,7 @@ describe("PolicyUpload", () => {
     expect(screen.getByTestId("question-count")).toHaveTextContent("1");
   });
 
-  it("persists edited analysis questions through the V2 config path and generates metadata while extracting", async () => {
+  it("persists edited analysis questions through the V2 config path before extraction starts", async () => {
     function SeedAnalysisSession() {
       const { setSessionId, setUseCase } = useApp();
 
@@ -333,6 +333,15 @@ describe("PolicyUpload", () => {
 
       return null;
     }
+
+    let resolveMetadata: ((value: Response) => void) | null = null;
+    let resolveConfig: ((value: Response) => void) | null = null;
+    const metadataPromise = new Promise<Response>((resolve) => {
+      resolveMetadata = resolve;
+    });
+    const configPromise = new Promise<Response>((resolve) => {
+      resolveConfig = resolve;
+    });
 
     const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -380,32 +389,14 @@ describe("PolicyUpload", () => {
       if (url.endsWith("/api/v2/questions/generate-metadata")) {
         const body = JSON.parse(String(init?.body));
         expect(body.question).toBe("What would you improve about this product?");
-        return {
-          ok: true,
-          json: async () => ({
-            type: "open-ended",
-            metric_name: "product_feedback",
-            report_title: "Product Feedback",
-          }),
-        } as Response;
+        return metadataPromise;
       }
 
       if (url.endsWith("/api/v2/console/session/session-screen1/config")) {
         const body = JSON.parse(String(init?.body));
         expect(Array.isArray(body.analysis_questions)).toBe(true);
         expect(body.analysis_questions.some((item: { question?: string }) => item.question === "What would you improve about this product?")).toBe(true);
-        return {
-          ok: true,
-          json: async () => ({
-            session_id: "session-screen1",
-            country: "singapore",
-            use_case: "product-market-research",
-            provider: "ollama",
-            model: "qwen3:4b-instruct-2507-q4_K_M",
-            api_key_configured: true,
-            guiding_prompt: null,
-          }),
-        } as Response;
+        return configPromise;
       }
 
       if (url.includes("/knowledge/process")) {
@@ -455,9 +446,48 @@ describe("PolicyUpload", () => {
         vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).endsWith("/api/v2/questions/generate-metadata")),
       ).toBe(true),
     );
+    expect(
+      vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).includes("/knowledge/process")),
+    ).toBe(false);
+
+    await act(async () => {
+      resolveMetadata?.({
+        ok: true,
+        json: async () => ({
+          type: "open-ended",
+          metric_name: "product_feedback",
+          report_title: "Product Feedback",
+        }),
+      } as Response);
+    });
+
     await waitFor(() =>
       expect(
         vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).endsWith("/api/v2/console/session/session-screen1/config")),
+      ).toBe(true),
+    );
+    expect(
+      vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).includes("/knowledge/process")),
+    ).toBe(false);
+
+    await act(async () => {
+      resolveConfig?.({
+        ok: true,
+        json: async () => ({
+          session_id: "session-screen1",
+          country: "singapore",
+          use_case: "product-market-research",
+          provider: "ollama",
+          model: "qwen3:4b-instruct-2507-q4_K_M",
+          api_key_configured: true,
+          guiding_prompt: null,
+        }),
+      } as Response);
+    });
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).includes("/knowledge/process")),
       ).toBe(true),
     );
     await waitFor(() => expect(screen.getAllByText("Ready").length).toBeGreaterThan(1));
@@ -1169,6 +1199,7 @@ describe("PolicyUpload", () => {
   });
 
   it("pulses the graph-building label and renames heartbeat progress to in progress", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
     let resolveProcess: ((value: Response) => void) | null = null;
     const processPromise = new Promise<Response>((resolve) => {
       resolveProcess = resolve;

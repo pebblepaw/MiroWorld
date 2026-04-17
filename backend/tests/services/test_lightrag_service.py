@@ -6,6 +6,8 @@ from pathlib import Path
 import miroworld.services.lightrag_service as lightrag_module
 import numpy as np
 import httpx
+import pytest
+from lightrag.base import DocProcessingStatus, DocStatus
 from openai import RateLimitError
 from tenacity import Future, RetryError
 
@@ -37,6 +39,21 @@ class _DummyRag:
         del param
         self.prompts.append(prompt)
         return f"summary for: {prompt}"
+
+    async def get_docs_by_status(self, status: DocStatus) -> dict[str, DocProcessingStatus]:
+        del status
+        return {}
+
+
+def _doc_status(status: DocStatus, *, file_path: str = "doc.txt") -> DocProcessingStatus:
+    return DocProcessingStatus(
+        content_summary="summary",
+        content_length=128,
+        file_path=file_path,
+        status=status,
+        created_at="2026-01-01T00:00:00Z",
+        updated_at="2026-01-01T00:00:01Z",
+    )
 
 
 def test_process_document_falls_back_in_live_mode_when_native_graph_is_empty(
@@ -119,7 +136,7 @@ def test_process_document_renders_use_case_aware_summary_prompt(tmp_path: Path, 
     )
 
     assert rag.prompts
-    assert "product or service concept" in rag.prompts[0].lower()
+    assert "product or service source" in rag.prompts[0].lower()
     assert "policy measures" not in rag.prompts[0].lower()
 
 
@@ -171,3 +188,140 @@ def test_ensure_ready_falls_back_to_secondary_google_embedding_model_on_rate_lim
 
     assert attempted_models == ["gemini-embedding-001", "gemini-embedding-2-preview"]
     assert service._rag is not None
+
+
+def test_process_document_waits_for_inserted_chunks_before_summary(monkeypatch, tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    settings.llm_provider = "google"
+    service = LightRAGService(settings)
+    rag = _DummyRag()
+    service._rag = rag
+
+    async def fake_ensure_ready() -> None:
+        return None
+
+    async def fake_load_document_native_graph(_rag, _document_id):  # noqa: ANN001
+        return None
+
+    async def fake_build_graph_from_text(**_kwargs):  # noqa: ANN002
+        return ([], [])
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(service, "ensure_ready", fake_ensure_ready)
+    monkeypatch.setattr(lightrag_module, "_load_document_native_graph", fake_load_document_native_graph)
+    monkeypatch.setattr(lightrag_module, "_build_graph_from_text", fake_build_graph_from_text)
+    monkeypatch.setattr(
+        service._config,
+        "get_system_prompt_value",
+        lambda *args, **kwargs: "Summarize the document.",
+    )
+
+    status_history = [
+        {
+            DocStatus.PENDING: {"doc-ready-chunk-001": _doc_status(DocStatus.PENDING)},
+            DocStatus.PROCESSING: {},
+            DocStatus.PREPROCESSED: {},
+            DocStatus.PROCESSED: {},
+            DocStatus.FAILED: {},
+        },
+        {
+            DocStatus.PENDING: {},
+            DocStatus.PROCESSING: {"doc-ready-chunk-001": _doc_status(DocStatus.PROCESSING)},
+            DocStatus.PREPROCESSED: {},
+            DocStatus.PROCESSED: {},
+            DocStatus.FAILED: {},
+        },
+        {
+            DocStatus.PENDING: {},
+            DocStatus.PROCESSING: {},
+            DocStatus.PREPROCESSED: {},
+            DocStatus.PROCESSED: {"doc-ready-chunk-001": _doc_status(DocStatus.PROCESSED)},
+            DocStatus.FAILED: {},
+        },
+    ]
+    status_call = {"count": 0}
+
+    async def fake_get_docs_by_status(status: DocStatus) -> dict[str, DocProcessingStatus]:
+        snapshot_index = min(status_call["count"] // 4, len(status_history) - 1)
+        status_call["count"] += 1
+        return status_history[snapshot_index].get(status, {})
+
+    monkeypatch.setattr(rag, "get_docs_by_status", fake_get_docs_by_status)
+
+    asyncio.run(
+        service.process_document(
+            simulation_id="session-ready",
+            document_text="Paragraph one.\n\nParagraph two.",
+            source_path="doc.txt",
+            document_id="doc-ready",
+            sleep_func=fake_sleep,
+        )
+    )
+
+    assert rag.prompts == ["Summarize the document."]
+    assert sleeps
+
+
+def test_process_document_raises_when_inserted_chunk_fails_processing(monkeypatch, tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    settings.llm_provider = "google"
+    service = LightRAGService(settings)
+    rag = _DummyRag()
+    service._rag = rag
+
+    async def fake_ensure_ready() -> None:
+        return None
+
+    async def fake_load_document_native_graph(_rag, _document_id):  # noqa: ANN001
+        return None
+
+    async def fake_build_graph_from_text(**_kwargs):  # noqa: ANN002
+        return ([], [])
+
+    monkeypatch.setattr(service, "ensure_ready", fake_ensure_ready)
+    monkeypatch.setattr(lightrag_module, "_load_document_native_graph", fake_load_document_native_graph)
+    monkeypatch.setattr(lightrag_module, "_build_graph_from_text", fake_build_graph_from_text)
+    monkeypatch.setattr(
+        service._config,
+        "get_system_prompt_value",
+        lambda *args, **kwargs: "Summarize the document.",
+    )
+
+    status_history = [
+        {
+            DocStatus.PENDING: {"doc-bad-chunk-001": _doc_status(DocStatus.PENDING)},
+            DocStatus.PROCESSING: {},
+            DocStatus.PREPROCESSED: {},
+            DocStatus.PROCESSED: {},
+            DocStatus.FAILED: {},
+        },
+        {
+            DocStatus.PENDING: {},
+            DocStatus.PROCESSING: {},
+            DocStatus.PREPROCESSED: {},
+            DocStatus.PROCESSED: {},
+            DocStatus.FAILED: {"doc-bad-chunk-001": _doc_status(DocStatus.FAILED)},
+        },
+    ]
+    status_call = {"count": 0}
+
+    async def fake_get_docs_by_status(status: DocStatus) -> dict[str, DocProcessingStatus]:
+        snapshot_index = min(status_call["count"] // 4, len(status_history) - 1)
+        status_call["count"] += 1
+        return status_history[snapshot_index].get(status, {})
+
+    monkeypatch.setattr(rag, "get_docs_by_status", fake_get_docs_by_status)
+
+    with pytest.raises(RuntimeError, match="failed during processing"):
+        asyncio.run(
+            service.process_document(
+                simulation_id="session-bad",
+                document_text="Paragraph one.\n\nParagraph two.",
+                source_path="doc.txt",
+                document_id="doc-bad",
+            )
+        )

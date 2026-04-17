@@ -15,9 +15,11 @@ prompts:
     default_prompt: |
       Summarize this {summary_subject} in neutral third-person.
       Cover the key entities, core {subject_components}, {audience_label}, main objections or risks, and expected outcomes or impacts.
+      Treat explainers, comparisons, public statements, reviews, and news coverage as valid sources when they contain concrete details.
       Do not include AI self-reference, inability disclaimers, refusal language, or first-person statements.
     ollama_prompt: |
       Summarize the {summary_subject} in 5 concise bullets covering objective, core {subject_components}, {audience_label}, biggest objections or risks, and expected outcomes.
+      Treat explainers, comparisons, public statements, reviews, and news coverage as valid sources when they contain concrete details.
       Do not include AI self-reference, inability disclaimers, refusal language, or first-person statements.
     guiding_focus_suffix: |
       Focus especially on: {guiding_prompt}

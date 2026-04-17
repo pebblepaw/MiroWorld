@@ -209,6 +209,25 @@ class ConfigService:
                 terms[clean_key] = clean_value
         return terms
 
+    def get_use_case_summary_validation(self, use_case_id: str | None) -> dict[str, Any]:
+        normalized = str(use_case_id or "").strip().lower()
+        if not normalized:
+            return {"required_patterns": [], "invalid_summary_detail": ""}
+        payload = self.get_use_case(normalized)
+        raw = payload.get("summary_validation")
+        if not isinstance(raw, dict):
+            return {"required_patterns": [], "invalid_summary_detail": ""}
+        required_patterns = [
+            str(item).strip()
+            for item in raw.get("required_patterns", [])
+            if str(item).strip()
+        ]
+        invalid_summary_detail = str(raw.get("invalid_summary_detail") or "").strip()
+        return {
+            "required_patterns": required_patterns,
+            "invalid_summary_detail": invalid_summary_detail,
+        }
+
     def render_prompt_template(
         self,
         template: str | None,

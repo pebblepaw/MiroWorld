@@ -196,7 +196,7 @@ def test_console_process_knowledge_publishes_stream_events(tmp_path: Path, monke
                 "text_length": len(document_text),
                 "paragraph_count": 2,
             },
-            "summary": "Transport subsidy summary",
+            "summary": "Transport subsidy policy summary for commuters and low-income workers.",
             "guiding_prompt": guiding_prompt,
             "demographic_context": demographic_focus,
             "entity_nodes": [{"id": "node-1", "label": "Transport Subsidy", "type": "policy"}],
@@ -222,9 +222,9 @@ def test_console_process_knowledge_publishes_stream_events(tmp_path: Path, monke
     state = stream.get_state(session_id)
     stored_artifact = service.store.get_knowledge_artifact(session_id)
 
-    assert payload["summary"] == "Transport subsidy summary"
+    assert payload["summary"] == "Transport subsidy policy summary for commuters and low-income workers."
     assert stored_artifact is not None
-    assert stored_artifact["summary"] == "Transport subsidy summary"
+    assert stored_artifact["summary"] == "Transport subsidy policy summary for commuters and low-income workers."
     assert _event_names(replay) == [
         "knowledge_started",
         "knowledge_document_started",
@@ -304,7 +304,7 @@ def test_console_process_knowledge_rejects_unusable_policy_summary_on_screen1(
         )
 
     assert exc_info.value.status_code == 422
-    assert "Not enough policy details in this document." in str(exc_info.value.detail)
+    assert "concrete civic or political detail" in str(exc_info.value.detail)
 
     stream = KnowledgeStreamService(settings)
     replay = list(stream.sse_iter(session_id))
@@ -316,8 +316,148 @@ def test_console_process_knowledge_rejects_unusable_policy_summary_on_screen1(
         "knowledge_failed",
     ]
     assert state["status"] == "failed"
-    assert "Not enough policy details in this document." in str(state["last_error"])
+    assert "concrete civic or political detail" in str(state["last_error"])
     assert service.store.get_knowledge_artifact(session_id) is None
+
+
+def test_console_process_knowledge_accepts_broad_political_comparison_summary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = _make_settings(tmp_path)
+    service = ConsoleService(settings)
+    session_id = "session-screen1-political"
+    service.create_session(
+        requested_session_id=session_id,
+        mode="live",
+        model_provider="google",
+        model_name="gemini-2.5-flash-lite",
+        api_key="test-key",
+    )
+    service._upsert_session_config(
+        session_id,
+        {
+            "country": "usa",
+            "use_case": "public-policy-testing",
+        },
+    )
+
+    async def fake_process_document(
+        self: LightRAGService,
+        simulation_id: str,
+        document_text: str,
+        source_path: str | None,
+        document_id: str | None = None,
+        guiding_prompt: str | None = None,
+        use_case_id: str | None = None,
+        demographic_focus: str | None = None,
+        live_mode: bool = False,
+        event_callback=None,
+    ) -> dict[str, object]:
+        del self, document_text, source_path, document_id, guiding_prompt, demographic_focus, live_mode, event_callback
+        assert simulation_id == session_id
+        assert use_case_id == "public-policy-testing"
+        return {
+            "simulation_id": session_id,
+            "document_id": "doc-1",
+            "document": {
+                "document_id": "doc-1",
+                "source_path": "comparison.txt",
+                "text_length": 120,
+                "paragraph_count": 1,
+            },
+            "summary": (
+                "The article compares Trump and Harris on immigration enforcement, border policy, "
+                "healthcare costs, and tax priorities for Michigan voters."
+            ),
+            "entity_nodes": [{"id": "node-1", "label": "Immigration Policy", "type": "policy"}],
+            "relationship_edges": [],
+            "entity_type_counts": {"policy": 1},
+            "processing_logs": ["chunk 1 complete"],
+        }
+
+    monkeypatch.setattr(LightRAGService, "process_document", fake_process_document)
+
+    payload = asyncio.run(
+        service.process_knowledge(
+            session_id,
+            document_text="Bridge Michigan comparison article.",
+            source_path="comparison.txt",
+        )
+    )
+
+    assert payload["summary"].startswith("The article compares Trump and Harris")
+    assert service.store.get_knowledge_artifact(session_id)["summary"].startswith("The article compares")
+
+
+def test_console_process_knowledge_accepts_product_news_summary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = _make_settings(tmp_path)
+    service = ConsoleService(settings)
+    session_id = "session-screen1-product"
+    service.create_session(
+        requested_session_id=session_id,
+        mode="live",
+        model_provider="google",
+        model_name="gemini-2.5-flash-lite",
+        api_key="test-key",
+    )
+    service._upsert_session_config(
+        session_id,
+        {
+            "country": "usa",
+            "use_case": "product-market-research",
+        },
+    )
+
+    async def fake_process_document(
+        self: LightRAGService,
+        simulation_id: str,
+        document_text: str,
+        source_path: str | None,
+        document_id: str | None = None,
+        guiding_prompt: str | None = None,
+        use_case_id: str | None = None,
+        demographic_focus: str | None = None,
+        live_mode: bool = False,
+        event_callback=None,
+    ) -> dict[str, object]:
+        del self, document_text, source_path, document_id, guiding_prompt, demographic_focus, live_mode, event_callback
+        assert simulation_id == session_id
+        assert use_case_id == "product-market-research"
+        return {
+            "simulation_id": session_id,
+            "document_id": "doc-1",
+            "document": {
+                "document_id": "doc-1",
+                "source_path": "electronics.txt",
+                "text_length": 180,
+                "paragraph_count": 1,
+            },
+            "summary": (
+                "The launch article describes a consumer electronics product with a lower entry price, "
+                "battery-life improvements, and new camera features for mobile creators."
+            ),
+            "entity_nodes": [{"id": "node-1", "label": "Camera Feature", "type": "feature"}],
+            "relationship_edges": [],
+            "entity_type_counts": {"feature": 1},
+            "processing_logs": ["chunk 1 complete"],
+        }
+
+    monkeypatch.setattr(LightRAGService, "process_document", fake_process_document)
+
+    payload = asyncio.run(
+        service.process_knowledge(
+            session_id,
+            document_text="Electronics launch article.",
+            source_path="electronics.txt",
+        )
+    )
+
+    assert payload["summary"].startswith("The launch article describes")
+    assert service.store.get_knowledge_artifact(session_id)["summary"].startswith("The launch article")
 
 
 def test_console_process_knowledge_records_runtime_failure_detail(tmp_path: Path, monkeypatch) -> None:
@@ -551,7 +691,7 @@ def test_process_knowledge_clears_prior_artifacts_and_stream_state(tmp_path: Pat
                 "text_length": len(document_text),
                 "paragraph_count": 1,
             },
-            "summary": "Fresh summary",
+            "summary": "Fresh policy summary covering a new housing subsidy for Michigan renters.",
             "guiding_prompt": guiding_prompt,
             "demographic_context": demographic_focus,
             "entity_nodes": [{"id": "node-new", "label": "Policy Change", "type": "policy"}],
@@ -572,8 +712,11 @@ def test_process_knowledge_clears_prior_artifacts_and_stream_state(tmp_path: Pat
         )
     )
 
-    assert payload["summary"] == "Fresh summary"
-    assert service.store.get_knowledge_artifact(session_id)["summary"] == "Fresh summary"
+    assert payload["summary"] == "Fresh policy summary covering a new housing subsidy for Michigan renters."
+    assert (
+        service.store.get_knowledge_artifact(session_id)["summary"]
+        == "Fresh policy summary covering a new housing subsidy for Michigan renters."
+    )
     assert service.store.get_population_artifact(session_id) is None
     assert service.store.get_simulation_state_snapshot(session_id) is None
     assert service.store.get_report_state(session_id) is None

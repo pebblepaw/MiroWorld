@@ -38,6 +38,32 @@ class _TextCollector(HTMLParser):
 class ScrapeService:
     """Fetch and extract lightweight article text for document upload."""
 
+    _NOISE_TAGS = {"script", "style", "noscript", "header", "nav", "footer", "aside", "form", "button", "svg"}
+    _NOISE_HINTS = (
+        "advert",
+        "banner",
+        "breadcrumb",
+        "comment",
+        "consent",
+        "cookie",
+        "donate",
+        "donation",
+        "footer",
+        "menu",
+        "nav",
+        "newsletter",
+        "popover",
+        "promo",
+        "related",
+        "republish",
+        "share",
+        "sidebar",
+        "signup",
+        "social",
+        "subscribe",
+        "toolbar",
+    )
+
     def __init__(self, timeout_seconds: int = 15) -> None:
         self.timeout_seconds = max(1, int(timeout_seconds))
 
@@ -63,8 +89,7 @@ class ScrapeService:
             title_tag = soup.find("title")
             if title_tag:
                 title = title_tag.get_text(" ", strip=True)
-            body = soup.body or soup
-            body_text = body.get_text(" ", strip=True)
+            body_text = self._extract_soup_text(soup)
         else:
             title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
             if title_match:
@@ -88,3 +113,64 @@ class ScrapeService:
             "text": text,
             "length": len(text),
         }
+
+    def _extract_soup_text(self, soup: Any) -> str:
+        for element in soup.find_all(self._NOISE_TAGS):
+            element.decompose()
+
+        for element in soup.find_all(True):
+            attrs = getattr(element, "attrs", None)
+            if not isinstance(attrs, dict):
+                continue
+            attr_tokens = [
+                str(attrs.get("id") or "").strip().lower(),
+                *(str(item).strip().lower() for item in (attrs.get("class") or []) if str(item).strip()),
+                str(attrs.get("role") or "").strip().lower(),
+                str(attrs.get("aria-label") or "").strip().lower(),
+            ]
+            if any(self._token_matches_noise_hint(token) for token in attr_tokens):
+                element.decompose()
+
+        content_root = self._select_content_root(soup)
+        text = content_root.get_text(" ", strip=True) if content_root is not None else ""
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _select_content_root(self, soup: Any) -> Any:
+        selectors = ("article", "main", "[role='main']", ".article", ".story-body", ".post-content")
+        for selector in selectors:
+            candidate = soup.select_one(selector)
+            if candidate is not None and self._content_score(candidate) > 200:
+                return candidate
+
+        candidates: list[tuple[int, Any]] = []
+        for candidate in soup.find_all(["section", "div"]):
+            score = self._content_score(candidate)
+            if score > 0:
+                candidates.append((score, candidate))
+
+        if candidates:
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            return candidates[0][1]
+        return soup.body or soup
+
+    def _content_score(self, node: Any) -> int:
+        parts: list[str] = []
+        for child in node.find_all(["h1", "h2", "h3", "p", "li"], recursive=True):
+            text = child.get_text(" ", strip=True)
+            if text:
+                parts.append(text)
+        if not parts:
+            fallback = node.get_text(" ", strip=True)
+            return len(re.sub(r"\s+", " ", fallback).strip())
+        return sum(len(part) for part in parts)
+
+    def _token_matches_noise_hint(self, token: str) -> bool:
+        clean = str(token or "").strip().lower()
+        if not clean:
+            return False
+        for hint in self._NOISE_HINTS:
+            if clean == hint:
+                return True
+            if clean.startswith(f"{hint}-") or clean.startswith(f"{hint}_"):
+                return True
+        return False

@@ -47,6 +47,46 @@ def test_start_simulation_rejects_refusal_like_knowledge_summary(tmp_path) -> No
     assert "Knowledge extraction did not produce a usable summary" in str(exc_info.value.detail)
 
 
+def test_start_simulation_rejects_summary_without_required_policy_substance(tmp_path) -> None:
+    service = _make_service(tmp_path)
+    service._upsert_session_config(
+        "session-sim-validation",
+        {
+            "country": "usa",
+            "use_case": "public-policy-testing",
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.start_simulation(
+            "session-sim-validation",
+            subject_summary="The source discusses personalities and campaign optics without any concrete issue detail.",
+            rounds=3,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "concrete civic or political detail" in str(exc_info.value.detail)
+
+
+def test_knowledge_summary_accepts_broad_political_issue_summary(tmp_path) -> None:
+    service = _make_service(tmp_path)
+    service._upsert_session_config(
+        "session-sim-validation",
+        {
+            "country": "usa",
+            "use_case": "public-policy-testing",
+        },
+    )
+
+    assert service._knowledge_summary_is_usable(
+        (
+            "The article compares the candidates' positions on immigration enforcement, border policy, "
+            "and healthcare costs for working families."
+        ),
+        use_case="public-policy-testing",
+    )
+
+
 def test_merge_knowledge_artifacts_strips_inline_markdown_bullets_from_summary(tmp_path) -> None:
     service = _make_service(tmp_path)
 
