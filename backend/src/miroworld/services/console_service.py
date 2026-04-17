@@ -6,7 +6,6 @@ import time
 import uuid
 import re
 import shutil
-import sqlite3
 import json
 from pathlib import Path
 import random
@@ -67,53 +66,6 @@ class ConsoleService:
         self.demo = DemoService(settings)
         self.country_datasets = CountryDatasetService(settings)
         self.country_metadata = CountryMetadataService(settings)
-        self._ensure_session_config_table()
-        self._ensure_session_token_usage_table()
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.settings.simulation_db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _ensure_session_config_table(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS session_configs (
-                    session_id TEXT PRIMARY KEY,
-                    country TEXT,
-                    use_case TEXT,
-                    provider TEXT,
-                    model TEXT,
-                    guiding_prompt TEXT,
-                    analysis_questions TEXT,
-                    config_json TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            columns = {
-                str(row[1]).strip().lower()
-                for row in conn.execute("PRAGMA table_info(session_configs)").fetchall()
-            }
-            if "analysis_questions" not in columns:
-                conn.execute("ALTER TABLE session_configs ADD COLUMN analysis_questions TEXT")
-
-    def _ensure_session_token_usage_table(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS session_token_usage (
-                    session_id TEXT PRIMARY KEY,
-                    model TEXT NOT NULL,
-                    total_input_tokens INTEGER NOT NULL DEFAULT 0,
-                    total_output_tokens INTEGER NOT NULL DEFAULT 0,
-                    total_cached_tokens INTEGER NOT NULL DEFAULT 0,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
 
     def _session_record(self, session_id: str) -> dict[str, Any] | None:
         return self.store.get_console_session(session_id)
@@ -281,6 +233,10 @@ class ConsoleService:
         if not self._provider_requires_user_api_key(normalized_provider):
             return str(api_key or "").strip() or None
 
+        provider_env_key = self.settings.resolved_key_for_provider(normalized_provider)
+        if provider_env_key and provider_env_key != "ollama":
+            return str(provider_env_key).strip()
+
         explicit_api_key = str(api_key).strip() if api_key is not None else None
         if api_key is not None:
             if explicit_api_key:
@@ -292,6 +248,10 @@ class ConsoleService:
             existing_api_key = str(session.get("api_key") or "").strip() or None
             if existing_provider == normalized_provider and existing_api_key:
                 return existing_api_key
+
+        shared_api_key = str(self.settings.resolved_key_for_provider(normalized_provider) or "").strip() or None
+        if shared_api_key:
+            return shared_api_key
 
         raise HTTPException(status_code=422, detail=f"API key is required for provider '{normalized_provider}'.")
 
@@ -336,28 +296,7 @@ class ConsoleService:
         return rows
 
     def _read_session_config(self, session_id: str) -> dict[str, Any]:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM session_configs WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
-        if not row:
-            return {}
-        payload = dict(row)
-        raw_json = payload.get("config_json")
-        if raw_json:
-            try:
-                payload.update(json.loads(str(raw_json)))
-            except Exception:  # noqa: BLE001
-                pass
-        raw_questions = payload.get("analysis_questions")
-        if isinstance(raw_questions, str):
-            try:
-                decoded = json.loads(raw_questions)
-                payload["analysis_questions"] = decoded if isinstance(decoded, list) else []
-            except Exception:  # noqa: BLE001
-                payload["analysis_questions"] = []
-        return payload
+        return self.store.get_session_config(session_id)
 
     def _upsert_session_config(self, session_id: str, config_patch: dict[str, Any]) -> dict[str, Any]:
         existing = self._read_session_config(session_id)
@@ -390,41 +329,18 @@ class ConsoleService:
             "analysis_questions": analysis_questions,
         }
 
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO session_configs(
-                    session_id,
-                    country,
-                    use_case,
-                    provider,
-                    model,
-                    guiding_prompt,
-                    analysis_questions,
-                    config_json
-                )
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET
-                    country=excluded.country,
-                    use_case=excluded.use_case,
-                    provider=excluded.provider,
-                    model=excluded.model,
-                    guiding_prompt=excluded.guiding_prompt,
-                    analysis_questions=excluded.analysis_questions,
-                    config_json=excluded.config_json,
-                    updated_at=CURRENT_TIMESTAMP
-                """,
-                (
-                    session_id,
-                    country,
-                    use_case,
-                    provider_for_payload,
-                    model,
-                    guiding_prompt,
-                    json.dumps(analysis_questions, ensure_ascii=False),
-                    json.dumps(stored_json, ensure_ascii=False),
-                ),
-            )
+        self.store.upsert_session_config(
+            session_id,
+            {
+                "country": country,
+                "use_case": use_case,
+                "provider": provider_for_payload,
+                "model": model,
+                "guiding_prompt": guiding_prompt,
+                "analysis_questions": analysis_questions,
+                "config_json": stored_json,
+            },
+        )
 
         return self._read_session_config(session_id)
 
@@ -802,61 +718,32 @@ class ConsoleService:
         model_name = str(model_payload.get("model_name") or "").strip()
         if not model_name:
             raise HTTPException(status_code=422, detail="No model is configured for this session.")
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT total_input_tokens, total_output_tokens, total_cached_tokens, model
-                FROM session_token_usage
-                WHERE session_id = ?
-                """,
-                (session_id,),
-            ).fetchone()
-            if row:
-                new_input = int(row["total_input_tokens"]) + max(0, int(input_tokens))
-                new_output = int(row["total_output_tokens"]) + max(0, int(output_tokens))
-                new_cached = int(row["total_cached_tokens"]) + max(0, int(cached_tokens))
-                model_name = str(row["model"] or model_name)
-            else:
-                new_input = max(0, int(input_tokens))
-                new_output = max(0, int(output_tokens))
-                new_cached = max(0, int(cached_tokens))
-
-            conn.execute(
-                """
-                INSERT INTO session_token_usage(
-                    session_id,
-                    model,
-                    total_input_tokens,
-                    total_output_tokens,
-                    total_cached_tokens
-                )
-                VALUES(?, ?, ?, ?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET
-                    model=excluded.model,
-                    total_input_tokens=excluded.total_input_tokens,
-                    total_output_tokens=excluded.total_output_tokens,
-                    total_cached_tokens=excluded.total_cached_tokens,
-                    updated_at=CURRENT_TIMESTAMP
-                """,
-                (session_id, model_name, new_input, new_output, new_cached),
-            )
+        row = self.store.get_session_token_usage(session_id)
+        if row:
+            new_input = int(row["total_input_tokens"]) + max(0, int(input_tokens))
+            new_output = int(row["total_output_tokens"]) + max(0, int(output_tokens))
+            new_cached = int(row["total_cached_tokens"]) + max(0, int(cached_tokens))
+            model_name = str(row["model"] or model_name)
+        else:
+            new_input = max(0, int(input_tokens))
+            new_output = max(0, int(output_tokens))
+            new_cached = max(0, int(cached_tokens))
+        self.store.upsert_session_token_usage(
+            session_id,
+            model=model_name,
+            total_input_tokens=new_input,
+            total_output_tokens=new_output,
+            total_cached_tokens=new_cached,
+        )
 
     def get_runtime_token_usage(self, session_id: str) -> dict[str, Any]:
         model_payload = self._session_model_payload(session_id)
         model_name = str(model_payload.get("model_name") or "").strip()
         if not model_name:
             raise HTTPException(status_code=422, detail="No model is configured for this session.")
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT total_input_tokens, total_output_tokens, total_cached_tokens, model
-                FROM session_token_usage
-                WHERE session_id = ?
-                """,
-                (session_id,),
-            ).fetchone()
+        row = self.store.get_session_token_usage(session_id)
 
-        tracker = TokenTracker(model=str(row["model"]) if row and row["model"] else model_name)
+        tracker = TokenTracker(model=str(row["model"]) if row and row.get("model") else model_name)
         if row:
             tracker.record(
                 input_tokens=int(row["total_input_tokens"]),

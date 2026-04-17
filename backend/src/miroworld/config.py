@@ -1,6 +1,7 @@
 import re
 from functools import lru_cache
 from pathlib import Path
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +13,7 @@ class Settings(BaseSettings):
         env_file=("../.env", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "MiroWorld API"
@@ -67,6 +69,30 @@ class Settings(BaseSettings):
     demo_default_policy_markdown: str = "Sample_Inputs/singapore_budget_ai_strategic_advantage.md"
 
     simulation_db_path: str = "data/simulation.db"
+    app_state_backend: str = Field(
+        default="auto",
+        validation_alias=AliasChoices("APP_STATE_BACKEND", "MIROWORLD_APP_STATE_BACKEND"),
+    )
+    hosted_auth_required: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("HOSTED_AUTH_REQUIRED", "MIROWORLD_HOSTED_AUTH_REQUIRED"),
+    )
+    supabase_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_API_URL"),
+    )
+    supabase_publishable_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"),
+    )
+    supabase_service_role_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SCRET_KEY"),
+    )
+    supabase_postgres_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SUPABASE_POSTGRES_URL", "SUPABASE_DB_URL"),
+    )
     default_agent_count: int = 50
     default_rounds: int = 10
     simulation_platform: str = "reddit"
@@ -100,6 +126,7 @@ class Settings(BaseSettings):
 
     def model_post_init(self, _context) -> None:  # type: ignore[override]
         self.llm_provider = self._normalize_provider(self.llm_provider)
+        self.app_state_backend = self._normalize_app_state_backend(self.app_state_backend)
         self.llm_timeout_seconds = max(5, int(self.llm_timeout_seconds))
         self.ollama_llm_timeout_seconds = max(5, int(self.ollama_llm_timeout_seconds))
         self.oasis_timeout_seconds = max(120, int(self.oasis_timeout_seconds))
@@ -120,6 +147,11 @@ class Settings(BaseSettings):
 
         if not self.gemini_api_key and self.llm_provider == "google":
             self.gemini_api_key = self.llm_api_key
+
+        self.supabase_url = self._normalize_optional_url(self.supabase_url)
+        self.supabase_postgres_url = str(self.supabase_postgres_url or "").strip() or None
+        self.supabase_publishable_key = str(self.supabase_publishable_key or "").strip() or None
+        self.supabase_service_role_key = str(self.supabase_service_role_key or "").strip() or None
 
         path_fields = [
             "lightrag_workdir",
@@ -154,11 +186,25 @@ class Settings(BaseSettings):
             return "ollama"
         return normalized
 
+    def _normalize_app_state_backend(self, backend: str | None) -> str:
+        normalized = str(backend or "auto").strip().lower()
+        if normalized == "auto":
+            return "sqlite"
+        if normalized not in {"sqlite", "postgres"}:
+            return "sqlite"
+        return normalized
+
     def _normalize_base_url(self, base_url: str) -> str:
         cleaned = base_url.strip()
         if not cleaned.endswith("/"):
             cleaned = f"{cleaned}/"
         return cleaned
+
+    def _normalize_optional_url(self, value: str | None) -> str | None:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return None
+        return cleaned.rstrip("/")
 
     def default_model_for_provider(self, provider: str) -> str:
         normalized = self._normalize_provider(provider)
@@ -203,6 +249,14 @@ class Settings(BaseSettings):
     @property
     def resolved_gemini_key(self) -> str | None:
         return self.resolved_key_for_provider(self.llm_provider)
+
+    @property
+    def hosted_storage_enabled(self) -> bool:
+        return self.app_state_backend == "postgres" and bool(self.supabase_postgres_url)
+
+    @property
+    def hosted_auth_enabled(self) -> bool:
+        return bool(self.hosted_auth_required and self.supabase_url and (self.supabase_publishable_key or self.supabase_service_role_key))
 
     def provider_embed_model_candidates(self, provider: str, *, preferred_model: str | None = None) -> list[str]:
         normalized = self._normalize_provider(provider)

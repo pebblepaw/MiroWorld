@@ -40,3 +40,17 @@ export function getSupabaseClient(): SupabaseClient | null {
   cachedClient = createClient(env.url, env.publishableKey);
   return cachedClient;
 }
+
+export async function getSupabaseAccessToken(): Promise<string | null> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return null;
+  }
+
+  const { data, error } = await client.auth.getSession();
+  if (error) {
+    throw error;
+  }
+
+  return data.session?.access_token ?? null;
+}

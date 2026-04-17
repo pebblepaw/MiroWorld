@@ -8,6 +8,7 @@ from miroworld.config import Settings
 from miroworld.services.config_service import ConfigService
 from miroworld.services.llm_client import GeminiChatClient
 from miroworld.services.storage import SimulationStore
+from miroworld.services.zep_service import ZepService
 
 
 class MemoryService:
@@ -16,20 +17,32 @@ class MemoryService:
         self.store = SimulationStore(settings.simulation_db_path)
         self.llm = GeminiChatClient(settings)
         self.config = ConfigService(settings)
+        self.zep = ZepService(settings)
         self._simulation_context_cache: dict[tuple[str, str, int, bool, str], dict[str, Any]] = {}
         self._interaction_cache: dict[str, list[dict[str, Any]]] = {}
         self._transcript_cache: dict[str, list[dict[str, Any]]] = {}
         self._checkpoint_cache: dict[str, list[dict[str, Any]]] = {}
-        self._memory_backend = "sqlite"
+        self._memory_backend = "zep-cloud" if self.zep.enabled else "sqlite"
+
+    @property
+    def memory_backend(self) -> str:
+        return self._memory_backend
 
     def sync_simulation(self, simulation_id: str) -> dict[str, Any]:
-        # The simulation data already lives in SQLite. Legacy sync endpoints are
-        # preserved for compatibility but no longer push to an external store.
+        if not self.zep.enabled:
+            return {
+                "simulation_id": simulation_id,
+                "synced_events": 0,
+                "zep_enabled": False,
+                "external_sync_enabled": False,
+                "memory_backend": self._memory_backend,
+            }
+        sync_state = self._ensure_zep_synced(simulation_id)
         return {
             "simulation_id": simulation_id,
-            "synced_events": 0,
-            "zep_enabled": False,
-            "external_sync_enabled": False,
+            "synced_events": int(sync_state.get("synced_events", 0) or 0),
+            "zep_enabled": True,
+            "external_sync_enabled": True,
             "memory_backend": self._memory_backend,
         }
 
@@ -58,14 +71,22 @@ class MemoryService:
         if cached is not None:
             return deepcopy(cached)
 
-        local_context = self._search_local_context(
-            simulation_id,
-            normalized_query,
-            normalized_limit,
-            agent_id=agent_id,
-        )
-        self._simulation_context_cache[cache_key] = deepcopy(local_context)
-        return local_context
+        if self.zep.enabled:
+            context = self._search_zep_context(
+                simulation_id,
+                normalized_query,
+                normalized_limit,
+                agent_id=agent_id,
+            )
+        else:
+            context = self._search_local_context(
+                simulation_id,
+                normalized_query,
+                normalized_limit,
+                agent_id=agent_id,
+            )
+        self._simulation_context_cache[cache_key] = deepcopy(context)
+        return context
 
     def search_agent_context(
         self,
@@ -104,7 +125,7 @@ class MemoryService:
             "episodes": [],
             "checkpoint_records": [],
             "synced_events": 0,
-            "zep_context_used": False,
+            "zep_context_used": self.zep.enabled,
             "graphiti_context_used": False,
             "memory_backend": self._memory_backend,
         }
@@ -184,7 +205,7 @@ class MemoryService:
             "model_provider": self.llm.provider,
             "model_name": self.llm.model_name,
             "gemini_model": self.llm.model_name,
-            "zep_context_used": False,
+            "zep_context_used": bool(memory_context.get("zep_context_used", False)),
             "graphiti_context_used": False,
             "memory_backend": memory_context.get("memory_backend", self._memory_backend),
         }
@@ -230,6 +251,475 @@ class MemoryService:
             for record in records:
                 sections.append(f"- {self._format_checkpoint_line(record)}")
         return "\n".join(sections)
+
+    def build_question_context_pack(
+        self,
+        session_id: str,
+        *,
+        question_text: str,
+        metric: dict[str, Any] | None,
+        question_type: str,
+        report_title: str,
+        limit: int = 8,
+    ) -> dict[str, Any]:
+        query_parts = [report_title, question_text]
+        if isinstance(metric, dict):
+            query_parts.extend(
+                str(metric.get(key) or "").strip()
+                for key in ("metric_name", "metric_label")
+            )
+        query = " ".join(part for part in query_parts if part)
+        payload = self.search_simulation_context(session_id, query, limit=max(limit * 4, 12))
+        stance_by_agent = self._build_agent_stance_map(session_id, metric=metric)
+        discourse_episodes = [
+            item
+            for item in payload["episodes"]
+            if self._is_discourse_episode(item)
+        ]
+        evidence = self._normalize_report_evidence(
+            self._rank_question_evidence(
+                discourse_episodes,
+                question_text=question_text,
+                report_title=report_title,
+                metric=metric,
+                stance_by_agent=stance_by_agent,
+                limit=limit,
+            ),
+            stance_by_agent=stance_by_agent,
+        )
+
+        named_snippets: list[dict[str, Any]] = []
+        seen_agents: set[str] = set()
+        for desired_stance in ("support", "dissent", "neutral"):
+            for item in evidence:
+                actor_name = str(item.get("agent_name") or item.get("actor_name") or "").strip()
+                stance = str(item.get("stance") or item.get("stance_class") or "").strip().lower()
+                if not actor_name or actor_name in seen_agents or stance != desired_stance:
+                    continue
+                seen_agents.add(actor_name)
+                named_snippets.append(
+                    {
+                        "actor_name": actor_name,
+                        "actor_agent_id": item.get("agent_id") or item.get("actor_agent_id"),
+                        "snippet": str(item.get("quote") or item.get("content") or "")[:280],
+                        "title": item.get("title"),
+                        "stance": stance or None,
+                    }
+                )
+                break
+
+        for item in evidence:
+            actor_name = str(item.get("agent_name") or item.get("actor_name") or "").strip()
+            if not actor_name or actor_name in seen_agents:
+                continue
+            seen_agents.add(actor_name)
+            named_snippets.append(
+                {
+                    "actor_name": actor_name,
+                    "actor_agent_id": item.get("agent_id") or item.get("actor_agent_id"),
+                    "snippet": str(item.get("quote") or item.get("content") or "")[:280],
+                    "title": item.get("title"),
+                    "stance": str(item.get("stance") or item.get("stance_class") or "").strip().lower() or None,
+                }
+            )
+            if len(named_snippets) >= 3:
+                break
+
+        metric_payload = deepcopy(metric) if isinstance(metric, dict) else {}
+        if metric_payload:
+            initial_value = metric_payload.get("initial_value")
+            final_value = metric_payload.get("final_value")
+            threshold = metric_payload.get("threshold")
+            crossed_threshold = None
+            if isinstance(initial_value, (int, float)) and isinstance(final_value, (int, float)) and isinstance(threshold, (int, float)):
+                crossed_threshold = initial_value < threshold <= final_value or initial_value > threshold >= final_value
+            metric_payload["crossed_threshold"] = crossed_threshold
+
+        return {
+            "question_profile": {
+                "question": question_text,
+                "question_type": question_type,
+                "report_title": report_title,
+                "keywords": self._keywords(question_text),
+                "metric_name": str(metric_payload.get("metric_name") or "").strip() or None,
+                "metric_label": str(metric_payload.get("metric_label") or "").strip() or None,
+                "aliases": [
+                    value
+                    for value in [
+                        report_title,
+                        question_text,
+                        str(metric_payload.get("metric_label") or "").strip(),
+                        str(metric_payload.get("metric_name") or "").strip(),
+                    ]
+                    if value
+                ],
+            },
+            "metric_movement": metric_payload,
+            "top_discourse_evidence": evidence,
+            "named_agent_snippets": named_snippets,
+        }
+
+    def _search_zep_context(
+        self,
+        simulation_id: str,
+        query: str,
+        limit: int,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        sync_state = self._ensure_zep_synced(simulation_id)
+        owner_id, zep_user_id, _thread_id = self._zep_ids_for_session(simulation_id)
+        episodes_payload = self.zep.graph_search(
+            user_id=zep_user_id,
+            query=query or "simulation context",
+            scope="episodes",
+            limit=max(limit * 3, 8),
+        )
+        edges_payload = self.zep.graph_search(
+            user_id=zep_user_id,
+            query=query or "simulation context",
+            scope="edges",
+            limit=max(limit * 2, 6),
+        )
+        del owner_id  # Avoid unused variable noise when auth data is unavailable.
+
+        episodes = [self._parse_zep_episode(item) for item in list(episodes_payload.get("episodes") or [])]
+        edges = [self._parse_zep_edge(item) for item in list(edges_payload.get("edges") or [])]
+        combined = [item for item in [*episodes, *edges] if item.get("content")]
+        if agent_id is not None:
+            combined = [
+                item
+                for item in combined
+                if str(item.get("actor_agent_id") or item.get("agent_id") or "") == agent_id
+                or str(item.get("target_agent_id") or "") == agent_id
+            ]
+        checkpoint_records = [
+            item
+            for item in combined
+            if str(item.get("source_kind") or "").strip().lower() == "checkpoint"
+        ]
+        discourse_episodes = [
+            item
+            for item in combined
+            if str(item.get("source_kind") or "").strip().lower() != "checkpoint"
+        ]
+        return {
+            "episodes": discourse_episodes[: max(1, int(limit))],
+            "checkpoint_records": checkpoint_records[: max(1, int(limit))],
+            "synced_events": int(sync_state.get("synced_events", 0) or 0),
+            "zep_context_used": True,
+            "graphiti_context_used": False,
+            "memory_backend": self._memory_backend,
+        }
+
+    def _ensure_zep_synced(self, simulation_id: str) -> dict[str, Any]:
+        self.zep.ensure_enabled()
+        owner_id, zep_user_id, thread_id = self._zep_ids_for_session(simulation_id)
+        self.zep.ensure_user(user_id=zep_user_id, metadata={"app_user_id": owner_id, "session_id": simulation_id})
+        self.zep.ensure_thread(user_id=zep_user_id, thread_id=thread_id)
+
+        sync_state = self.store.get_memory_sync_state(simulation_id) or {}
+        self._ensure_seed_synced(simulation_id, zep_user_id=zep_user_id, thread_id=thread_id, sync_state=sync_state)
+
+        last_interaction_id = int(sync_state.get("last_interaction_id", 0) or 0)
+        last_checkpoint_id = int(sync_state.get("last_checkpoint_id", 0) or 0)
+        interactions = self.store.get_interactions_after_id(simulation_id, last_interaction_id)
+        checkpoints = self.store.list_checkpoint_records_after_id(simulation_id, last_checkpoint_id)
+
+        messages: list[dict[str, Any]] = []
+        messages.extend(self._build_interaction_messages(simulation_id, interactions))
+        messages.extend(self._build_checkpoint_messages(simulation_id, checkpoints))
+        if messages:
+            self.zep.add_messages(thread_id=thread_id, messages=messages)
+            self._simulation_context_cache = {
+                key: value
+                for key, value in self._simulation_context_cache.items()
+                if key[0] != simulation_id
+            }
+
+        next_interaction_id = max((int(item.get("id", 0) or 0) for item in interactions), default=last_interaction_id)
+        next_checkpoint_id = max((int(item.get("id", 0) or 0) for item in checkpoints), default=last_checkpoint_id)
+        synced_events = int(sync_state.get("synced_events", 0) or 0) + len(messages)
+        self.store.save_memory_sync_state(
+            simulation_id,
+            last_interaction_id=next_interaction_id,
+            synced_events=synced_events,
+            last_checkpoint_id=next_checkpoint_id,
+        )
+        return self.store.get_memory_sync_state(simulation_id) or {}
+
+    def _ensure_seed_synced(
+        self,
+        simulation_id: str,
+        *,
+        zep_user_id: str,
+        thread_id: str,
+        sync_state: dict[str, Any],
+    ) -> None:
+        if int(sync_state.get("synced_events", 0) or 0) > 0:
+            return
+        artifact = self.store.get_knowledge_artifact(simulation_id) or {}
+        messages = self._build_seed_messages(simulation_id, artifact)
+        if messages:
+            self.zep.ensure_user(user_id=zep_user_id, metadata={"session_id": simulation_id})
+            self.zep.ensure_thread(user_id=zep_user_id, thread_id=thread_id)
+            self.zep.add_messages(thread_id=thread_id, messages=messages)
+        self.store.save_memory_sync_state(
+            simulation_id,
+            last_interaction_id=int(sync_state.get("last_interaction_id", 0) or 0),
+            synced_events=int(sync_state.get("synced_events", 0) or 0) + len(messages),
+            last_checkpoint_id=int(sync_state.get("last_checkpoint_id", 0) or 0),
+        )
+        self._simulation_context_cache = {
+            key: value
+            for key, value in self._simulation_context_cache.items()
+            if key[0] != simulation_id
+        }
+
+    def _zep_ids_for_session(self, simulation_id: str) -> tuple[str, str, str]:
+        session = self.store.get_console_session(simulation_id) or {}
+        owner_id = str(session.get("user_id") or simulation_id).strip() or simulation_id
+        zep_user_id = f"miroworld::{owner_id}::{simulation_id}"
+        thread_id = f"session::{simulation_id}"
+        return owner_id, zep_user_id, thread_id
+
+    def _build_seed_messages(self, simulation_id: str, artifact: dict[str, Any]) -> list[dict[str, Any]]:
+        summary = str(
+            artifact.get("summary")
+            or artifact.get("subject_summary")
+            or artifact.get("neutral_summary")
+            or ""
+        ).strip()
+        if not summary:
+            return []
+
+        messages: list[dict[str, Any]] = [
+            {
+                "name": "Knowledge Seed",
+                "role": "tool",
+                "content": "\n".join(
+                    [
+                        "KIND: seed_summary",
+                        f"SESSION_ID: {simulation_id}",
+                        f"SUMMARY: {summary}",
+                    ]
+                ),
+            }
+        ]
+
+        nodes = list(artifact.get("nodes") or [])
+        if nodes:
+            facts: list[str] = []
+            for node in nodes[:20]:
+                label = str(node.get("label") or "").strip()
+                description = str(node.get("description") or node.get("summary") or "").strip()
+                if not label:
+                    continue
+                if description:
+                    facts.append(f"- {label}: {description}")
+                else:
+                    facts.append(f"- {label}")
+            if facts:
+                messages.append(
+                    {
+                        "name": "Knowledge Graph",
+                        "role": "tool",
+                        "content": "\n".join(
+                            [
+                                "KIND: seed_graph",
+                                f"SESSION_ID: {simulation_id}",
+                                "FACTS:",
+                                *facts,
+                            ]
+                        ),
+                    }
+                )
+        return messages
+
+    def _build_interaction_messages(
+        self,
+        simulation_id: str,
+        interactions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not interactions:
+            return []
+        agents = {
+            str(agent.get("agent_id") or ""): agent
+            for agent in self.store.get_agents(simulation_id)
+        }
+        messages: list[dict[str, Any]] = []
+        for item in interactions:
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            actor_agent_id = str(item.get("actor_agent_id") or "").strip()
+            actor_persona = agents.get(actor_agent_id, {})
+            actor_name = self._safe_agent_name(actor_agent_id, actor_persona)
+            source_kind = self._interaction_source_kind(item)
+            messages.append(
+                {
+                    "name": actor_name,
+                    "role": "assistant",
+                    "content": "\n".join(
+                        [
+                            f"KIND: {source_kind}",
+                            f"SOURCE_ID: interaction:{item.get('id')}",
+                            f"SESSION_ID: {simulation_id}",
+                            f"ROUND_NO: {int(item.get('round_no', 0) or 0)}",
+                            f"ACTOR_AGENT_ID: {actor_agent_id}",
+                            f"ACTOR_NAME: {actor_name}",
+                            f"TARGET_AGENT_ID: {str(item.get('target_agent_id') or '').strip()}",
+                            f"EVENT_TYPE: {str(item.get('action_type') or '').strip()}",
+                            f"TITLE: {str(item.get('title') or '').strip()}",
+                            f"CONTENT: {content}",
+                        ]
+                    ),
+                }
+            )
+        return messages
+
+    def _build_checkpoint_messages(
+        self,
+        simulation_id: str,
+        checkpoints: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not checkpoints:
+            return []
+        agents = {
+            str(agent.get("agent_id") or ""): agent
+            for agent in self.store.get_agents(simulation_id)
+        }
+        messages: list[dict[str, Any]] = []
+        for item in checkpoints:
+            agent_id = str(item.get("agent_id") or "").strip()
+            persona = agents.get(agent_id, {})
+            agent_name = self._safe_agent_name(agent_id, persona)
+            messages.append(
+                {
+                    "name": agent_name,
+                    "role": "tool",
+                    "content": "\n".join(
+                        [
+                            "KIND: checkpoint",
+                            f"SOURCE_ID: checkpoint:{item.get('id')}",
+                            f"SESSION_ID: {simulation_id}",
+                            f"CHECKPOINT_KIND: {str(item.get('checkpoint_kind') or '').strip()}",
+                            f"AGENT_ID: {agent_id}",
+                            f"AGENT_NAME: {agent_name}",
+                            f"STANCE_CLASS: {str(item.get('stance_class') or '').strip()}",
+                            f"STANCE_SCORE: {str(item.get('stance_score') or '').strip()}",
+                            f"PRIMARY_DRIVER: {str(item.get('primary_driver') or '').strip()}",
+                            f"METRIC_ANSWERS: {self._format_metric_answers(item.get('metric_answers'))}",
+                        ]
+                    ),
+                }
+            )
+        return messages
+
+    def _parse_zep_episode(self, item: dict[str, Any]) -> dict[str, Any]:
+        return self._parse_structured_zep_content(
+            item,
+            content=str(item.get("content") or "").strip(),
+            fallback_source_kind="episode",
+            fallback_score=float(item.get("score") or item.get("relevance") or 0.0),
+        )
+
+    def _parse_zep_edge(self, item: dict[str, Any]) -> dict[str, Any]:
+        fact = str(item.get("fact") or item.get("name") or "").strip()
+        return {
+            "content": fact,
+            "title": str(item.get("name") or "").strip(),
+            "score": float(item.get("score") or item.get("relevance") or 0.0),
+            "source_kind": "graph_edge",
+            "source_label": "Graph fact",
+            "created_at": item.get("created_at"),
+        }
+
+    def _parse_structured_zep_content(
+        self,
+        item: dict[str, Any],
+        *,
+        content: str,
+        fallback_source_kind: str,
+        fallback_score: float,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "content": content,
+            "score": fallback_score,
+            "source_kind": fallback_source_kind,
+            "created_at": item.get("created_at"),
+            "episode_uuid": item.get("uuid"),
+        }
+        for line in content.splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            normalized = key.strip().lower()
+            payload[normalized] = value.strip()
+
+        source_kind = str(payload.get("kind") or payload.get("source_kind") or fallback_source_kind).strip().lower()
+        actor_agent_id = str(payload.get("actor_agent_id") or payload.get("agent_id") or "").strip()
+        actor_name = str(payload.get("actor_name") or payload.get("agent_name") or item.get("name") or actor_agent_id or "").strip()
+        round_no = payload.get("round_no")
+        try:
+            round_no = int(round_no) if round_no not in {None, ""} else None
+        except (TypeError, ValueError):
+            round_no = None
+        parsed_content = str(payload.get("content") or "").strip()
+        if parsed_content.lower().startswith("kind:"):
+            parsed_content = content
+
+        return {
+            "content": parsed_content,
+            "title": str(payload.get("title") or "").strip(),
+            "score": float(payload.get("score") or fallback_score or 0.0),
+            "source_kind": source_kind,
+            "event_type": str(payload.get("event_type") or "").strip().lower() or None,
+            "source_label": self._source_label_for_kind(source_kind, actor_name),
+            "created_at": item.get("created_at"),
+            "episode_uuid": item.get("uuid"),
+            "round_no": round_no,
+            "actor_agent_id": actor_agent_id or None,
+            "target_agent_id": str(payload.get("target_agent_id") or "").strip() or None,
+            "agent_id": actor_agent_id or None,
+            "actor_name": actor_name or None,
+            "agent_name": actor_name or None,
+            "post_id": str(payload.get("source_id") or "").strip() or None,
+            "thread_id": str(payload.get("source_id") or "").strip() or None,
+            "stance_class": str(payload.get("stance_class") or "").strip().lower() or None,
+            "primary_driver": str(payload.get("primary_driver") or "").strip() or None,
+            "metric_answers": str(payload.get("metric_answers") or "").strip() or None,
+            "checkpoint_kind": str(payload.get("checkpoint_kind") or "").strip().lower() or None,
+        }
+
+    def _interaction_source_kind(self, item: dict[str, Any]) -> str:
+        action_type = str(item.get("action_type") or "").strip().lower()
+        if action_type == "comment":
+            return "comment"
+        if action_type == "reply":
+            return "reply"
+        return "post"
+
+    def _safe_agent_name(self, agent_id: str, agent: dict[str, Any]) -> str:
+        persona = dict(agent.get("persona") or {}) if isinstance(agent, dict) else {}
+        display_name = str(persona.get("display_name") or agent_id or "Agent").strip()
+        return display_name or agent_id or "Agent"
+
+    def _source_label_for_kind(self, source_kind: str, actor_name: str) -> str:
+        normalized = str(source_kind or "").strip().lower()
+        if normalized == "checkpoint":
+            return "Checkpoint"
+        if normalized == "comment":
+            return f"Comment by {actor_name or 'Unknown agent'}"
+        if normalized == "reply":
+            return f"Reply by {actor_name or 'Unknown agent'}"
+        if normalized == "post":
+            return f"Post by {actor_name or 'Unknown agent'}"
+        if normalized == "seed_summary":
+            return "Seed summary"
+        if normalized == "seed_graph":
+            return "Seed graph"
+        return actor_name or "Episode"
 
     def _search_local_context(
         self,
@@ -592,6 +1082,250 @@ class MemoryService:
         if len(text) <= limit:
             return text
         return f"{text[: max(0, limit - 3)].rstrip()}..."
+
+    def _normalize_report_evidence(
+        self,
+        episodes: list[dict[str, Any]],
+        *,
+        stance_by_agent: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for item in episodes:
+            quote = str(item.get("content") or "").strip()
+            if not quote:
+                continue
+            agent_id = str(item.get("actor_agent_id") or item.get("agent_id") or "").strip()
+            agent_name = str(item.get("actor_name") or item.get("agent_name") or agent_id or "Unknown agent").strip()
+            source_kind = str(item.get("source_kind") or "").strip().lower()
+            event_type = str(item.get("event_type") or "").strip().lower()
+            source_type = "comment" if source_kind in {"comment", "reply"} or event_type == "comment_created" else "post"
+            source_label = str(item.get("source_label") or "").strip()
+            if not source_label:
+                source_label = f"{'Comment' if source_type == 'comment' else 'Post'} by {agent_name or 'Unknown agent'}"
+            stance_class = self._normalize_stance_label(
+                item.get("stance") or item.get("stance_class") or (stance_by_agent or {}).get(agent_id)
+            )
+            normalized.append(
+                {
+                    "agent_id": agent_id,
+                    "agent_name": agent_name or agent_id or "Unknown agent",
+                    "quote": quote,
+                    "content": quote,
+                    "title": str(item.get("title") or "").strip(),
+                    "source_kind": source_kind,
+                    "source_type": source_type,
+                    "source_label": source_label,
+                    "round_no": int(item.get("round_no") or 0),
+                    "post_id": str(item.get("post_id") or item.get("thread_id") or "").strip(),
+                    "engagement": float(item.get("engagement") or item.get("likes") or 0.0),
+                    "stance": stance_class,
+                    "stance_class": stance_class,
+                }
+            )
+        return normalized
+
+    def _keywords(self, question_text: str) -> list[str]:
+        tokens = [token.strip(".,!?;:()[]{}").lower() for token in str(question_text or "").split()]
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for token in tokens:
+            if len(token) < 4 or token in seen:
+                continue
+            seen.add(token)
+            ordered.append(token)
+        return ordered
+
+    def _rank_question_evidence(
+        self,
+        episodes: list[dict[str, Any]],
+        *,
+        question_text: str,
+        report_title: str,
+        metric: dict[str, Any] | None,
+        stance_by_agent: dict[str, str] | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        metric_terms = ""
+        if isinstance(metric, dict):
+            metric_terms = " ".join(
+                value
+                for value in [
+                    str(metric.get("metric_name") or "").strip(),
+                    str(metric.get("metric_label") or "").strip(),
+                ]
+                if value
+            )
+        keywords = set(self._keywords(f"{report_title} {question_text} {metric_terms}"))
+        scored_rows: list[tuple[tuple[float, float, float, float], dict[str, Any]]] = []
+        seen_tree_counts: dict[str, int] = {}
+        seen_agent_counts: dict[str, int] = {}
+        total = max(1, len(episodes))
+        for index, item in enumerate(episodes):
+            content = str(item.get("content") or "")
+            title = str(item.get("title") or "")
+            haystack = f"{title} {content}".lower()
+            overlap = float(sum(1 for keyword in keywords if keyword in haystack))
+            retrieval_rank = 1.0 - (index / total)
+            engagement = float(item.get("engagement") or item.get("likes") or item.get("score") or 0.0)
+            recency = 1.0 if str(item.get("created_at") or "").strip() else 0.0
+            tree_id = str(item.get("post_id") or item.get("thread_id") or item.get("title") or "")
+            actor_agent_id = str(item.get("actor_agent_id") or item.get("agent_id") or "")
+            score = (retrieval_rank, overlap, engagement, recency)
+            seen_tree_counts.setdefault(tree_id, 0)
+            seen_agent_counts.setdefault(actor_agent_id, 0)
+            scored_rows.append((score, item))
+
+        ranked = sorted(scored_rows, key=lambda row: row[0], reverse=True)
+        selected: list[dict[str, Any]] = []
+        for desired_stance in ("support", "dissent", "neutral"):
+            if len(selected) >= max(1, int(limit)):
+                break
+            for _score, item in ranked:
+                if self._resolve_episode_stance(item, stance_by_agent) != desired_stance:
+                    continue
+                tree_id = str(item.get("post_id") or item.get("thread_id") or item.get("title") or "")
+                actor_agent_id = str(item.get("actor_agent_id") or item.get("agent_id") or "")
+                if tree_id and seen_tree_counts[tree_id] >= 2:
+                    continue
+                if actor_agent_id and seen_agent_counts[actor_agent_id] >= 2:
+                    continue
+                if item in selected:
+                    continue
+                if tree_id:
+                    seen_tree_counts[tree_id] += 1
+                if actor_agent_id:
+                    seen_agent_counts[actor_agent_id] += 1
+                selected.append(item)
+                break
+
+        for _score, item in ranked:
+            tree_id = str(item.get("post_id") or item.get("thread_id") or item.get("title") or "")
+            actor_agent_id = str(item.get("actor_agent_id") or item.get("agent_id") or "")
+            if item in selected:
+                continue
+            if tree_id and seen_tree_counts[tree_id] >= 2:
+                continue
+            if actor_agent_id and seen_agent_counts[actor_agent_id] >= 2:
+                continue
+            if tree_id:
+                seen_tree_counts[tree_id] += 1
+            if actor_agent_id:
+                seen_agent_counts[actor_agent_id] += 1
+            selected.append(item)
+            if len(selected) >= max(1, int(limit)):
+                break
+        return selected
+
+    def _build_agent_stance_map(
+        self,
+        session_id: str,
+        *,
+        metric: dict[str, Any] | None,
+    ) -> dict[str, str]:
+        records = self.store.list_checkpoint_records(session_id, checkpoint_kind="final")
+        if not records:
+            records = self.store.list_checkpoint_records(session_id, checkpoint_kind="post")
+        if not records:
+            records = self.store.list_checkpoint_records(session_id)
+
+        metric_candidates = {
+            self._metric_key(str(metric.get("metric_name") or "")) if isinstance(metric, dict) else "",
+            self._metric_key(str(metric.get("metric_label") or "")) if isinstance(metric, dict) else "",
+        } - {""}
+
+        stances: dict[str, str] = {}
+        for record in records:
+            agent_id = str(record.get("agent_id") or "").strip()
+            if not agent_id:
+                continue
+            score = self._checkpoint_metric_score(record, metric_candidates=metric_candidates)
+            stance = self._normalize_stance_label(record.get("stance_class"))
+            if score is not None:
+                stance = self._stance_from_score(score)
+            if stance:
+                stances[agent_id] = stance
+        return stances
+
+    def _checkpoint_metric_score(
+        self,
+        record: dict[str, Any],
+        *,
+        metric_candidates: set[str],
+    ) -> float | None:
+        answers = record.get("metric_answers")
+        if isinstance(answers, dict) and metric_candidates:
+            for key, value in answers.items():
+                if self._metric_key(key) not in metric_candidates:
+                    continue
+                parsed = self._extract_metric_score(value)
+                if parsed is not None:
+                    return parsed
+        stance_score = record.get("stance_score")
+        try:
+            if stance_score is not None:
+                return 1.0 + (float(stance_score) * 9.0)
+        except (TypeError, ValueError):
+            return None
+        return None
+
+    def _extract_metric_score(self, value: Any) -> float | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        lowered = text.lower()
+        if lowered == "yes":
+            return 10.0
+        if lowered == "no":
+            return 1.0
+        match = re.match(r"(\d+(?:\.\d+)?)", text)
+        if match is None:
+            return None
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
+
+    def _metric_key(self, value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().lower()).strip()
+
+    def _is_discourse_episode(self, item: dict[str, Any]) -> bool:
+        source_kind = str(item.get("source_kind") or "").strip().lower()
+        event_type = str(item.get("event_type") or "").strip().lower()
+        if source_kind in {"post", "comment", "reply"}:
+            return True
+        return event_type in {"post_created", "comment_created"}
+
+    def _normalize_stance_label(self, value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if text in {"approve", "support", "supporter"}:
+            return "support"
+        if text in {"dissent", "dissenter", "oppose"}:
+            return "dissent"
+        if text == "neutral":
+            return "neutral"
+        return ""
+
+    def _stance_from_score(self, score: float) -> str:
+        if score >= 7.0:
+            return "support"
+        if score < 5.0:
+            return "dissent"
+        return "neutral"
+
+    def _resolve_episode_stance(
+        self,
+        item: dict[str, Any],
+        stance_by_agent: dict[str, str] | None,
+    ) -> str:
+        direct = self._normalize_stance_label(item.get("stance") or item.get("stance_class"))
+        if direct:
+            return direct
+        agent_id = str(item.get("actor_agent_id") or item.get("agent_id") or "").strip()
+        if agent_id:
+            mapped = self._normalize_stance_label((stance_by_agent or {}).get(agent_id))
+            if mapped:
+                return mapped
+        return "neutral"
 
     def _local_fallback_agent_response(
         self,

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from miroworld.api.routes_console import require_hosted_user
 from miroworld.config import Settings, get_settings
 from miroworld.models.console import (
     V2OpinionFlowResponse,
@@ -28,6 +29,7 @@ def analytics_polarization(
     session_id: str,
     metric_name: str | None = Query(None),
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> V2PolarizationResponse:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         payload = _get_demo_service(settings).get_analytics_polarization(session_id, metric_name=metric_name)
@@ -45,6 +47,7 @@ def analytics_opinion_flow(
     session_id: str,
     metric_name: str | None = Query(None),
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> V2OpinionFlowResponse:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         payload = _get_demo_service(settings).get_analytics_opinion_flow(session_id, metric_name=metric_name)
@@ -61,6 +64,7 @@ def analytics_opinion_flow(
 def analytics_influence(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> dict[str, object]:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         payload = _get_demo_service(settings).get_analytics_influence(session_id)
@@ -77,6 +81,7 @@ def analytics_influence(
 def analytics_cascades(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> dict[str, object]:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         payload = _get_demo_service(settings).get_analytics_cascades(session_id)
@@ -94,6 +99,7 @@ def analytics_agent_stances(
     session_id: str,
     metric_name: str | None = Query(None),
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> dict[str, object]:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         payload = _get_demo_service(settings).get_analytics_agent_stances(session_id, metric_name=metric_name)

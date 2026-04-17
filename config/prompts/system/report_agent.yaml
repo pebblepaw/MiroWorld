@@ -9,9 +9,6 @@ defaults:
     max_bullets: 6
     max_words_per_bullet: 60
   format_repair_attempts: 2
-  recent_interactions_chars:
-    default: 20000
-    google: 50000
   report_writer_instructions:
     - "Write in third-person analytical voice describing what agents expressed."
     - "Summarize what agents expressed rather than roleplaying as a participant."
@@ -49,8 +46,20 @@ prompts:
 
       Agent sample size: {agent_count}
 
-      Recent interactions:
-      {recent_interactions}
+      Context pack JSON:
+      {context_pack_json}
+
+      Question profile:
+      {question_profile_json}
+
+      Metric movement:
+      {metric_movement_json}
+
+      Top discourse evidence:
+      {top_discourse_evidence_json}
+
+      Named-agent snippets:
+      {named_agent_snippets_json}
 
       Writing requirements:
       {style_block}

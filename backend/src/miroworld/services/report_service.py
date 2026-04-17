@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 import io
 import json
 import re
-import sqlite3
 from typing import Any
 
 from docx import Document
@@ -142,7 +141,7 @@ class ReportService:
         report = self.build_v2_report(simulation_id)
         memory_context = self.memory.search_simulation_context(simulation_id, message, limit=8)
         knowledge = self.store.get_knowledge_artifact(simulation_id) or {}
-        memory_excerpt = "\n".join(f"- {item['content']}" for item in memory_context["episodes"][:6])
+        memory_excerpt = self._format_memory_excerpt(memory_context["episodes"])
         checkpoint_excerpt = self.memory.format_checkpoint_records(memory_context["checkpoint_records"], limit=6)
         knowledge_excerpt = "\n".join(self._knowledge_context_lines(knowledge))
         prompt = self.config.get_system_prompt_value(
@@ -173,9 +172,9 @@ class ReportService:
             "model_provider": self.llm.provider,
             "model_name": self.llm.model_name,
             "gemini_model": self.llm.model_name,
-            "zep_context_used": False,
+            "zep_context_used": bool(memory_context.get("zep_context_used", False)),
             "graphiti_context_used": False,
-            "memory_backend": memory_context.get("memory_backend", "sqlite"),
+            "memory_backend": memory_context.get("memory_backend", self.memory.memory_backend),
         }
 
     def build_v2_report(self, simulation_id: str, use_case: str | None = None) -> dict[str, Any]:
@@ -194,8 +193,6 @@ class ReportService:
         stored_round_count = int(simulation.get("rounds", 0) or 0)
         interaction_round_count = max((int(item.get("round_no", 0) or 0) for item in interactions), default=0)
         round_count = stored_round_count or interaction_round_count
-        evidence_pool = self._extract_evidence(interactions, agents)
-
         baseline_records = self.store.list_checkpoint_records(simulation_id, checkpoint_kind="baseline")
         final_records = self.store.list_checkpoint_records(simulation_id, checkpoint_kind="final")
         metric_deltas: list[dict[str, Any]] = []
@@ -234,22 +231,29 @@ class ReportService:
         for question in analysis_questions:
             question_text = str(question.get("question", "")).strip()
             question_type = str(question.get("type", "scale")).strip()
-            raw_bullets = self._answer_guiding_question(
+            delta_entry = None
+            if question_type != "open-ended":
+                delta_entry = next((item for item in metric_deltas if item["metric_name"] == question.get("metric_name")), None)
+            raw_bullets, context_pack = self._answer_guiding_question(
                 simulation_id,
                 question_text,
-                agents,
-                interactions,
+                agent_count=len(agents),
+                question_type=question_type,
+                metric=delta_entry,
                 use_case=resolved_use_case,
                 section_type="analysis_section",
                 section_title=str(question.get("report_title") or question_text).strip(),
             )
+            pack_evidence = list(context_pack.get("top_discourse_evidence") or [])
             section_evidence = self._select_section_evidence(
                 question_text,
                 _bullets_to_text(raw_bullets),
-                evidence_pool,
+                pack_evidence,
                 limit=4,
             )
-            display_bullets = self._replace_references_in_bullets(raw_bullets, section_evidence or evidence_pool)
+            if not section_evidence:
+                section_evidence = pack_evidence[:4]
+            display_bullets = self._replace_references_in_bullets(raw_bullets, section_evidence)
             section: dict[str, Any] = {
                 "question": question_text,
                 "report_title": question.get("report_title", question_text[:60]),
@@ -257,10 +261,8 @@ class ReportService:
                 "bullets": display_bullets,
                 "evidence": section_evidence,
             }
-            if question_type != "open-ended":
-                delta_entry = next((item for item in metric_deltas if item["metric_name"] == question.get("metric_name")), None)
-                if delta_entry:
-                    section["metric"] = delta_entry
+            if delta_entry:
+                section["metric"] = delta_entry
             sections.append(section)
 
         insight_blocks: list[dict[str, Any]] = []
@@ -289,25 +291,29 @@ class ReportService:
         for preset in preset_section_configs:
             title = str(preset.get("title", "")).strip()
             prompt = str(preset.get("prompt", "")).strip()
-            raw_bullets = self._answer_guiding_question(
+            raw_bullets, context_pack = self._answer_guiding_question(
                 simulation_id,
                 prompt,
-                agents,
-                interactions,
+                agent_count=len(agents),
+                question_type="preset",
+                metric=None,
                 use_case=resolved_use_case,
                 section_type="preset_section",
                 section_title=title or "Preset Section",
             )
+            pack_evidence = list(context_pack.get("top_discourse_evidence") or [])
             section_evidence = self._select_section_evidence(
                 title or prompt,
                 _bullets_to_text(raw_bullets),
-                evidence_pool,
+                pack_evidence,
                 limit=4,
             )
+            if not section_evidence:
+                section_evidence = pack_evidence[:4]
             preset_sections.append(
                 {
                     "title": title,
-                    "bullets": self._replace_references_in_bullets(raw_bullets, section_evidence or evidence_pool),
+                    "bullets": self._replace_references_in_bullets(raw_bullets, section_evidence),
                 }
             )
 
@@ -334,6 +340,11 @@ class ReportService:
             "sections": sections,
             "insight_blocks": insight_blocks,
             "preset_sections": preset_sections,
+            "zep_context_used": self.memory.zep.enabled,
+            "graphiti_context_used": False,
+            "memory_backend": self.memory.memory_backend,
+            "context_backend": "zep" if self.memory.zep.enabled else "sqlite",
+            "context_pack_version": 1,
             "error": None,
         }
 
@@ -764,22 +775,27 @@ class ReportService:
         self,
         simulation_id: str,
         question: str,
-        agents: list[dict[str, Any]],
-        interactions: list[dict[str, Any]],
         *,
+        agent_count: int,
+        question_type: str,
+        metric: dict[str, Any] | None,
         use_case: str | None = None,
         section_type: str = "analysis_section",
         section_title: str | None = None,
-    ) -> list[str]:
+    ) -> tuple[list[str], dict[str, Any]]:
         resolved_section_title = str(section_title or question).strip() or "Report Section"
         limits = self._bullet_limits(section_type)
-        prompt_cfg = self.config.get_system_prompt_config("report_agent")
-        defaults = prompt_cfg.get("defaults", {}) if isinstance(prompt_cfg, dict) else {}
-        recent_char_limits = (defaults.get("recent_interactions_chars") or {}) if isinstance(defaults, dict) else {}
-        recent_char_limit = int(recent_char_limits.get(self.llm.provider, recent_char_limits.get("default", 20000)) or 20000)
         knowledge_context = "\n".join(self._knowledge_context_lines(self.store.get_knowledge_artifact(simulation_id) or {}))
         style_rules = self._resolve_report_writer_instructions(use_case)
         style_block = "\n".join(f"- {rule}" for rule in style_rules)
+        context_pack = self.memory.build_question_context_pack(
+            simulation_id,
+            question_text=question,
+            metric=metric,
+            question_type=question_type,
+            report_title=resolved_section_title,
+            limit=8,
+        )
         prompt = self.config.get_system_prompt_value(
             "report_agent",
             "prompts",
@@ -793,20 +809,40 @@ class ReportService:
             section_title=resolved_section_title,
             question=question,
             knowledge_context=knowledge_context or "- none",
-            agent_count=len(agents),
-            recent_interactions=json.dumps(interactions, ensure_ascii=False)[:recent_char_limit],
+            agent_count=agent_count,
+            context_pack_json=json.dumps(context_pack, ensure_ascii=False),
+            question_profile_json=json.dumps(context_pack.get("question_profile", {}), ensure_ascii=False),
+            metric_movement_json=json.dumps(context_pack.get("metric_movement", {}), ensure_ascii=False),
+            top_discourse_evidence_json=json.dumps(context_pack.get("top_discourse_evidence", []), ensure_ascii=False),
+            named_agent_snippets_json=json.dumps(context_pack.get("named_agent_snippets", []), ensure_ascii=False),
             style_block=style_block or "- none",
             min_bullets=limits["min_bullets"],
             max_bullets=limits["max_bullets"],
             max_words_per_bullet=limits["max_words_per_bullet"],
         )
-        return self._generate_structured_bullets(
-            prompt=prompt,
-            failure_key=section_type,
-            min_bullets=limits["min_bullets"],
-            max_bullets=limits["max_bullets"],
-            max_words_per_bullet=limits["max_words_per_bullet"],
+        return (
+            self._generate_structured_bullets(
+                prompt=prompt,
+                failure_key=section_type,
+                min_bullets=limits["min_bullets"],
+                max_bullets=limits["max_bullets"],
+                max_words_per_bullet=limits["max_words_per_bullet"],
+            ),
+            context_pack,
         )
+
+    def _format_memory_excerpt(self, episodes: list[dict[str, Any]], limit: int = 6) -> str:
+        lines: list[str] = []
+        for item in episodes[: max(1, int(limit))]:
+            actor_name = _clean_report_text(item.get("actor_name"))
+            title = _clean_report_text(item.get("title"))
+            content = _clean_report_text(item.get("content"))
+            prefix = actor_name or _clean_report_text(item.get("source_kind")) or "context"
+            if title:
+                lines.append(f"- {prefix} | {title}: {content}")
+            else:
+                lines.append(f"- {prefix}: {content}")
+        return "\n".join(lines)
 
     def _generate_structured_bullets(
         self,
@@ -976,40 +1012,14 @@ class ReportService:
         return self._failure_message("executive_summary")
 
     def _session_analysis_questions(self, simulation_id: str) -> list[dict[str, Any]]:
-        try:
-            conn = sqlite3.connect(self.settings.simulation_db_path)
-            row = conn.execute(
-                "SELECT analysis_questions FROM session_configs WHERE session_id = ?",
-                (simulation_id,),
-            ).fetchone()
-            conn.close()
-        except Exception:  # noqa: BLE001
-            return []
-        if not row or row[0] is None:
-            return []
-        raw = row[0]
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except Exception:  # noqa: BLE001
-                return []
+        payload = self.store.get_session_config(simulation_id)
+        raw = payload.get("analysis_questions") or []
         if not isinstance(raw, list):
             return []
         return [item for item in raw if isinstance(item, dict)]
 
     def _session_use_case(self, simulation_id: str) -> str | None:
-        try:
-            conn = sqlite3.connect(self.settings.simulation_db_path)
-            row = conn.execute(
-                "SELECT use_case FROM session_configs WHERE session_id = ?",
-                (simulation_id,),
-            ).fetchone()
-            conn.close()
-        except Exception:  # noqa: BLE001
-            return None
-        if not row or row[0] is None:
-            return None
-        use_case = str(row[0]).strip()
+        use_case = str(self.store.get_session_config(simulation_id).get("use_case") or "").strip()
         return use_case or None
 
     def _resolve_analysis_questions(self, *, simulation_id: str, use_case: str | None) -> list[dict[str, Any]]:

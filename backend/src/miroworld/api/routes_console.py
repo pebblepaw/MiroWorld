@@ -1,8 +1,10 @@
 import json
 from io import BytesIO
+import time
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
+import requests
+from fastapi import APIRouter, Body, Cookie, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -47,15 +49,18 @@ from miroworld.services.demo_service import DemoService
 from miroworld.services.knowledge_stream_service import KnowledgeStreamService
 from miroworld.services.scrape_service import ScrapeService
 from miroworld.services.simulation_stream_service import SimulationStreamService
+from miroworld.services.storage import SimulationStore, reset_store_user_context, set_store_user_context
 
 
 router = APIRouter(prefix="/api/v2/console", tags=["console"])
 compat_router = APIRouter(prefix="/api/v2", tags=["console-compat"])
+HOSTED_AUTH_COOKIE = "miroworld_hosted_auth"
+AUTH_CACHE_TTL_SECONDS = 60
+_AUTH_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _is_demo_session(session_id: str, settings: Settings) -> bool:
     """Check if session is in demo mode."""
-    from miroworld.services.storage import SimulationStore
     store = SimulationStore(settings.simulation_db_path)
     session = store.get_console_session(session_id)
     return session is not None and session.get("mode") == "demo"
@@ -94,6 +99,93 @@ def _parse_group_chat_request(body: dict[str, Any]) -> V2GroupChatRequest:
         return V2GroupChatRequest(**normalized)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+
+def _extract_bearer_token(authorization: str | None) -> str | None:
+    value = str(authorization or "").strip()
+    if not value:
+        return None
+    scheme, _, token = value.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    cleaned = token.strip()
+    return cleaned or None
+
+
+def _verify_supabase_user(token: str, settings: Settings) -> dict[str, Any]:
+    cached = _AUTH_CACHE.get(token)
+    now = time.time()
+    if cached and cached[0] > now:
+        return dict(cached[1])
+
+    base_url = str(settings.supabase_url or "").rstrip("/")
+    api_key = str(settings.supabase_publishable_key or settings.supabase_service_role_key or "").strip()
+    if not base_url or not api_key:
+        raise HTTPException(status_code=503, detail="Hosted auth is enabled but Supabase auth settings are incomplete.")
+
+    response = requests.get(
+        f"{base_url}/auth/v1/user",
+        headers={
+            "apikey": api_key,
+            "Authorization": f"Bearer {token}",
+        },
+        timeout=10,
+    )
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Supabase authentication failed.")
+
+    payload = response.json()
+    _AUTH_CACHE[token] = (now + AUTH_CACHE_TTL_SECONDS, payload)
+    return payload
+
+
+def _require_known_session(session_id: str, settings: Settings) -> None:
+    session = SimulationStore(settings.simulation_db_path).get_console_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+
+def require_hosted_user(
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+    authorization: str | None = Header(default=None),
+    hosted_auth_cookie: str | None = Cookie(default=None, alias=HOSTED_AUTH_COOKIE),
+):
+    if not settings.hosted_auth_enabled:
+        yield None
+        return
+
+    token = _extract_bearer_token(authorization) or str(hosted_auth_cookie or "").strip() or None
+    if not token:
+        response.delete_cookie(HOSTED_AUTH_COOKIE, path="/")
+        raise HTTPException(status_code=401, detail="Hosted auth requires a valid Supabase bearer token.")
+
+    payload = _verify_supabase_user(token, settings)
+    user_id = str(payload.get("id") or payload.get("sub") or "").strip()
+    if not user_id:
+        response.delete_cookie(HOSTED_AUTH_COOKIE, path="/")
+        raise HTTPException(status_code=401, detail="Supabase authentication did not return a user id.")
+
+    response.set_cookie(
+        HOSTED_AUTH_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        path="/",
+        max_age=3600,
+    )
+    token_ctx = set_store_user_context(user_id)
+    try:
+        yield user_id
+    finally:
+        try:
+            reset_store_user_context(token_ctx)
+        except ValueError:
+            # FastAPI may finalize sync generator dependencies in a different
+            # worker context. The request middleware still clears the scope.
+            pass
 
 
 @compat_router.get("/countries", response_model=list[V2CountryResponse])
@@ -162,6 +254,7 @@ def v2_providers(settings: Settings = Depends(get_settings)) -> list[V2ProviderR
 def v2_session_create(
     req: V2SessionCreateRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> V2SessionCreateResponse:
     provider = "google" if req.provider == "gemini" else req.provider
     try:
@@ -185,6 +278,7 @@ def v2_session_update_config(
     session_id: str,
     req: V2SessionConfigPatchRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> V2SessionConfigResponse:
     try:
         normalized_use_case = req.use_case
@@ -211,6 +305,7 @@ def v2_session_update_config(
 def create_session(
     req: ConsoleSessionCreateRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> ConsoleSessionResponse:
     payload = ConsoleService(settings).create_session(
         req.session_id,
@@ -249,6 +344,7 @@ def provider_models(
 def get_session_model(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> ConsoleSessionModelConfigResponse:
     payload = ConsoleService(settings).get_session_model_config(session_id)
     return ConsoleSessionModelConfigResponse(**payload)
@@ -259,6 +355,7 @@ def update_session_model(
     session_id: str,
     req: ConsoleSessionModelConfigRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> ConsoleSessionModelConfigResponse:
     payload = ConsoleService(settings).update_session_model_config(
         session_id,
@@ -276,6 +373,7 @@ async def process_knowledge(
     session_id: str,
     req: ConsoleKnowledgeProcessRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> KnowledgeArtifactResponse:
     # Check if demo mode with cached data
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
@@ -304,6 +402,7 @@ async def upload_knowledge(
     guiding_prompt: str | None = Form(default=None),
     demographic_focus: str | None = Form(default=None),
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> KnowledgeArtifactResponse:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         demo_service = _get_demo_service(settings)
@@ -324,7 +423,9 @@ async def upload_knowledge(
 def knowledge_stream(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> StreamingResponse:
+    _require_known_session(session_id, settings)
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         demo_service = _get_demo_service(settings)
         knowledge = demo_service.get_knowledge_artifact(session_id) or {}
@@ -346,9 +447,10 @@ def inject_knowledge(
     session_id: str,
     artifact: dict[str, Any] = Body(...),
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> KnowledgeArtifactResponse:
     """Inject a pre-built knowledge artifact into a session (for cache replay)."""
-    from miroworld.services.storage import SimulationStore
+    _require_known_session(session_id, settings)
     store = SimulationStore(settings.simulation_db_path)
     artifact["session_id"] = session_id
     store.save_knowledge_artifact(session_id, artifact)
@@ -360,9 +462,9 @@ def scrape_document(
     session_id: str,
     req: ConsoleScrapeRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> ConsoleScrapeResponse:
-    del session_id
-    del settings
+    _require_known_session(session_id, settings)
     scraper = ScrapeService()
     try:
         payload = scraper.scrape(req.url)
@@ -377,6 +479,7 @@ def scrape_document(
 def session_filters(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> ConsoleDynamicFiltersResponse:
     try:
         payload = ConsoleService(settings).get_dynamic_filters(session_id)
@@ -391,6 +494,7 @@ def token_usage_estimate(
     agents: int = Query(default=250, ge=1, le=2000),
     rounds: int = Query(default=5, ge=1, le=100),
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> TokenUsageEstimateResponse:
     payload = ConsoleService(settings).estimate_token_usage(
         session_id,
@@ -404,6 +508,7 @@ def token_usage_estimate(
 def token_usage_runtime(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> TokenUsageRuntimeResponse:
     payload = ConsoleService(settings).get_runtime_token_usage(session_id)
     return TokenUsageRuntimeResponse(**payload)
@@ -414,6 +519,7 @@ def preview_population(
     session_id: str,
     req: PopulationPreviewRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> PopulationArtifactResponse:
     # Check if demo mode with cached data
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
@@ -431,6 +537,7 @@ def preview_population(
 def simulation_state(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> SimulationStateResponse:
     # Check if demo mode with cached data
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
@@ -448,6 +555,7 @@ def simulation_state(
 def simulation_metrics(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> SimulationStateResponse:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         demo_service = _get_demo_service(settings)
@@ -464,6 +572,7 @@ def simulation_start(
     session_id: str,
     req: SimulationStartRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> SimulationStateResponse:
     # Check if demo mode with cached data
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
@@ -488,6 +597,7 @@ def simulate(
     session_id: str,
     req: SimulationQuickStartRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> SimulationStateResponse:
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         demo_service = _get_demo_service(settings)
@@ -518,7 +628,9 @@ def simulate(
 def simulation_stream(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> StreamingResponse:
+    _require_known_session(session_id, settings)
     # Check if demo mode with cached data
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
         # Return cached events from demo cache
@@ -547,6 +659,7 @@ def simulation_stream(
 def v2_report(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> V2ReportResponse:
     try:
         payload = ConsoleService(settings).get_v2_report(session_id)
@@ -561,6 +674,7 @@ def v2_report(
 def v2_report_export(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> StreamingResponse:
     try:
         filename, payload = ConsoleService(settings).export_v2_report_docx(session_id)
@@ -582,6 +696,7 @@ def v2_group_chat(
     session_id: str,
     req: dict[str, Any] = Body(...),
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> V2GroupChatResponse:
     try:
         parsed = _parse_group_chat_request(req)
@@ -606,6 +721,7 @@ def v2_group_chat_agents(
     top_n: int = Query(default=5, ge=1, le=20),
     metric_name: str | None = Query(None),
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> V2GroupChatAgentsResponse:
     try:
         payload = ConsoleService(settings).get_group_chat_candidates(
@@ -625,6 +741,7 @@ def v2_agent_chat(
     agent_id: str,
     req: V2AgentChatRequest,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> V2AgentChatResponse:
     try:
         payload = ConsoleService(settings).agent_chat_v2(session_id, agent_id, req.message)
@@ -637,6 +754,7 @@ def v2_agent_chat(
 def report_generate(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> V2ReportResponse:
     # Check if demo mode with cached data
     if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
@@ -670,6 +788,7 @@ def generate_question_metadata(
 def get_analysis_questions(
     session_id: str,
     settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
 ) -> dict[str, Any]:
     """Get the analysis questions configured for a session's use case."""
     return ConsoleService(settings).get_session_analysis_questions(session_id)

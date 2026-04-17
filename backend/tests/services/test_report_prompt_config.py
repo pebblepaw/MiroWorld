@@ -94,12 +94,19 @@ def _seed_report_inputs(store: SimulationStore) -> str:
 def test_answer_guiding_question_requests_structured_bullet_json(monkeypatch, tmp_path: Path) -> None:
     service = ReportService(_make_settings(tmp_path))
     captured: dict[str, str] = {}
+    context_pack = {
+        "question_profile": {"question": "What is the main concern?", "report_title": "Main Concern"},
+        "metric_movement": {"metric_name": "approval_rate", "delta": -18.0},
+        "top_discourse_evidence": [{"agent_name": "Alex Tan", "quote": "Affordability is the main concern."}],
+        "named_agent_snippets": [{"actor_name": "Alex Tan", "snippet": "Affordability is the main concern."}],
+    }
 
     monkeypatch.setattr(
         service.store,
         "get_knowledge_artifact",
         lambda _simulation_id: {"summary": "Housing policy summary"},
     )
+    monkeypatch.setattr(service.memory, "build_question_context_pack", lambda *args, **kwargs: context_pack)
 
     def fake_complete_required(prompt: str, system_prompt: str) -> str:
         captured["prompt"] = prompt
@@ -108,22 +115,24 @@ def test_answer_guiding_question_requests_structured_bullet_json(monkeypatch, tm
 
     monkeypatch.setattr(service.llm, "complete_required", fake_complete_required)
 
-    interactions = [{"content": "A" * 30000, "round_no": 1, "actor_agent_id": "agent-0001"}]
-    agents = [{"agent_id": "agent-0001", "persona": {"planning_area": "Bishan"}}]
-
-    response = service._answer_guiding_question(
+    response, returned_pack = service._answer_guiding_question(
         "session-report",
         "What is the main concern?",
-        agents,
-        interactions,
+        agent_count=1,
+        question_type="scale",
+        metric={"metric_name": "approval_rate", "metric_label": "Approval Rate"},
         use_case="public-policy-testing",
+        section_title="Main Concern",
     )
 
     assert response == [
         "Affordability remained the main concern across early rounds.",
         "Safeguards improved confidence by the final checkpoint.",
     ]
+    assert returned_pack == context_pack
     assert '"bullets"' in captured["prompt"]
+    assert "Context pack JSON" in captured["prompt"]
+    assert "Alex Tan" in captured["prompt"]
     assert "Example output" in captured["prompt"]
     assert "Return valid JSON only" in captured["system_prompt"]
 
@@ -166,6 +175,27 @@ def test_build_v2_report_repairs_invalid_section_json_and_keeps_bullets(monkeypa
                 "prompt": "What should policymakers do next?",
             }
         ],
+    )
+    monkeypatch.setattr(
+        service.memory,
+        "build_question_context_pack",
+        lambda *args, **kwargs: {
+            "question_profile": {"question": kwargs.get("question_text")},
+            "metric_movement": kwargs.get("metric") or {},
+            "top_discourse_evidence": [
+                {
+                    "agent_name": "Alex Tan",
+                    "quote": "Affordability dominated the discussion.",
+                    "content": "Affordability dominated the discussion.",
+                }
+            ],
+            "named_agent_snippets": [
+                {
+                    "actor_name": "Alex Tan",
+                    "snippet": "Affordability dominated the discussion.",
+                }
+            ],
+        },
     )
 
     def fake_complete_required(prompt: str, system_prompt: str) -> str:

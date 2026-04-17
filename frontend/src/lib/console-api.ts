@@ -1,4 +1,5 @@
 import type { SimPost } from "@/data/mockData";
+import { getSupabaseAccessToken } from "@/lib/supabase-client";
 
 export type ConsoleMode = "demo" | "live";
 export type BootMode = "demo" | "demo-static" | "live";
@@ -633,6 +634,22 @@ const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 let demoOutputPromise: Promise<DemoOutput> | null = null;
 let demoSessionConfig: DemoSessionConfig | null = null;
 
+async function buildAuthorizedInit(init: RequestInit = {}): Promise<RequestInit> {
+  const nextHeaders = new Headers(init.headers || {});
+  const token = await getSupabaseAccessToken().catch(() => null);
+  if (token && !nextHeaders.has("Authorization")) {
+    nextHeaders.set("Authorization", `Bearer ${token}`);
+  }
+  return {
+    ...init,
+    headers: nextHeaders,
+  };
+}
+
+async function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return globalThis.fetch(input, await buildAuthorizedInit(init));
+}
+
 export function resetBundledDemoState(): void {
   demoOutputPromise = null;
   demoSessionConfig = null;
@@ -670,7 +687,7 @@ export async function getBundledDemoOutput(): Promise<Record<string, unknown>> {
 async function loadBundledDemoOutput(): Promise<DemoOutput> {
   if (!demoOutputPromise) {
     demoOutputPromise = (async () => {
-      const response = await fetch(demoOutputPath());
+      const response = await authenticatedFetch(demoOutputPath());
       await ensureResponseOk(response);
       return response.json() as Promise<DemoOutput>;
     })();
@@ -1223,7 +1240,7 @@ async function fetchChatWithTimeout(
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await authenticatedFetch(url, { ...init, signal: controller.signal });
   } catch (error) {
     const isAbortError =
       (error instanceof DOMException && error.name === "AbortError")
@@ -1305,7 +1322,7 @@ export async function createConsoleSession(
       mode,
     };
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1321,19 +1338,19 @@ export async function getV2Countries(): Promise<V2CountryResponse[]> {
   if (isStaticDemoBootMode()) {
     return STATIC_COUNTRIES.map((country) => ({ ...country }));
   }
-  const response = await fetch(`${API_BASE}/api/v2/countries`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/countries`);
   return parseJson(response);
 }
 
 export async function downloadCountryDataset(countryId: string): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryId)}/download`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryId)}/download`, {
     method: "POST",
   });
   return parseJson(response);
 }
 
 export async function getCountryDownloadStatus(countryId: string): Promise<V2CountryResponse> {
-  const response = await fetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryId)}/download-status`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryId)}/download-status`);
   return parseJson(response);
 }
 
@@ -1404,7 +1421,7 @@ export async function getCountryUiConfig(countryCode: string): Promise<CountryUi
     return STATIC_UI_CONFIGS[normalized] ?? STATIC_UI_CONFIGS["sg"] ?? {};
   }
   try {
-    const response = await fetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryCode)}/ui-config`);
+    const response = await authenticatedFetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryCode)}/ui-config`);
     return await parseJson(response);
   } catch {
     const normalized = countryCode.trim().toLowerCase();
@@ -1416,7 +1433,7 @@ export async function getV2Providers(): Promise<V2ProviderResponse[]> {
   if (isStaticDemoBootMode()) {
     return STATIC_V2_PROVIDERS.map((provider) => ({ ...provider, models: [...provider.models] }));
   }
-  const response = await fetch(`${API_BASE}/api/v2/providers`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/providers`);
   return parseJson(response);
 }
 
@@ -1432,7 +1449,7 @@ export async function createV2Session(payload: V2SessionCreateRequest): Promise<
     });
     return { session_id: config.session_id };
   }
-  const response = await fetch(`${API_BASE}/api/v2/session/create`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/session/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1469,7 +1486,7 @@ export async function updateV2SessionConfig(
     });
     return buildDemoConfigResponse(config);
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/config`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/config`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1487,7 +1504,7 @@ export async function getModelProviderCatalog(): Promise<ConsoleModelProviderCat
       providers: STATIC_MODEL_CATALOG.map((provider) => ({ ...provider })),
     };
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/model/providers`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/model/providers`);
   return parseJson(response);
 }
 
@@ -1511,7 +1528,7 @@ export async function listProviderModels(
   }
   const query = params.toString();
   const suffix = query ? `?${query}` : '';
-  const response = await fetch(`${API_BASE}/api/v2/console/model/providers/${provider}/models${suffix}`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/model/providers/${provider}/models${suffix}`);
   return parseJson(response);
 }
 
@@ -1520,7 +1537,7 @@ export async function getSessionModelConfig(sessionId: string): Promise<ConsoleS
     const config = await ensureDemoSessionConfig({ session_id: sessionId });
     return buildDemoModelConfig(config);
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/model`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/model`);
   return parseJson(response);
 }
 
@@ -1540,7 +1557,7 @@ export async function updateSessionModelConfig(
     });
     return buildDemoModelConfig(config);
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/model`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/model`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -1562,7 +1579,7 @@ export async function uploadKnowledgeFile(
     formData.append("guiding_prompt", guidingPrompt.trim());
   }
 
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/knowledge/upload`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/knowledge/upload`, {
     method: "POST",
     body: formData,
   });
@@ -1576,7 +1593,7 @@ export async function processKnowledgeDocuments(
   if (isStaticDemoBootMode()) {
     return getDemoKnowledgeArtifact(sessionId);
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/knowledge/process`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/knowledge/process`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1656,7 +1673,7 @@ export async function scrapeKnowledgeUrl(sessionId: string, url: string): Promis
       length: url.length,
     };
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/scrape`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/scrape`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
@@ -1665,7 +1682,7 @@ export async function scrapeKnowledgeUrl(sessionId: string, url: string): Promis
 }
 
 export async function getDynamicFilters(sessionId: string): Promise<ConsoleDynamicFiltersResponse> {
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/filters`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/filters`);
   return parseJson(response);
 }
 
@@ -1678,12 +1695,12 @@ export async function getTokenUsageEstimate(
     agents: String(agents),
     rounds: String(rounds),
   });
-  const response = await fetch(`${API_BASE}/api/v2/token-usage/${sessionId}/estimate?${params.toString()}`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/token-usage/${sessionId}/estimate?${params.toString()}`);
   return parseJson(response);
 }
 
 export async function getTokenUsageRuntime(sessionId: string): Promise<TokenUsageRuntimeResponse> {
-  const response = await fetch(`${API_BASE}/api/v2/token-usage/${sessionId}`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/token-usage/${sessionId}`);
   return parseJson(response);
 }
 
@@ -1703,7 +1720,7 @@ export async function previewPopulation(
   if (isStaticDemoBootMode()) {
     return getDemoPopulationArtifact(sessionId);
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/sampling/preview`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/sampling/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1723,7 +1740,7 @@ export async function startSimulation(
   if (isStaticDemoBootMode()) {
     return getDemoSimulationStatePayload(sessionId);
   }
-  const simulateResponse = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/simulate`, {
+  const simulateResponse = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1740,7 +1757,7 @@ export async function getSimulationState(sessionId: string): Promise<SimulationS
   if (isStaticDemoBootMode()) {
     return getDemoSimulationStatePayload(sessionId);
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/simulation/state`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/simulation/state`);
   return parseJson(response);
 }
 
@@ -1752,7 +1769,7 @@ export async function getSimulationMetrics(sessionId: string): Promise<Record<st
       ...state.counters,
     };
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/simulation/metrics`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/simulation/metrics`);
   return parseJson(response);
 }
 
@@ -1764,7 +1781,7 @@ export async function generateReport(sessionId: string): Promise<StructuredRepor
   if (isStaticDemoBootMode()) {
     return getDemoReportPayload(sessionId);
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/report/generate`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/report/generate`, {
     method: "POST",
   });
   return parseJson(response);
@@ -1774,7 +1791,7 @@ export async function getStructuredReport(sessionId: string): Promise<Structured
   if (isStaticDemoBootMode()) {
     return getDemoReportPayload(sessionId);
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/report`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/report`);
   return parseJson(response);
 }
 
@@ -1782,7 +1799,7 @@ export async function exportReportDocx(sessionId: string): Promise<Blob> {
   if (isStaticDemoBootMode()) {
     throw new Error("Report export is unavailable in demo-static mode.");
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/report/export`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/report/export`);
   await ensureResponseOk(response);
   return response.blob();
 }
@@ -1794,7 +1811,7 @@ export async function generateQuestionMetadata(
   if (isStaticDemoBootMode()) {
     return buildStaticQuestionMetadata(question);
   }
-  const response = await fetch(`${API_BASE}/api/v2/questions/generate-metadata`, {
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/questions/generate-metadata`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, use_case: useCase }),
@@ -1813,7 +1830,7 @@ export async function getAnalysisQuestions(
       questions: config.analysis_questions.map((question) => ({ ...question })),
     };
   }
-  const response = await fetch(`${API_BASE}/api/v2/session/${sessionId}/analysis-questions`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/session/${sessionId}/analysis-questions`);
   return parseJson(response);
 }
 
@@ -1879,7 +1896,7 @@ export async function getGroupChatAgents(
   url.searchParams.set("segment", payload.segment);
   if (payload.metric_name) url.searchParams.set("metric_name", payload.metric_name);
   if (payload.top_n) url.searchParams.set("top_n", String(payload.top_n));
-  const response = await fetch(url.toString());
+  const response = await authenticatedFetch(url.toString());
   return parseJson(response);
 }
 
@@ -1927,7 +1944,7 @@ export async function getAnalyticsPolarization(sessionId: string, metricName?: s
   }
   const url = new URL(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/polarization`);
   if (metricName) url.searchParams.set("metric_name", metricName);
-  const response = await fetch(url.toString());
+  const response = await authenticatedFetch(url.toString());
   return parseJson(response);
 }
 
@@ -1938,7 +1955,7 @@ export async function getAnalyticsOpinionFlow(sessionId: string, metricName?: st
   }
   const url = new URL(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/opinion-flow`);
   if (metricName) url.searchParams.set("metric_name", metricName);
-  const response = await fetch(url.toString());
+  const response = await authenticatedFetch(url.toString());
   return parseJson(response);
 }
 
@@ -1947,7 +1964,7 @@ export async function getAnalyticsInfluence(sessionId: string): Promise<Record<s
     const demo = await loadBundledDemoOutput();
     return { ...((demo.analytics?.influence as Record<string, unknown> | undefined) ?? {}) };
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/influence`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/influence`);
   return parseJson(response);
 }
 
@@ -1956,7 +1973,7 @@ export async function getAnalyticsCascades(sessionId: string): Promise<Record<st
     const demo = await loadBundledDemoOutput();
     return { ...((demo.analytics?.cascades as Record<string, unknown> | undefined) ?? {}) };
   }
-  const response = await fetch(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/cascades`);
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/cascades`);
   return parseJson(response);
 }
 
@@ -1980,7 +1997,7 @@ export async function getAnalyticsAgentStances(sessionId: string, metricName?: s
   }
   const url = new URL(`${API_BASE}/api/v2/console/session/${sessionId}/analytics/agent-stances`);
   if (metricName) url.searchParams.set("metric_name", metricName);
-  const response = await fetch(url.toString());
+  const response = await authenticatedFetch(url.toString());
   return parseJson(response);
 }
 
