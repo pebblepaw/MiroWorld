@@ -1,11 +1,21 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "@/App";
-import { resetBundledDemoState } from "@/lib/console-api";
 
-vi.mock("@/components/AppSidebar", () => ({
-  AppSidebar: () => <aside>Sidebar</aside>,
+const authState = {
+  isLoading: false,
+  session: null as null | { access_token: string },
+  user: null as null | { id: string; email?: string | null },
+  signInWithPassword: vi.fn(),
+  signUpWithPassword: vi.fn(),
+  signOut: vi.fn(),
+};
+
+vi.mock("@/contexts/AuthContext", () => ({
+  AuthProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  useAuth: () => authState,
 }));
 
 vi.mock("@/components/StepProgress", () => ({
@@ -33,112 +43,78 @@ vi.mock("@/pages/Analytics", () => ({
 }));
 
 vi.mock("@/components/OnboardingModal", () => ({
-  OnboardingModal: ({ isOpen }: { isOpen: boolean }) => (isOpen ? <div>Configure your simulation environment</div> : null),
+  OnboardingModal: ({ isOpen }: { isOpen: boolean }) => (isOpen ? <div>Hosted Onboarding</div> : null),
 }));
 
-function makeResponse(body: unknown) {
-  return {
-    ok: true,
-    json: async () => body,
-  } as Response;
-}
-
-function makeDemoOutput(sessionId: string) {
-  return {
-    session: {
-      session_id: sessionId,
-    },
-    source_run: {
-      country: "singapore",
-      use_case: "public-policy-testing",
-      provider: "google",
-      model: "gemini-2.5-flash-lite",
-      rounds: 10,
-    },
-    analysis_questions: [
-      {
-        question: "Do you approve of this policy?",
-        type: "scale",
-        metric_name: "approval_rate",
-        report_title: "Approval Rate",
-      },
-    ],
-    population: {
-      session_id: sessionId,
-      sample_count: 1,
-      sample_seed: 7,
-      sampled_personas: [
-        {
-          agent_id: "agent-demo-1",
-          persona: {
-            display_name: "Aisha Rahman",
-            age: 34,
-            sex: "Female",
-            occupation: "teacher",
-            planning_area: "Bedok",
-          },
-          selection_reason: {
-            score: 0.9,
-          },
-        },
-      ],
-    },
-    simulationState: {
-      session_id: sessionId,
-      status: "completed",
-      planned_rounds: 10,
-      current_round: 10,
-      counters: {
-        posts: 6,
-        comments: 12,
-        reactions: 18,
-        active_authors: 1,
-      },
-      top_threads: [],
-    },
-  };
-}
-
-describe("App demo-static modal behavior", () => {
-  const originalFetch = global.fetch;
-
+describe("Hosted app entry flow", () => {
   beforeEach(() => {
-    vi.stubEnv("VITE_BOOT_MODE", "demo-static");
-    window.sessionStorage.clear();
-    resetBundledDemoState();
+    window.history.pushState({}, "", "/");
+    authState.isLoading = false;
+    authState.session = null;
+    authState.user = null;
+    authState.signInWithPassword.mockReset();
+    authState.signUpWithPassword.mockReset();
+    authState.signOut.mockReset();
+    authState.signUpWithPassword.mockResolvedValue({ session: null });
+    authState.signInWithPassword.mockResolvedValue({ session: { access_token: "session-token" } });
+    authState.signOut.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
-    window.sessionStorage.clear();
-    resetBundledDemoState();
-    global.fetch = originalFetch;
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
-  it("keeps the onboarding modal closed when reloading into an existing demo-static session", async () => {
-    window.sessionStorage.setItem(
-      "miroworld-app-state",
-      JSON.stringify({
-        sessionId: "session-cca48d2e",
-        currentStep: 3,
-        completedSteps: [1, 2, 3],
-        country: "singapore",
-        useCase: "public-policy-testing",
+  it("renders the public auth entry and submits sign up and log in actions while signed out", async () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/work email/i), {
+      target: { value: "founder@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: "correct horse battery staple" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /create account/i }));
+    await waitFor(() =>
+      expect(authState.signUpWithPassword).toHaveBeenCalledWith({
+        email: "founder@example.com",
+        password: "correct horse battery staple",
       }),
     );
 
-    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/demo-output.json")) {
-        return makeResponse(makeDemoOutput("session-cca48d2e"));
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    fireEvent.click(screen.getByRole("tab", { name: /log in/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^log in$/i }));
+    await waitFor(() =>
+      expect(authState.signInWithPassword).toHaveBeenCalledWith({
+        email: "founder@example.com",
+        password: "correct horse battery staple",
+      }),
+    );
+
+    expect(screen.queryByText("Hosted Onboarding")).not.toBeInTheDocument();
+  });
+
+  it("renders the public pricing page with starter, pro, and team plans", () => {
+    window.history.pushState({}, "", "/pricing");
 
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Simulation Screen")).toBeInTheDocument());
-    expect(screen.queryByText("Configure your simulation environment")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Starter", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pro", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Team", level: 2 })).toBeInTheDocument();
+    expect(screen.getAllByText(/informational preview/i).length).toBeGreaterThan(0);
+  });
+
+  it("renders the gated workspace and exposes log out while signed in", () => {
+    authState.session = { access_token: "session-token" };
+    authState.user = { id: "user-1", email: "founder@example.com" };
+
+    render(<App />);
+
+    expect(screen.getByText("Policy Upload Screen")).toBeInTheDocument();
+    expect(screen.getByText("Hosted Onboarding")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /log out/i }));
+    expect(authState.signOut).toHaveBeenCalledTimes(1);
   });
 });
