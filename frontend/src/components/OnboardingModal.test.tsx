@@ -147,12 +147,22 @@ describe("Hosted OnboardingModal", () => {
 
   it("downloads a required hosted dataset before launch", async () => {
     let downloadStatusCalls = 0;
+    let createRequestBody: Record<string, unknown> | null = null;
+    const missingCatalog = [
+      {
+        ...countriesDownloadRequiredResponse[0],
+        dataset_ready: false,
+        download_required: true,
+        download_status: "missing",
+      },
+      countriesDownloadRequiredResponse[1],
+    ];
 
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
 
       if (url.endsWith("/api/v2/countries")) {
-        return makeResponse(countriesDownloadRequiredResponse);
+        return makeResponse(missingCatalog);
       }
 
       if (url.endsWith("/api/v2/countries/usa/download")) {
@@ -162,7 +172,7 @@ describe("Hosted OnboardingModal", () => {
       if (url.endsWith("/api/v2/countries/usa/download-status")) {
         downloadStatusCalls += 1;
         return makeResponse({
-          ...countriesDownloadRequiredResponse[1],
+          ...missingCatalog[1],
           dataset_ready: true,
           download_required: false,
           download_status: "ready",
@@ -170,9 +180,10 @@ describe("Hosted OnboardingModal", () => {
       }
 
       if (url.endsWith("/api/v2/session/create")) {
+        createRequestBody = JSON.parse(String(init?.body ?? "{}"));
         return makeResponse({
           session_id: "hosted-session-download",
-          received: JSON.parse(String(init?.body ?? "{}")),
+          received: createRequestBody,
         });
       }
 
@@ -198,5 +209,11 @@ describe("Hosted OnboardingModal", () => {
     fireEvent.click(launchButton);
 
     await waitFor(() => expect(screen.getByTestId("session-id")).toHaveTextContent("hosted-session-download"));
+    expect(createRequestBody).toMatchObject({
+      country: "usa",
+      provider: "google",
+      model: "gemini-2.5-flash-lite",
+      use_case: "public-policy-testing",
+    });
   });
 });

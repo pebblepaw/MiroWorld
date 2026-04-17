@@ -162,7 +162,20 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     setCountry(resolveInitialCountry(app.country || "singapore", countries));
     setUseCase(normalizeUseCaseId(app.useCase || "public-policy-testing"));
     setLaunchError("");
-  }, [app.country, app.useCase, countries, isOpen]);
+  }, [app.country, app.useCase, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    setCountry((current) => {
+      if (countries.some((entry) => entry.id === current)) {
+        return current;
+      }
+      return resolveInitialCountry(app.country || "singapore", countries);
+    });
+  }, [app.country, countries, isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
