@@ -124,3 +124,30 @@ def test_hosted_knowledge_artifact_route_returns_saved_artifact(monkeypatch, tmp
     assert response.status_code == 200
     assert response.json()["summary"] == "Hosted artifact summary"
     app.dependency_overrides.clear()
+
+
+def test_hosted_knowledge_artifact_route_returns_no_content_when_not_ready(monkeypatch, tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app.dependency_overrides[get_settings] = lambda: settings
+    monkeypatch.setattr(routes_console.requests, "get", lambda *args, **kwargs: _OkResponse())
+
+    store = routes_console.SimulationStore(settings.simulation_db_path)
+    token = set_store_user_context("user-hosted-123")
+    try:
+        store.upsert_console_session(
+            session_id="session-knowledge-missing",
+            mode="live",
+            status="created",
+        )
+    finally:
+        reset_store_user_context(token)
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/v2/console/session/session-knowledge-missing/knowledge",
+        headers={"Authorization": "Bearer hosted-artifact-token"},
+    )
+
+    assert response.status_code == 204
+    assert response.text == ""
+    app.dependency_overrides.clear()

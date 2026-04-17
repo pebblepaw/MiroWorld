@@ -850,6 +850,7 @@ describe("PolicyUpload", () => {
         }
         return {
           ok: true,
+          headers: new Headers({ "Content-Type": "application/json" }),
           json: async () => baseKnowledgeArtifact(),
         } as Response;
       }

@@ -1610,7 +1610,11 @@ export async function getKnowledgeArtifact(sessionId: string): Promise<Knowledge
     return getDemoKnowledgeArtifact(sessionId);
   }
   const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/knowledge`);
-  if (response.status === 404) {
+  if (response.status === 404 || response.status === 204) {
+    return null;
+  }
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("application/json")) {
     return null;
   }
   return parseJson(response);
