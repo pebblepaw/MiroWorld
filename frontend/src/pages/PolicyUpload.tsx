@@ -12,6 +12,7 @@ import {
   createConsoleSession,
   generateQuestionMetadata,
   getAnalysisQuestions,
+  getKnowledgeArtifact,
   getBundledDemoOutput,
   isLiveBootMode,
   isStaticDemoBootMode,
@@ -108,6 +109,12 @@ function buildSafeDocumentName(rawName: string, fallback: string) {
   const trimmed = rawName.trim();
   if (!trimmed) return fallback;
   return trimmed.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-").toLowerCase();
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function getProcessingProviderLabel(provider: string) {
@@ -609,6 +616,60 @@ export default function PolicyUpload() {
     setKnowledgeGraphReady(Boolean(nextArtifact));
   }, [setKnowledgeArtifact, setKnowledgeGraphReady]);
 
+  const resolveKnowledgeArtifactWithFallback = useCallback(
+    async (
+      activeSessionId: string,
+      requestFactory: (signal?: AbortSignal) => Promise<KnowledgeArtifact>,
+    ): Promise<KnowledgeArtifact> => {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      let requestSettled = false;
+
+      const requestPromise = requestFactory(controller?.signal)
+        .then((artifact) => {
+          requestSettled = true;
+          return artifact;
+        })
+        .catch((error) => {
+          requestSettled = true;
+          if (controller?.signal.aborted) {
+            return new Promise<KnowledgeArtifact>(() => {
+              // Swallow the aborted request once the fallback artifact wins.
+            });
+          }
+          throw error;
+        });
+
+      const artifactPollPromise = (async () => {
+        if (!isLiveBootMode()) {
+          return requestPromise;
+        }
+
+        const startedAt = Date.now();
+        const pollDelayMs = 3_000;
+        const timeoutMs = 10 * 60_000;
+
+        while (!requestSettled && Date.now() - startedAt < timeoutMs) {
+          await delay(pollDelayMs);
+          if (controller?.signal.aborted) {
+            return new Promise<KnowledgeArtifact>(() => {
+              // Stop polling once the primary request wins.
+            });
+          }
+          const artifact = await getKnowledgeArtifact(activeSessionId);
+          if (artifact) {
+            controller?.abort();
+            return artifact;
+          }
+        }
+
+        return requestPromise;
+      })();
+
+      return Promise.race([requestPromise, artifactPollPromise]);
+    },
+    [],
+  );
+
   const persistAnalysisQuestionsNow = useCallback((cleanQuestions: Record<string, unknown>[]) => {
     if (!sessionId) {
       return Promise.resolve();
@@ -976,10 +1037,17 @@ export default function PolicyUpload() {
               source_path: file.name,
             })),
           );
-          const artifact = await processKnowledgeDocuments(resolvedSessionId, {
-            documents,
-            guiding_prompt: undefined,
-          });
+          const artifact = await resolveKnowledgeArtifactWithFallback(
+            resolvedSessionId,
+            (signal) => processKnowledgeDocuments(
+              resolvedSessionId,
+              {
+                documents,
+                guiding_prompt: undefined,
+              },
+              { signal },
+            ),
+          );
           const artifactSessionId = String(artifact.session_id ?? '').trim();
           if (artifactSessionId && artifactSessionId !== resolvedSessionId) {
             backendSessionId = artifactSessionId;
@@ -999,10 +1067,14 @@ export default function PolicyUpload() {
             percent: textFiles.length > 0 || serverParsedFiles.length > 1 ? Math.max(10, Math.round(((index + 1) / serverParsedFiles.length) * 85)) : 25,
             documentLabel: file.name,
           });
-          const artifact = await uploadKnowledgeFile(
+          const artifact = await resolveKnowledgeArtifactWithFallback(
             resolvedSessionId,
-            file,
-            undefined,
+            (signal) => uploadKnowledgeFile(
+              resolvedSessionId,
+              file,
+              undefined,
+              { signal },
+            ),
           );
           const artifactSessionId = String(artifact.session_id ?? '').trim();
           if (artifactSessionId && artifactSessionId !== resolvedSessionId) {
@@ -1116,6 +1188,7 @@ export default function PolicyUpload() {
     setKnowledgeGraphReady,
     ensureSession,
     commitKnowledgeArtifact,
+    resolveKnowledgeArtifactWithFallback,
     replaceAnalysisQuestionAtIndex,
     resetKnowledgeState,
     useCase,

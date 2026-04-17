@@ -395,6 +395,25 @@ async def process_knowledge(
     return KnowledgeArtifactResponse(**payload)
 
 
+@router.get("/session/{session_id}/knowledge", response_model=KnowledgeArtifactResponse)
+def get_knowledge(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
+) -> KnowledgeArtifactResponse:
+    _require_known_session(session_id, settings)
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        knowledge = demo_service.get_knowledge_artifact(session_id)
+        if knowledge:
+            return KnowledgeArtifactResponse(**knowledge)
+
+    knowledge = SimulationStore(settings.simulation_db_path).get_knowledge_artifact(session_id)
+    if not knowledge:
+        raise HTTPException(status_code=404, detail=f"Knowledge artifact not found for session '{session_id}'.")
+    return KnowledgeArtifactResponse(**knowledge)
+
+
 @router.post("/session/{session_id}/knowledge/upload", response_model=KnowledgeArtifactResponse)
 async def upload_knowledge(
     session_id: str,

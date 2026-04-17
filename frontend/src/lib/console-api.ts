@@ -1569,6 +1569,7 @@ export async function uploadKnowledgeFile(
   sessionId: string,
   file: File,
   guidingPrompt?: string,
+  options?: { signal?: AbortSignal },
 ): Promise<KnowledgeArtifact> {
   if (isStaticDemoBootMode()) {
     return getDemoKnowledgeArtifact(sessionId);
@@ -1582,6 +1583,7 @@ export async function uploadKnowledgeFile(
   const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/knowledge/upload`, {
     method: "POST",
     body: formData,
+    signal: options?.signal,
   });
   return parseJson(response);
 }
@@ -1589,6 +1591,7 @@ export async function uploadKnowledgeFile(
 export async function processKnowledgeDocuments(
   sessionId: string,
   payload: ConsoleKnowledgeProcessRequest,
+  options?: { signal?: AbortSignal },
 ): Promise<KnowledgeArtifact> {
   if (isStaticDemoBootMode()) {
     return getDemoKnowledgeArtifact(sessionId);
@@ -1597,7 +1600,19 @@ export async function processKnowledgeDocuments(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: options?.signal,
   });
+  return parseJson(response);
+}
+
+export async function getKnowledgeArtifact(sessionId: string): Promise<KnowledgeArtifact | null> {
+  if (isStaticDemoBootMode()) {
+    return getDemoKnowledgeArtifact(sessionId);
+  }
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/knowledge`);
+  if (response.status === 404) {
+    return null;
+  }
   return parseJson(response);
 }
 

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from miroworld.api import routes_console
 from miroworld.config import Settings, get_settings
 from miroworld.main import app
+from miroworld.services.storage import reset_store_user_context, set_store_user_context
 
 
 def _make_settings(tmp_path: Path) -> Settings:
@@ -83,4 +84,43 @@ def test_hosted_routes_accept_cookie_after_authenticated_call(monkeypatch, tmp_p
 
     assert followup.status_code == 200
     assert followup.json()["session_id"] == "session-cookie-auth"
+    app.dependency_overrides.clear()
+
+
+def test_hosted_knowledge_artifact_route_returns_saved_artifact(monkeypatch, tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app.dependency_overrides[get_settings] = lambda: settings
+    monkeypatch.setattr(routes_console.requests, "get", lambda *args, **kwargs: _OkResponse())
+
+    store = routes_console.SimulationStore(settings.simulation_db_path)
+    token = set_store_user_context("user-hosted-123")
+    try:
+        store.upsert_console_session(
+            session_id="session-knowledge-route",
+            mode="live",
+            status="knowledge_ready",
+        )
+        store.save_knowledge_artifact(
+            "session-knowledge-route",
+            {
+                "session_id": "session-knowledge-route",
+                "document": {"document_id": "doc-1", "paragraph_count": 1},
+                "summary": "Hosted artifact summary",
+                "entity_nodes": [],
+                "relationship_edges": [],
+                "entity_type_counts": {},
+                "processing_logs": [],
+            },
+        )
+    finally:
+        reset_store_user_context(token)
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/v2/console/session/session-knowledge-route/knowledge",
+        headers={"Authorization": "Bearer hosted-artifact-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["summary"] == "Hosted artifact summary"
     app.dependency_overrides.clear()
