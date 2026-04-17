@@ -168,11 +168,14 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build & push backend image
         run: |
           set -euo pipefail
 
-          docker build -f backend/Dockerfile \
+          docker buildx build --platform linux/amd64 --load -f backend/Dockerfile \
             -t "$ECR_BACKEND:${GITHUB_SHA}" \
             -t "$ECR_BACKEND:latest" .
           docker push "$ECR_BACKEND:${GITHUB_SHA}"
@@ -360,7 +363,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          docker build --target production \
+          docker buildx build --platform linux/amd64 --load --target production \
             --build-arg VITE_API_BASE="https://${CLOUDFRONT_DOMAIN}" \
             --build-arg VITE_BOOT_MODE=live \
             -t "$ECR_FRONTEND:${GITHUB_SHA}" \
