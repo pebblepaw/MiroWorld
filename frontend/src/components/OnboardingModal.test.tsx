@@ -32,6 +32,33 @@ const countriesResponse = [
   },
 ];
 
+const countriesDownloadRequiredResponse = [
+  {
+    name: "Singapore",
+    code: "sg",
+    flag_emoji: "🇸🇬",
+    dataset_path: "configs/countries/singapore.yaml",
+    available: true,
+    dataset_ready: true,
+    download_required: false,
+    download_status: "ready",
+    download_error: null,
+    missing_dependency: null,
+  },
+  {
+    name: "United States",
+    code: "usa",
+    flag_emoji: "🇺🇸",
+    dataset_path: "configs/countries/usa.yaml",
+    available: true,
+    dataset_ready: false,
+    download_required: true,
+    download_status: "missing",
+    download_error: null,
+    missing_dependency: null,
+  },
+];
+
 function Harness() {
   const [open, setOpen] = useState(true);
   const { sessionId } = useApp();
@@ -116,5 +143,60 @@ describe("Hosted OnboardingModal", () => {
       model: "gemini-2.5-flash-lite",
       use_case: "product-market-research",
     });
+  });
+
+  it("downloads a required hosted dataset before launch", async () => {
+    let downloadStatusCalls = 0;
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith("/api/v2/countries")) {
+        return makeResponse(countriesDownloadRequiredResponse);
+      }
+
+      if (url.endsWith("/api/v2/countries/usa/download")) {
+        return makeResponse({ status: "started" });
+      }
+
+      if (url.endsWith("/api/v2/countries/usa/download-status")) {
+        downloadStatusCalls += 1;
+        return makeResponse({
+          ...countriesDownloadRequiredResponse[1],
+          dataset_ready: true,
+          download_required: false,
+          download_status: "ready",
+        });
+      }
+
+      if (url.endsWith("/api/v2/session/create")) {
+        return makeResponse({
+          session_id: "hosted-session-download",
+          received: JSON.parse(String(init?.body ?? "{}")),
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <Harness />
+      </AppProvider>,
+    );
+
+    const usaButton = await screen.findByRole("button", { name: /download required.*united states/i });
+    fireEvent.click(usaButton);
+    const launchButton = screen.getByRole("button", { name: /launch simulation environment/i });
+    await waitFor(() => expect(launchButton).toBeDisabled());
+
+    fireEvent.click(await screen.findByRole("button", { name: /download united states dataset/i }));
+
+    await waitFor(() => expect(downloadStatusCalls).toBeGreaterThan(0));
+    await waitFor(() => expect(launchButton).not.toBeDisabled());
+
+    fireEvent.click(launchButton);
+
+    await waitFor(() => expect(screen.getByTestId("session-id")).toHaveTextContent("hosted-session-download"));
   });
 });

@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { useApp } from "@/contexts/AppContext";
 import {
   createV2Session,
+  downloadCountryDataset,
+  getCountryDownloadStatus,
   getV2Countries,
   normalizeUseCaseId,
   type ModelProviderId,
@@ -13,8 +15,13 @@ import {
 
 type CountryCard = {
   available: boolean;
+  downloadError: string | null;
+  downloadRequired: boolean;
+  downloadStatus: V2CountryResponse["download_status"];
   emoji: string;
   id: string;
+  launchReady: boolean;
+  missingDependency: V2CountryResponse["missing_dependency"];
   name: string;
 };
 
@@ -22,10 +29,50 @@ const HOSTED_PROVIDER: ModelProviderId = "google";
 const HOSTED_MODEL = "gemini-2.5-flash-lite";
 
 const FALLBACK_COUNTRIES: CountryCard[] = [
-  { id: "singapore", name: "Singapore", emoji: "🇸🇬", available: true },
-  { id: "usa", name: "USA", emoji: "🇺🇸", available: true },
-  { id: "india", name: "India", emoji: "🇮🇳", available: false },
-  { id: "japan", name: "Japan", emoji: "🇯🇵", available: false },
+  {
+    id: "singapore",
+    name: "Singapore",
+    emoji: "🇸🇬",
+    available: true,
+    launchReady: true,
+    downloadRequired: false,
+    downloadStatus: "ready",
+    downloadError: null,
+    missingDependency: null,
+  },
+  {
+    id: "usa",
+    name: "USA",
+    emoji: "🇺🇸",
+    available: true,
+    launchReady: true,
+    downloadRequired: false,
+    downloadStatus: "ready",
+    downloadError: null,
+    missingDependency: null,
+  },
+  {
+    id: "india",
+    name: "India",
+    emoji: "🇮🇳",
+    available: false,
+    launchReady: false,
+    downloadRequired: false,
+    downloadStatus: "missing",
+    downloadError: null,
+    missingDependency: null,
+  },
+  {
+    id: "japan",
+    name: "Japan",
+    emoji: "🇯🇵",
+    available: false,
+    launchReady: false,
+    downloadRequired: false,
+    downloadStatus: "missing",
+    downloadError: null,
+    missingDependency: null,
+  },
 ];
 
 const USE_CASES = [
@@ -48,21 +95,35 @@ function toCountryId(code: string, name: string) {
   return normalizedCode || normalizedName;
 }
 
+function toCountryCard(country: V2CountryResponse): CountryCard | null {
+  const id = toCountryId(country.code, country.name);
+  if (!id) {
+    return null;
+  }
+
+  return {
+    available: Boolean(country.available),
+    downloadError: country.download_error,
+    downloadRequired: Boolean(country.download_required),
+    downloadStatus: country.download_status,
+    emoji: country.flag_emoji,
+    id,
+    launchReady: Boolean(country.available && country.dataset_ready !== false),
+    missingDependency: country.missing_dependency,
+    name: country.name,
+  };
+}
+
 function buildCountryCatalog(countries: V2CountryResponse[]) {
   const catalogById = new Map<string, CountryCard>();
 
   for (const country of countries) {
-    const id = toCountryId(country.code, country.name);
-    if (!id) {
+    const entry = toCountryCard(country);
+    if (!entry) {
       continue;
     }
 
-    catalogById.set(id, {
-      available: Boolean(country.available && country.dataset_ready !== false),
-      emoji: country.flag_emoji,
-      id,
-      name: country.name,
-    });
+    catalogById.set(entry.id, entry);
   }
 
   const merged = FALLBACK_COUNTRIES.map((country) => catalogById.get(country.id) ?? country);
@@ -88,6 +149,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
   const app = useApp();
   const [countries, setCountries] = useState<CountryCard[]>(FALLBACK_COUNTRIES);
   const [country, setCountry] = useState(() => resolveInitialCountry(app.country || "singapore", FALLBACK_COUNTRIES));
+  const [downloadingCountryId, setDownloadingCountryId] = useState<string | null>(null);
   const [useCase, setUseCase] = useState(() => normalizeUseCaseId(app.useCase || "public-policy-testing"));
   const [launchError, setLaunchError] = useState("");
   const [launching, setLaunching] = useState(false);
@@ -126,15 +188,81 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!downloadingCountryId) {
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const poll = async () => {
+      try {
+        const payload = await getCountryDownloadStatus(downloadingCountryId);
+        const nextCountry = toCountryCard(payload);
+
+        if (cancelled || !nextCountry) {
+          return;
+        }
+
+        setCountries((current) => current.map((entry) => (entry.id === nextCountry.id ? nextCountry : entry)));
+
+        if (nextCountry.launchReady || nextCountry.downloadStatus === "error") {
+          setDownloadingCountryId(null);
+          if (nextCountry.downloadStatus === "error" && nextCountry.downloadError) {
+            setLaunchError(nextCountry.downloadError);
+          }
+          return;
+        }
+
+        timer = window.setTimeout(() => {
+          void poll();
+        }, 1500);
+      } catch (error) {
+        if (!cancelled) {
+          setDownloadingCountryId(null);
+          setLaunchError(error instanceof Error ? error.message : "Failed to refresh hosted dataset status.");
+        }
+      }
+    };
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [downloadingCountryId]);
+
   if (!isOpen) {
     return null;
   }
 
+  const selectedCountry = countries.find((entry) => entry.id === country);
+  const selectedCountryReady = Boolean(selectedCountry?.launchReady);
+  const selectedCountryDownloading = downloadingCountryId === selectedCountry?.id || selectedCountry?.downloadStatus === "downloading";
+
+  async function handleDownload() {
+    if (!selectedCountry) {
+      return;
+    }
+
+    setLaunchError("");
+
+    try {
+      await downloadCountryDataset(selectedCountry.id);
+      setDownloadingCountryId(selectedCountry.id);
+    } catch (error) {
+      setLaunchError(error instanceof Error ? error.message : "Failed to start hosted dataset download.");
+    }
+  }
+
   async function handleLaunch() {
-    const selectedCountry = countries.find((entry) => entry.id === country);
     const resolvedUseCase = normalizeUseCaseId(useCase);
 
-    if (!selectedCountry?.available) {
+    if (!selectedCountryReady || !selectedCountry?.available) {
       setLaunchError("Select an available hosted region before launching.");
       return;
     }
@@ -203,7 +331,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                     key={entry.id}
                     type="button"
                     onClick={() => {
-                      if (!entry.available) {
+                      if (!entry.available && !entry.downloadRequired) {
                         setLaunchError("Coming soon");
                         return;
                       }
@@ -214,13 +342,18 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                     title={entry.available ? undefined : "Coming soon"}
                     className={`
                       relative flex flex-col items-center justify-center gap-2 rounded-xl border p-4 transition-all
-                      ${entry.available ? "cursor-pointer hover:bg-muted/50" : "cursor-not-allowed opacity-40 hover:bg-muted/50"}
+                      ${(entry.available || entry.downloadRequired) ? "cursor-pointer hover:bg-muted/50" : "cursor-not-allowed opacity-40 hover:bg-muted/50"}
                       ${selected ? "border-[hsl(var(--data-blue))] bg-[hsl(var(--data-blue))]/10" : "border-border bg-transparent"}
                     `}
                   >
-                    {!entry.available ? (
+                    {!entry.available && !entry.downloadRequired ? (
                       <span className="absolute -top-2 rounded bg-muted px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-muted-foreground">
                         Coming Soon
+                      </span>
+                    ) : null}
+                    {entry.downloadRequired && !entry.launchReady ? (
+                      <span className="absolute -top-2 rounded bg-muted px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-muted-foreground">
+                        {entry.downloadStatus === "downloading" ? "Downloading" : "Download Required"}
                       </span>
                     ) : null}
                     <span className="text-2xl">{entry.emoji}</span>
@@ -231,6 +364,37 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                 );
               })}
             </div>
+            {selectedCountry && !selectedCountryReady ? (
+              <div className="mt-4 rounded-2xl border border-border bg-muted/30 p-4">
+                <p className="text-sm font-semibold text-foreground">
+                  {selectedCountry.downloadRequired ? "Hosted dataset download required" : "Hosted dataset unavailable"}
+                </p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {selectedCountry.downloadRequired
+                    ? "Download the selected country dataset once, then launch the hosted simulation environment."
+                    : "This hosted region is not ready yet."}
+                </p>
+                {selectedCountry.missingDependency ? (
+                  <p className="mt-2 text-xs text-destructive">
+                    Missing dependency: {selectedCountry.missingDependency.replace(/_/g, " ")}.
+                  </p>
+                ) : null}
+                {selectedCountry.downloadError ? (
+                  <p className="mt-2 text-xs text-destructive">{selectedCountry.downloadError}</p>
+                ) : null}
+                {selectedCountry.downloadRequired ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-4"
+                    disabled={selectedCountryDownloading}
+                    onClick={() => void handleDownload()}
+                  >
+                    {selectedCountryDownloading ? "Downloading dataset..." : `Download ${selectedCountry.name} dataset`}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div>
@@ -278,7 +442,7 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
         </div>
 
         <div className="border-t border-border bg-card p-6">
-          <Button onClick={() => void handleLaunch()} disabled={launching} className="h-12 w-full">
+          <Button onClick={() => void handleLaunch()} disabled={launching || !selectedCountryReady} className="h-12 w-full">
             {launching ? "Launching..." : "Launch Simulation Environment"}
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
