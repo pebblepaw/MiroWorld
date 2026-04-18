@@ -28,6 +28,20 @@ class _OkResponse:
         return {"id": "user-hosted-123"}
 
 
+class _RegisterResponse:
+    status_code = 200
+
+    def __init__(self, email: str = "new-user@example.com") -> None:
+        self._email = email
+
+    def json(self) -> dict[str, str]:
+        return {"id": "supabase-user-1", "email": self._email}
+
+    @property
+    def text(self) -> str:
+        return '{"id":"supabase-user-1"}'
+
+
 def test_hosted_route_requires_supabase_bearer_token(monkeypatch, tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
     app.dependency_overrides[get_settings] = lambda: settings
@@ -84,6 +98,48 @@ def test_hosted_routes_accept_cookie_after_authenticated_call(monkeypatch, tmp_p
 
     assert followup.status_code == 200
     assert followup.json()["session_id"] == "session-cookie-auth"
+    app.dependency_overrides.clear()
+
+
+def test_hosted_register_route_creates_auto_confirmed_user(monkeypatch, tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    captured: dict[str, object] = {}
+
+    def _fake_post(url: str, *, headers: dict[str, str], json: dict[str, object], timeout: int):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return _RegisterResponse(email=str(json["email"]))
+
+    monkeypatch.setattr(routes_console.requests, "post", _fake_post)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v2/hosted/auth/register",
+        json={"email": "new-user@example.com", "password": "CodexPass!2026"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user_id"] == "supabase-user-1"
+    assert captured["url"] == "https://example.supabase.co/auth/v1/admin/users"
+    assert captured["headers"] == {
+        "apikey": "service-role-key",
+        "Authorization": "Bearer service-role-key",
+        "Content-Type": "application/json",
+    }
+    assert captured["json"] == {
+        "email": "new-user@example.com",
+        "password": "CodexPass!2026",
+        "email_confirm": True,
+        "user_metadata": {
+            "email_verified": True,
+            "hosted_signup": True,
+        },
+    }
+    assert captured["timeout"] == 15
     app.dependency_overrides.clear()
 
 

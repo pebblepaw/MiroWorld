@@ -28,16 +28,29 @@ function normalizeCredentials(credentials: PasswordCredentials): PasswordCredent
   };
 }
 
-function authRedirectUrl(): string | undefined {
-  if (typeof window === "undefined") {
-    return undefined;
+async function registerHostedAccount(credentials: PasswordCredentials): Promise<void> {
+  const response = await fetch("/api/v2/hosted/auth/register", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(credentials),
+  });
+
+  if (response.ok) {
+    return;
   }
 
-  const base = import.meta.env.BASE_URL.endsWith("/")
-    ? import.meta.env.BASE_URL
-    : `${import.meta.env.BASE_URL}/`;
-
-  return new URL(base, window.location.origin).toString();
+  let detail = "Unable to create a hosted account.";
+  try {
+    const payload = (await response.json()) as { detail?: string };
+    if (typeof payload.detail === "string" && payload.detail.trim()) {
+      detail = payload.detail.trim();
+    }
+  } catch {
+    // Ignore non-JSON failures.
+  }
+  throw new Error(detail);
 }
 
 export function AuthProvider({ children }: PropsWithChildren) {
@@ -99,21 +112,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
 
     const { email, password } = normalizeCredentials(credentials);
-    const { data, error } = await client.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: authRedirectUrl(),
-      },
-    });
-
-    if (error) {
-      throw error;
-    }
-
-    return {
-      session: data.session ?? null,
-    };
+    await registerHostedAccount({ email, password });
+    return signInWithPassword({ email, password });
   }
 
   async function signInWithPassword(credentials: PasswordCredentials) {

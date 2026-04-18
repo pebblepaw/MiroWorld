@@ -77,6 +77,13 @@ class ConsoleKnowledgeProcessRequest(BaseModel):
     use_default_demo_document: bool = False
 
 
+class HostedAuthRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=256)
+
+
 class KnowledgeArtifactResponse(BaseModel):
     session_id: str
     document: dict[str, Any]

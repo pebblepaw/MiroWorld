@@ -15,6 +15,7 @@ from miroworld.models.console import (
     ConsoleKnowledgeProcessRequest,
     ConsoleModelProviderCatalogResponse,
     ConsoleProviderModelsResponse,
+    HostedAuthRegisterRequest,
     ConsoleScrapeRequest,
     ConsoleScrapeResponse,
     ConsoleSessionModelConfigRequest,
@@ -139,6 +140,41 @@ def _verify_supabase_user(token: str, settings: Settings) -> dict[str, Any]:
     return payload
 
 
+def _register_hosted_supabase_user(email: str, password: str, settings: Settings) -> dict[str, Any]:
+    base_url = str(settings.supabase_url or "").rstrip("/")
+    service_role_key = str(settings.supabase_service_role_key or "").strip()
+    if not base_url or not service_role_key:
+        raise HTTPException(status_code=503, detail="Hosted sign-up requires Supabase service role configuration.")
+
+    response = requests.post(
+        f"{base_url}/auth/v1/admin/users",
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "email": email,
+            "password": password,
+            "email_confirm": True,
+            "user_metadata": {
+                "email_verified": True,
+                "hosted_signup": True,
+            },
+        },
+        timeout=15,
+    )
+    if response.status_code not in {200, 201}:
+        detail = response.text
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        message = str(payload.get("msg") or payload.get("message") or detail or "Hosted sign-up failed.").strip()
+        raise HTTPException(status_code=400, detail=message)
+    return response.json()
+
+
 def _require_known_session(session_id: str, settings: Settings) -> None:
     session = SimulationStore(settings.simulation_db_path).get_console_session(session_id)
     if not session:
@@ -186,6 +222,20 @@ def require_hosted_user(
             # FastAPI may finalize sync generator dependencies in a different
             # worker context. The request middleware still clears the scope.
             pass
+
+
+@compat_router.post("/hosted/auth/register")
+def v2_hosted_auth_register(
+    body: HostedAuthRegisterRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    if not settings.hosted_auth_enabled:
+        raise HTTPException(status_code=404, detail="Hosted auth is not enabled for this deployment.")
+    payload = _register_hosted_supabase_user(body.email.strip(), body.password, settings)
+    return {
+        "email": payload.get("email") or body.email.strip(),
+        "user_id": payload.get("id"),
+    }
 
 
 @compat_router.get("/countries", response_model=list[V2CountryResponse])
