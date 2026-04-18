@@ -18,14 +18,7 @@ COPY backend/scripts ./scripts
 COPY backend/data ./data
 COPY config /app/config
 
-RUN python - <<'PY'
-from pathlib import Path
-
-source = Path("requirements-oasis-runtime.txt")
-target = Path("requirements-oasis-runtime-hosted.txt")
-lines = [line for line in source.read_text(encoding="utf-8").splitlines() if not line.startswith("torch==")]
-target.write_text("\n".join(lines) + "\n", encoding="utf-8")
-PY
+RUN grep -v '^torch==' requirements-oasis-runtime.txt > requirements-oasis-runtime-hosted.txt
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu torch==2.10.0+cpu
 RUN pip install --no-cache-dir -r requirements-oasis-runtime-hosted.txt
 RUN pip install --no-cache-dir -e .
