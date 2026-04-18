@@ -1,21 +1,24 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 WORKDIR /app/backend
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=src
+ENV OASIS_PYTHON_BIN=/usr/local/bin/python
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/pyproject.toml backend/README.md ./
+COPY backend/requirements-oasis-runtime.txt ./
 COPY backend/Sample_Inputs ./Sample_Inputs
 COPY backend/src ./src
 COPY backend/scripts ./scripts
 COPY backend/data ./data
 COPY config /app/config
 
+RUN pip install --no-cache-dir -r requirements-oasis-runtime.txt
 RUN pip install --no-cache-dir -e .
 
 EXPOSE 8000
