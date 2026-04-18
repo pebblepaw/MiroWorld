@@ -12,6 +12,9 @@ from miroworld.services.zep_service import ZepService
 
 
 class MemoryService:
+    _ZEP_MAX_INTERACTION_MESSAGES = 12
+    _ZEP_MAX_CHECKPOINT_MESSAGES = 20
+
     def __init__(self, settings: Settings):
         self._settings = settings
         self.store = SimulationStore(settings.simulation_db_path)
@@ -429,8 +432,8 @@ class MemoryService:
         checkpoints = self.store.list_checkpoint_records_after_id(simulation_id, last_checkpoint_id)
 
         messages: list[dict[str, Any]] = []
-        messages.extend(self._build_interaction_messages(simulation_id, interactions))
-        messages.extend(self._build_checkpoint_messages(simulation_id, checkpoints))
+        messages.extend(self._build_interaction_messages(simulation_id, self._select_zep_interactions(interactions)))
+        messages.extend(self._build_checkpoint_messages(simulation_id, self._select_zep_checkpoints(checkpoints)))
         if messages:
             self.zep.add_messages(thread_id=thread_id, messages=messages)
             self._simulation_context_cache = {
@@ -592,6 +595,22 @@ class MemoryService:
             )
         return messages
 
+    def _select_zep_interactions(self, interactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(interactions) <= self._ZEP_MAX_INTERACTION_MESSAGES:
+            return list(interactions)
+
+        ranked = sorted(
+            interactions,
+            key=lambda item: (
+                abs(float(item.get("delta", 0.0) or 0.0)),
+                int(item.get("round_no", 0) or 0),
+                int(item.get("id", 0) or 0),
+            ),
+            reverse=True,
+        )
+        selected = ranked[: self._ZEP_MAX_INTERACTION_MESSAGES]
+        return sorted(selected, key=lambda item: int(item.get("id", 0) or 0))
+
     def _build_checkpoint_messages(
         self,
         simulation_id: str,
@@ -629,6 +648,19 @@ class MemoryService:
                 }
             )
         return messages
+
+    def _select_zep_checkpoints(self, checkpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(checkpoints) <= self._ZEP_MAX_CHECKPOINT_MESSAGES:
+            return list(checkpoints)
+
+        def checkpoint_rank(item: dict[str, Any]) -> tuple[int, int]:
+            checkpoint_kind = str(item.get("checkpoint_kind") or "").strip().lower()
+            priority = 0 if checkpoint_kind == "final" else 1
+            return priority, -int(item.get("id", 0) or 0)
+
+        ranked = sorted(checkpoints, key=checkpoint_rank)
+        selected = ranked[: self._ZEP_MAX_CHECKPOINT_MESSAGES]
+        return sorted(selected, key=lambda item: int(item.get("id", 0) or 0))
 
     def _parse_zep_episode(self, item: dict[str, Any]) -> dict[str, Any]:
         return self._parse_structured_zep_content(

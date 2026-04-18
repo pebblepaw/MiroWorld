@@ -107,6 +107,48 @@ def test_zep_sync_ensures_user_and_thread_only_once_per_process(tmp_path: Path) 
     assert len(add_messages_calls) == 1
 
 
+def test_zep_sync_caps_interactions_to_high_signal_subset(tmp_path: Path) -> None:
+    service = MemoryService(
+        Settings(
+            simulation_db_path=str(tmp_path / "simulation.db"),
+            app_state_backend="postgres",
+            zep_api_key="zep-test-key",
+        )
+    )
+    interactions = [
+        {
+            "id": index,
+            "round_no": (index % 4) + 1,
+            "delta": float(index - 10),
+        }
+        for index in range(1, 25)
+    ]
+
+    selected = service._select_zep_interactions(interactions)
+
+    assert len(selected) == service._ZEP_MAX_INTERACTION_MESSAGES
+    assert [item["id"] for item in selected] == [1, 2, 3, *range(16, 25)]
+
+
+def test_zep_sync_prefers_final_checkpoints_within_cap(tmp_path: Path) -> None:
+    service = MemoryService(
+        Settings(
+            simulation_db_path=str(tmp_path / "simulation.db"),
+            app_state_backend="postgres",
+            zep_api_key="zep-test-key",
+        )
+    )
+    checkpoints = [
+        {"id": index, "checkpoint_kind": "baseline" if index <= 20 else "final"}
+        for index in range(1, 41)
+    ]
+
+    selected = service._select_zep_checkpoints(checkpoints)
+
+    assert len(selected) == service._ZEP_MAX_CHECKPOINT_MESSAGES
+    assert [item["id"] for item in selected] == list(range(21, 41))
+
+
 def test_postgres_store_scopes_session_state_by_authenticated_user(monkeypatch, tmp_path: Path) -> None:
     if not Settings().supabase_postgres_url:
         pytest.skip("Supabase session-pooler URL is not configured.")

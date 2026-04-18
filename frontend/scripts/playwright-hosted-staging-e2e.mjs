@@ -234,7 +234,12 @@ async function run() {
     await page.waitForFunction(() => !document.body.innerText.includes("Generating report..."), { timeout: REPORT_TIMEOUT });
     await page.screenshot({ path: path.join(OUTPUT_DIR, "08-report.png"), fullPage: true });
 
-    const reportPayload = await fetchJson(page, `/api/v2/console/session/${sessionId}/report`);
+    const reportHeadings = (await page.locator("h2, h3").allInnerTexts())
+      .map((value) => compactWhitespace(value))
+      .filter(Boolean);
+    const renderedReportText = compactWhitespace(
+      await page.evaluate(() => document.body.innerText || ""),
+    );
     const groupCandidates = await fetchJson(
       page,
       `/api/v2/console/session/${sessionId}/chat/group/agents?segment=supporter&top_n=1`,
@@ -269,8 +274,8 @@ async function run() {
       simulation_rounds: SIMULATION_ROUNDS,
       exported_docx: docxPath,
       report_summary: {
-        executive_summary: compactWhitespace(reportPayload?.executive_summary || ""),
-        section_titles: Array.isArray(reportPayload?.sections) ? reportPayload.sections.map((section) => section.title) : [],
+        rendered_excerpt: renderedReportText.slice(0, 2000),
+        section_titles: reportHeadings,
       },
       agent_chat_probe: agentChatPayload,
       screenshots: [
