@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from miroworld.api.routes_console import require_hosted_user
+from miroworld.api.routes_console import _store_scope, require_hosted_user
 from miroworld.config import Settings, get_settings
 from miroworld.models.console import (
     V2OpinionFlowResponse,
@@ -31,15 +31,16 @@ def analytics_polarization(
     settings: Settings = Depends(get_settings),
     _user_id: str | None = Depends(require_hosted_user),
 ) -> V2PolarizationResponse:
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        payload = _get_demo_service(settings).get_analytics_polarization(session_id, metric_name=metric_name)
-        return V2PolarizationResponse(**payload)
+    with _store_scope(_user_id):
+        if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+            payload = _get_demo_service(settings).get_analytics_polarization(session_id, metric_name=metric_name)
+            return V2PolarizationResponse(**payload)
 
-    try:
-        payload = ConsoleService(settings).get_analytics_polarization(session_id, metric_name=metric_name)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return V2PolarizationResponse(**payload)
+        try:
+            payload = ConsoleService(settings).get_analytics_polarization(session_id, metric_name=metric_name)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return V2PolarizationResponse(**payload)
 
 
 @router.get("/session/{session_id}/analytics/opinion-flow", response_model=V2OpinionFlowResponse)
@@ -49,15 +50,16 @@ def analytics_opinion_flow(
     settings: Settings = Depends(get_settings),
     _user_id: str | None = Depends(require_hosted_user),
 ) -> V2OpinionFlowResponse:
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        payload = _get_demo_service(settings).get_analytics_opinion_flow(session_id, metric_name=metric_name)
-        return V2OpinionFlowResponse(**payload)
+    with _store_scope(_user_id):
+        if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+            payload = _get_demo_service(settings).get_analytics_opinion_flow(session_id, metric_name=metric_name)
+            return V2OpinionFlowResponse(**payload)
 
-    try:
-        payload = ConsoleService(settings).get_analytics_opinion_flow(session_id, metric_name=metric_name)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return V2OpinionFlowResponse(**payload)
+        try:
+            payload = ConsoleService(settings).get_analytics_opinion_flow(session_id, metric_name=metric_name)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return V2OpinionFlowResponse(**payload)
 
 
 @router.get("/session/{session_id}/analytics/influence", response_model=None)
@@ -66,15 +68,16 @@ def analytics_influence(
     settings: Settings = Depends(get_settings),
     _user_id: str | None = Depends(require_hosted_user),
 ) -> dict[str, object]:
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        payload = _get_demo_service(settings).get_analytics_influence(session_id)
-        return payload
+    with _store_scope(_user_id):
+        if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+            payload = _get_demo_service(settings).get_analytics_influence(session_id)
+            return payload
 
-    try:
-        payload = ConsoleService(settings).get_analytics_influence(session_id)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return payload
+        try:
+            payload = ConsoleService(settings).get_analytics_influence(session_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return payload
 
 
 @router.get("/session/{session_id}/analytics/cascades", response_model=None)
@@ -83,15 +86,16 @@ def analytics_cascades(
     settings: Settings = Depends(get_settings),
     _user_id: str | None = Depends(require_hosted_user),
 ) -> dict[str, object]:
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        payload = _get_demo_service(settings).get_analytics_cascades(session_id)
-        return payload
+    with _store_scope(_user_id):
+        if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+            payload = _get_demo_service(settings).get_analytics_cascades(session_id)
+            return payload
 
-    try:
-        payload = ConsoleService(settings).get_analytics_cascades(session_id)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return payload
+        try:
+            payload = ConsoleService(settings).get_analytics_cascades(session_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return payload
 
 
 @router.get("/session/{session_id}/analytics/agent-stances", response_model=None)
@@ -101,12 +105,13 @@ def analytics_agent_stances(
     settings: Settings = Depends(get_settings),
     _user_id: str | None = Depends(require_hosted_user),
 ) -> dict[str, object]:
-    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
-        payload = _get_demo_service(settings).get_analytics_agent_stances(session_id, metric_name=metric_name)
-        return payload
+    with _store_scope(_user_id):
+        if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+            payload = _get_demo_service(settings).get_analytics_agent_stances(session_id, metric_name=metric_name)
+            return payload
 
-    try:
-        payload = ConsoleService(settings).get_agent_stances(session_id, metric_name=metric_name)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return payload
+        try:
+            payload = ConsoleService(settings).get_agent_stances(session_id, metric_name=metric_name)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return payload

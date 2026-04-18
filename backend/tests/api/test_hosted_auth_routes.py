@@ -101,6 +101,54 @@ def test_hosted_routes_accept_cookie_after_authenticated_call(monkeypatch, tmp_p
     app.dependency_overrides.clear()
 
 
+def test_hosted_session_create_persists_authenticated_user_id(monkeypatch, tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app.dependency_overrides[get_settings] = lambda: settings
+    monkeypatch.setattr(routes_console, "_verify_supabase_user", lambda *args, **kwargs: {"id": "user-hosted-123"})
+
+    store = routes_console.SimulationStore(settings.simulation_db_path)
+
+    class _ConsoleService:
+        def __init__(self, _settings: Settings) -> None:
+            pass
+
+        def create_v2_session(self, **_: object) -> dict[str, str]:
+            store.upsert_console_session(
+                session_id="session-owned-route",
+                mode="live",
+                status="created",
+            )
+            return {"session_id": "session-owned-route"}
+
+    monkeypatch.setattr(routes_console, "ConsoleService", _ConsoleService)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v2/session/create",
+        headers={"Authorization": "Bearer hosted-session-owner-token"},
+        json={
+            "country": "usa",
+            "use_case": "public-policy-testing",
+            "provider": "gemini",
+            "model": "gemini-2.5-flash-lite",
+            "api_key": "test-gemini-key",
+        },
+    )
+
+    assert response.status_code == 200
+    session_id = response.json()["session_id"]
+
+    token = set_store_user_context("user-hosted-123")
+    try:
+        session = store.get_console_session(session_id)
+    finally:
+        reset_store_user_context(token)
+
+    assert session is not None
+    assert session["user_id"] == "user-hosted-123"
+    app.dependency_overrides.clear()
+
+
 def test_hosted_register_route_creates_auto_confirmed_user(monkeypatch, tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
     app.dependency_overrides[get_settings] = lambda: settings

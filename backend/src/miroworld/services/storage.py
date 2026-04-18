@@ -1280,10 +1280,16 @@ class SimulationStore:
         user_id = self._current_user_id()
         with self._connect() as conn:
             if self.is_postgres:
-                conn.execute(
-                    "DELETE FROM simulation_checkpoints WHERE session_id = %s AND checkpoint_kind = %s AND (%s IS NULL OR user_id = %s)",
-                    (session_id, checkpoint_kind, user_id, user_id),
-                )
+                if user_id is None:
+                    conn.execute(
+                        "DELETE FROM simulation_checkpoints WHERE session_id = %s AND checkpoint_kind = %s",
+                        (session_id, checkpoint_kind),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM simulation_checkpoints WHERE session_id = %s AND checkpoint_kind = %s AND user_id = %s",
+                        (session_id, checkpoint_kind, user_id),
+                    )
                 for record in records:
                     conn.execute(
                         """
