@@ -93,6 +93,18 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("SUPABASE_POSTGRES_URL", "SUPABASE_DB_URL"),
     )
+    zep_cloud: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ZEP_CLOUD"),
+    )
+    zep_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ZEP_API_KEY"),
+    )
+    zep_api_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ZEP_API_URL"),
+    )
     default_agent_count: int = 50
     default_rounds: int = 10
     simulation_platform: str = "reddit"
@@ -152,6 +164,9 @@ class Settings(BaseSettings):
         self.supabase_postgres_url = str(self.supabase_postgres_url or "").strip() or None
         self.supabase_publishable_key = str(self.supabase_publishable_key or "").strip() or None
         self.supabase_service_role_key = str(self.supabase_service_role_key or "").strip() or None
+        self.zep_cloud = str(self.zep_cloud or "").strip() or None
+        self.zep_api_key = str(self.zep_api_key or "").strip() or None
+        self.zep_api_url = self._normalize_optional_url(self.zep_api_url)
 
         path_fields = [
             "lightrag_workdir",

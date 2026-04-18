@@ -6,6 +6,7 @@ from pathlib import Path
 from miroworld.config import Settings, get_settings
 from miroworld.services import console_service as console_service_module
 from miroworld.services.console_service import ConsoleService
+from miroworld.services.memory_service import MemoryService
 from miroworld.services.storage import SimulationStore, reset_store_user_context, set_store_user_context
 import pytest
 
@@ -23,6 +24,20 @@ def test_google_sessions_can_fall_back_to_shared_gemini_key(monkeypatch, tmp_pat
 
     assert service._resolve_session_api_key(None, provider="google", api_key=None) == "shared-gemini-key"
     get_settings.cache_clear()
+
+
+def test_hosted_memory_uses_zep_when_zep_cloud_env_is_present(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ZEP_CLOUD", "zep_test_api_key")
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "simulation.db"),
+        app_state_backend="postgres",
+    )
+
+    service = MemoryService(settings)
+
+    assert settings.zep_cloud == "zep_test_api_key"
+    assert service.zep.enabled is True
+    assert service.memory_backend == "zep-cloud"
 
 
 def test_postgres_store_scopes_session_state_by_authenticated_user(monkeypatch, tmp_path: Path) -> None:
