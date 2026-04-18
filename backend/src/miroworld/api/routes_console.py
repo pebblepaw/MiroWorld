@@ -414,6 +414,25 @@ def get_knowledge(
     return KnowledgeArtifactResponse(**knowledge)
 
 
+@router.get("/session/{session_id}/sampling", response_model=None)
+def get_sampling(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+    _user_id: str | None = Depends(require_hosted_user),
+) -> Response | PopulationArtifactResponse:
+    _require_known_session(session_id, settings)
+    if _is_demo_session(session_id, settings) and _get_demo_service(settings).is_demo_available():
+        demo_service = _get_demo_service(settings)
+        population = demo_service.get_population_artifact(session_id)
+        if population:
+            return PopulationArtifactResponse(**population)
+
+    population = SimulationStore(settings.simulation_db_path).get_population_artifact(session_id)
+    if not population:
+        return Response(status_code=204)
+    return PopulationArtifactResponse(**population)
+
+
 @router.post("/session/{session_id}/knowledge/upload", response_model=KnowledgeArtifactResponse)
 async def upload_knowledge(
     session_id: str,

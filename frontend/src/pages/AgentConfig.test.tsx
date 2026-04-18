@@ -328,6 +328,131 @@ describe("AgentConfig", () => {
     expect(screen.getByText("Population Baseline")).toBeInTheDocument();
   });
 
+  it("recovers a hosted cohort from the saved sampling artifact after a retryable preview timeout", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    const fallbackArtifact = {
+      session_id: "session-screen2",
+      candidate_count: 824,
+      sample_count: 3,
+      sample_mode: "affected_groups",
+      sample_seed: 17,
+      parsed_sampling_instructions: {
+        hard_filters: {},
+        soft_boosts: {},
+        soft_penalties: {},
+        exclusions: {},
+        distribution_targets: {},
+        notes_for_ui: ["Recovered from hosted staging timeout."],
+        source: "gemini",
+      },
+      coverage: {
+        planning_areas: ["Sengkang", "Punggol"],
+        age_buckets: { "20-29": 2, "30-39": 1 },
+        sex_distribution: { Female: 2, Male: 1 },
+      },
+      sampled_personas: [
+        {
+          agent_id: "agent-0001",
+          persona: {
+            age: 28,
+            sex: "Female",
+            occupation: "teacher",
+            industry: "education",
+            planning_area: "Sengkang",
+            country: "Singapore",
+          },
+          selection_reason: {
+            score: 0.91,
+            matched_facets: ["planning_area:sengkang", "industry:education"],
+            matched_document_entities: ["teachers", "parents"],
+            instruction_matches: ["occupation", "age_cohort", "planning_area"],
+            bm25_terms: ["teacher", "young", "north-east"],
+            semantic_summary: "Matched facets and instruction preferences.",
+            semantic_relevance: 0.87,
+            bm25_relevance: 0.79,
+            geographic_relevance: 1,
+            socioeconomic_relevance: 0.88,
+            digital_behavior_relevance: 0.4,
+            filter_alignment: 1,
+          },
+        },
+      ],
+      agent_graph: {
+        nodes: [
+          { id: "agent-0001", label: "teacher", subtitle: "Sengkang · education", planning_area: "Sengkang", industry: "education", node_type: "sampled_persona", score: 0.91, age: 28, sex: "Female" },
+        ],
+        links: [],
+      },
+      representativeness: {
+        status: "balanced",
+        planning_area_distribution: { Sengkang: 1 },
+        sex_distribution: { Female: 1 },
+      },
+      selection_diagnostics: {
+        candidate_count: 824,
+      },
+    };
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v2/console/session/session-screen2/filters")) {
+        return {
+          ok: true,
+          json: async () => defaultFilters,
+        };
+      }
+      if (url.includes("/api/v2/token-usage/session-screen2/estimate")) {
+        return {
+          ok: true,
+          json: async () => defaultEstimate,
+        };
+      }
+      if (url.endsWith("/api/v2/token-usage/session-screen2")) {
+        return {
+          ok: true,
+          json: async () => defaultRuntime,
+        };
+      }
+      if (url.includes("/api/v2/console/session/session-screen2/sampling/preview")) {
+        return new Response("<!doctype html><html><body><h1>504 Gateway Timeout ERROR</h1></body></html>", {
+          status: 504,
+          statusText: "Gateway Timeout",
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      if (url.endsWith("/api/v2/console/session/session-screen2/sampling")) {
+        return new Response(JSON.stringify(fallbackArtifact), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ detail: `Unhandled fetch: ${url}` }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedStage2Context />
+        <AgentConfig />
+      </AppProvider>,
+    );
+
+    await screen.findByRole("button", { name: /sample population/i });
+    fireEvent.change(screen.getByLabelText(/strategic parameters/i), {
+      target: { value: "Bias toward younger teachers and parents in the north-east." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /sample population/i }));
+
+    expect(await screen.findByRole("button", { name: /^proceed\b/i })).toBeInTheDocument();
+    expect(screen.getByText("Candidate Shortlist")).toBeInTheDocument();
+    expect(screen.getByText("824")).toBeInTheDocument();
+    expect(screen.getAllByText("Recovered from hosted staging timeout.").length).toBeGreaterThan(0);
+    expect(vi.mocked(global.fetch).mock.calls.some(([url]) => String(url).includes("/api/v2/console/session/session-screen2/sampling"))).toBe(true);
+  });
+
   it("updates the sample helper text with the current target size", async () => {
     render(
       <AppProvider>

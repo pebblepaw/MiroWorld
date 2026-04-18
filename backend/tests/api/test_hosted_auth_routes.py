@@ -151,3 +151,73 @@ def test_hosted_knowledge_artifact_route_returns_no_content_when_not_ready(monke
     assert response.status_code == 204
     assert response.text == ""
     app.dependency_overrides.clear()
+
+
+def test_hosted_population_artifact_route_returns_saved_artifact(monkeypatch, tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app.dependency_overrides[get_settings] = lambda: settings
+    monkeypatch.setattr(routes_console.requests, "get", lambda *args, **kwargs: _OkResponse())
+
+    store = routes_console.SimulationStore(settings.simulation_db_path)
+    token = set_store_user_context("user-hosted-123")
+    try:
+        store.upsert_console_session(
+            session_id="session-population-route",
+            mode="live",
+            status="knowledge_ready",
+        )
+        store.save_population_artifact(
+            "session-population-route",
+            {
+                "session_id": "session-population-route",
+                "candidate_count": 12,
+                "sample_count": 10,
+                "sample_mode": "affected_groups",
+                "sample_seed": 17,
+                "parsed_sampling_instructions": {"source": "gemini"},
+                "coverage": {"states": ["Michigan"]},
+                "sampled_personas": [],
+                "agent_graph": {"nodes": [], "links": []},
+                "representativeness": {},
+                "selection_diagnostics": {},
+            },
+        )
+    finally:
+        reset_store_user_context(token)
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/v2/console/session/session-population-route/sampling",
+        headers={"Authorization": "Bearer hosted-population-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sample_count"] == 10
+    app.dependency_overrides.clear()
+
+
+def test_hosted_population_artifact_route_returns_no_content_when_not_ready(monkeypatch, tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app.dependency_overrides[get_settings] = lambda: settings
+    monkeypatch.setattr(routes_console.requests, "get", lambda *args, **kwargs: _OkResponse())
+
+    store = routes_console.SimulationStore(settings.simulation_db_path)
+    token = set_store_user_context("user-hosted-123")
+    try:
+        store.upsert_console_session(
+            session_id="session-population-missing",
+            mode="live",
+            status="knowledge_ready",
+        )
+    finally:
+        reset_store_user_context(token)
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/v2/console/session/session-population-missing/sampling",
+        headers={"Authorization": "Bearer hosted-population-token"},
+    )
+
+    assert response.status_code == 204
+    assert response.text == ""
+    app.dependency_overrides.clear()

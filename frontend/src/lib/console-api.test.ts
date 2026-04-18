@@ -187,6 +187,51 @@ describe("console-api live-mode routing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("treats a missing hosted population artifact as not-ready instead of a frontend error", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    const { getPopulationArtifact } = await import("./console-api");
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v2/console/session/session-1/sampling")) {
+        return new Response(null, {
+          status: 204,
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    global.fetch = fetchSpy as typeof fetch;
+
+    await expect(getPopulationArtifact("session-1")).resolves.toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores non-json hosted population fallback responses caused by SPA rewrites", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    const { getPopulationArtifact } = await import("./console-api");
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v2/console/session/session-1/sampling")) {
+        return new Response("<!doctype html><html><body>index</body></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    global.fetch = fetchSpy as typeof fetch;
+
+    await expect(getPopulationArtifact("session-1")).resolves.toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves the HTTP status detail for hosted knowledge gateway timeouts with html bodies", async () => {
     vi.stubEnv("VITE_BOOT_MODE", "live");
 

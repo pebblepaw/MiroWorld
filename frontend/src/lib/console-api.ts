@@ -1624,6 +1624,21 @@ export async function getKnowledgeArtifact(sessionId: string): Promise<Knowledge
   return parseJson(response);
 }
 
+export async function getPopulationArtifact(sessionId: string): Promise<PopulationArtifact | null> {
+  if (isStaticDemoBootMode()) {
+    return getDemoPopulationArtifact(sessionId);
+  }
+  const response = await authenticatedFetch(`${API_BASE}/api/v2/console/session/${sessionId}/sampling`);
+  if (response.status === 404 || response.status === 204) {
+    return null;
+  }
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("application/json")) {
+    return null;
+  }
+  return parseJson(response);
+}
+
 function parseKnowledgeStreamPayload(data: string): Record<string, unknown> {
   const trimmed = String(data ?? "").trim();
   if (!trimmed) {

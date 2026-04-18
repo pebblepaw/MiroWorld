@@ -10,6 +10,7 @@ import { useApp } from '@/contexts/AppContext';
 import {
   getBundledDemoOutput,
   getCountryUiConfig,
+  getPopulationArtifact,
   isLiveBootMode,
   previewPopulation,
 } from '@/lib/console-api';
@@ -27,6 +28,35 @@ const CHART_COLORS = [
 ];
 
 type SampleMode = 'affected_groups' | 'population_baseline';
+const HOSTED_POPULATION_POLL_MS = 2_000;
+const HOSTED_POPULATION_TIMEOUT_MS = 5 * 60_000;
+
+function isRetryableHostedPopulationError(message: string): boolean {
+  const normalized = String(message || '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized.includes('504')
+    || normalized.includes('gateway timeout')
+    || normalized.includes('bad gateway')
+    || normalized.includes('service unavailable')
+    || normalized.includes('request could not be satisfied')
+    || normalized.includes('timed out')
+  );
+}
+
+async function waitForHostedPopulationArtifact(sessionId: string): Promise<Awaited<ReturnType<typeof getPopulationArtifact>>> {
+  const deadline = Date.now() + HOSTED_POPULATION_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const artifact = await getPopulationArtifact(sessionId);
+    if (artifact) {
+      return artifact;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, HOSTED_POPULATION_POLL_MS));
+  }
+  return null;
+}
 
 export default function AgentConfig() {
   const {
@@ -174,6 +204,26 @@ export default function AgentConfig() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Population sampling failed.';
+      if (isLiveBootMode() && isRetryableHostedPopulationError(message)) {
+        try {
+          const fallbackArtifact = await waitForHostedPopulationArtifact(sessionId);
+          if (fallbackArtifact) {
+            setPopulationArtifact(fallbackArtifact);
+            setSampleSeed(fallbackArtifact.sample_seed);
+            setAgentsGenerated(true);
+            setAgents(fallbackArtifact.sampled_personas.map((row) => sampledPersonaToMockAgent(row)));
+            setSimulationComplete(false);
+            setSimPosts([]);
+            toast({
+              title: 'Hosted cohort recovered',
+              description: 'Loaded the saved cohort after a staging timeout.',
+            });
+            return;
+          }
+        } catch {
+          // Fall through to the original error handling.
+        }
+      }
       if (!isLiveBootMode()) {
         try {
           const demo = await getBundledDemoOutput();
