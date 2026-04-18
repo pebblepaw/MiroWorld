@@ -6,8 +6,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+ENV OASIS_PYTHON_BIN=/usr/local/bin/python
+
 COPY backend/requirements-oasis-runtime.txt ./
-RUN pip install --no-cache-dir -r requirements-oasis-runtime.txt
+RUN grep -v '^torch==' requirements-oasis-runtime.txt > requirements-oasis-runtime-hosted.txt
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu torch==2.10.0+cpu
+RUN pip install --no-cache-dir -r requirements-oasis-runtime-hosted.txt
 
 COPY backend/scripts ./scripts
 

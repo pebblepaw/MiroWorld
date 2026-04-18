@@ -141,3 +141,73 @@ def test_simulation_background_rebinds_session_owner_context(monkeypatch, tmp_pa
 
     assert observed_user_ids == [owner_id]
     assert service.store._current_user_id() is None
+
+
+def test_postgres_replace_agents_handles_null_user_scope_without_typed_null_sql(monkeypatch, tmp_path: Path) -> None:
+    store = SimulationStore(str(tmp_path / "simulation.db"))
+    observed: list[tuple[str, tuple[object, ...] | None]] = []
+
+    class _Conn:
+        def __enter__(self) -> "_Conn":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def execute(self, sql: str, params: tuple[object, ...] | None = None) -> None:
+            observed.append((sql, params))
+
+    monkeypatch.setattr(type(store), "is_postgres", property(lambda self: True))
+    monkeypatch.setattr(store, "_connect", lambda: _Conn())
+
+    store.replace_agents(
+        "sim-null-user",
+        [
+            {
+                "agent_id": "agent-1",
+                "persona": {"display_name": "Agent One"},
+                "opinion_pre": None,
+                "opinion_post": None,
+            }
+        ],
+    )
+
+    assert observed[0] == ("DELETE FROM agents WHERE simulation_id = %s", ("sim-null-user",))
+    assert observed[1] == ("DELETE FROM report_cache WHERE simulation_id = %s", ("sim-null-user",))
+
+
+def test_postgres_replace_interactions_handles_null_user_scope_without_typed_null_sql(monkeypatch, tmp_path: Path) -> None:
+    store = SimulationStore(str(tmp_path / "simulation.db"))
+    observed: list[tuple[str, tuple[object, ...] | None]] = []
+
+    class _Conn:
+        def __enter__(self) -> "_Conn":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def execute(self, sql: str, params: tuple[object, ...] | None = None) -> None:
+            observed.append((sql, params))
+
+    monkeypatch.setattr(type(store), "is_postgres", property(lambda self: True))
+    monkeypatch.setattr(store, "_connect", lambda: _Conn())
+
+    store.replace_interactions(
+        "sim-null-user",
+        [
+            {
+                "round_no": 1,
+                "actor_agent_id": "agent-1",
+                "target_agent_id": None,
+                "action_type": "create_post",
+                "title": "Seeded post",
+                "content": "content",
+                "delta": 0.0,
+            }
+        ],
+    )
+
+    assert observed[0] == ("DELETE FROM interactions WHERE simulation_id = %s", ("sim-null-user",))
+    assert observed[1] == ("DELETE FROM report_cache WHERE simulation_id = %s", ("sim-null-user",))
+    assert observed[2] == ("DELETE FROM memory_sync_state WHERE simulation_id = %s", ("sim-null-user",))

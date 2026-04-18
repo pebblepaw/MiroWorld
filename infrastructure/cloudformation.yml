@@ -54,6 +54,9 @@ Parameters:
   ZepCloudParamName:
     Type: String
     Default: ''
+  OasisSidecarImage:
+    Type: String
+    Default: ''
 
 Conditions:
   IsStaging: !Equals [!Ref Environment, 'staging']
@@ -65,6 +68,7 @@ Conditions:
   HasSupabaseScretKeyParam: !Not [!Equals [!Ref SupabaseScretKeyParamName, '']]
   HasSupabasePostgresUrlParam: !Not [!Equals [!Ref SupabasePostgresUrlParamName, '']]
   HasZepCloudParam: !Not [!Equals [!Ref ZepCloudParamName, '']]
+  HasOasisSidecarImage: !Not [!Equals [!Ref OasisSidecarImage, '']]
 
 Resources:
   # === VPC =========================================================
@@ -181,6 +185,9 @@ Resources:
       Name: !Sub ${ProjectName}-alb
       Scheme: internet-facing
       Type: application
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '300'
       Subnets:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
@@ -299,6 +306,12 @@ Resources:
         - Name: backend
           Image: !Ref BackendImage
           Essential: true
+          DependsOn:
+            - !If
+              - HasOasisSidecarImage
+              - ContainerName: oasis-sidecar
+                Condition: HEALTHY
+              - !Ref AWS::NoValue
           PortMappings:
             - ContainerPort: 8000
               Protocol: tcp
@@ -317,6 +330,16 @@ Resources:
               Value: gemini-embedding-001
             - Name: LLM_BASE_URL
               Value: https://generativelanguage.googleapis.com/v1beta/openai/
+            - !If
+              - HasOasisSidecarImage
+              - Name: OASIS_SIDECAR_HOST
+                Value: 127.0.0.1
+              - !Ref AWS::NoValue
+            - !If
+              - HasOasisSidecarImage
+              - Name: OASIS_SIDECAR_PORT
+                Value: '8001'
+              - !Ref AWS::NoValue
           Secrets:
             - Name: GEMINI_API
               ValueFrom: !Ref GeminiParamName
@@ -374,6 +397,31 @@ Resources:
             Timeout: 5
             Retries: 3
             StartPeriod: 15
+        - !If
+          - HasOasisSidecarImage
+          - Name: oasis-sidecar
+            Image: !Ref OasisSidecarImage
+            Essential: true
+            PortMappings:
+              - ContainerPort: 8001
+                Protocol: tcp
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: !Ref BackendLogGroup
+                awslogs-region: !Ref AWS::Region
+                awslogs-stream-prefix: oasis-sidecar
+            HealthCheck:
+              Command:
+                - CMD-SHELL
+                - >-
+                  python -c 'import sys, urllib.request;
+                  sys.exit(0 if urllib.request.urlopen("http://localhost:8001/health").getcode() == 200 else 1)'
+              Interval: 30
+              Timeout: 5
+              Retries: 3
+              StartPeriod: 20
+          - !Ref AWS::NoValue
 
   # === ECS Service =================================================
   BackendService:
@@ -454,6 +502,8 @@ Resources:
             CustomOriginConfig:
               OriginProtocolPolicy: http-only
               HTTPPort: 80
+              OriginKeepaliveTimeout: 60
+              OriginReadTimeout: 120
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https

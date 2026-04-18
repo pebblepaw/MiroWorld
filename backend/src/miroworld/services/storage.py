@@ -579,8 +579,12 @@ class SimulationStore:
         user_id = self._current_user_id()
         with self._connect() as conn:
             if self.is_postgres:
-                conn.execute("DELETE FROM agents WHERE simulation_id = %s AND (%s IS NULL OR user_id = %s)", (simulation_id, user_id, user_id))
-                conn.execute("DELETE FROM report_cache WHERE simulation_id = %s AND (%s IS NULL OR user_id = %s)", (simulation_id, user_id, user_id))
+                if user_id is None:
+                    conn.execute("DELETE FROM agents WHERE simulation_id = %s", (simulation_id,))
+                    conn.execute("DELETE FROM report_cache WHERE simulation_id = %s", (simulation_id,))
+                else:
+                    conn.execute("DELETE FROM agents WHERE simulation_id = %s AND user_id = %s", (simulation_id, user_id))
+                    conn.execute("DELETE FROM report_cache WHERE simulation_id = %s AND user_id = %s", (simulation_id, user_id))
                 for agent in agents:
                     conn.execute(
                         """
@@ -621,9 +625,14 @@ class SimulationStore:
         user_id = self._current_user_id()
         with self._connect() as conn:
             if self.is_postgres:
-                conn.execute("DELETE FROM interactions WHERE simulation_id = %s AND (%s IS NULL OR user_id = %s)", (simulation_id, user_id, user_id))
-                conn.execute("DELETE FROM report_cache WHERE simulation_id = %s AND (%s IS NULL OR user_id = %s)", (simulation_id, user_id, user_id))
-                conn.execute("DELETE FROM memory_sync_state WHERE simulation_id = %s AND (%s IS NULL OR user_id = %s)", (simulation_id, user_id, user_id))
+                if user_id is None:
+                    conn.execute("DELETE FROM interactions WHERE simulation_id = %s", (simulation_id,))
+                    conn.execute("DELETE FROM report_cache WHERE simulation_id = %s", (simulation_id,))
+                    conn.execute("DELETE FROM memory_sync_state WHERE simulation_id = %s", (simulation_id,))
+                else:
+                    conn.execute("DELETE FROM interactions WHERE simulation_id = %s AND user_id = %s", (simulation_id, user_id))
+                    conn.execute("DELETE FROM report_cache WHERE simulation_id = %s AND user_id = %s", (simulation_id, user_id))
+                    conn.execute("DELETE FROM memory_sync_state WHERE simulation_id = %s AND user_id = %s", (simulation_id, user_id))
                 for item in interactions:
                     conn.execute(
                         """
