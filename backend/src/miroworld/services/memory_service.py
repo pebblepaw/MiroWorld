@@ -22,6 +22,8 @@ class MemoryService:
         self._interaction_cache: dict[str, list[dict[str, Any]]] = {}
         self._transcript_cache: dict[str, list[dict[str, Any]]] = {}
         self._checkpoint_cache: dict[str, list[dict[str, Any]]] = {}
+        self._zep_ready_users: set[str] = set()
+        self._zep_ready_threads: set[str] = set()
         self._memory_backend = "zep-cloud" if self.zep.enabled else "sqlite"
 
     @property
@@ -415,11 +417,11 @@ class MemoryService:
     def _ensure_zep_synced(self, simulation_id: str) -> dict[str, Any]:
         self.zep.ensure_enabled()
         owner_id, zep_user_id, thread_id = self._zep_ids_for_session(simulation_id)
-        self.zep.ensure_user(user_id=zep_user_id, metadata={"app_user_id": owner_id, "session_id": simulation_id})
-        self.zep.ensure_thread(user_id=zep_user_id, thread_id=thread_id)
+        self._ensure_zep_targets(owner_id=owner_id, zep_user_id=zep_user_id, thread_id=thread_id)
 
         sync_state = self.store.get_memory_sync_state(simulation_id) or {}
         self._ensure_seed_synced(simulation_id, zep_user_id=zep_user_id, thread_id=thread_id, sync_state=sync_state)
+        sync_state = self.store.get_memory_sync_state(simulation_id) or {}
 
         last_interaction_id = int(sync_state.get("last_interaction_id", 0) or 0)
         last_checkpoint_id = int(sync_state.get("last_checkpoint_id", 0) or 0)
@@ -448,6 +450,20 @@ class MemoryService:
         )
         return self.store.get_memory_sync_state(simulation_id) or {}
 
+    def _ensure_zep_targets(
+        self,
+        *,
+        owner_id: str,
+        zep_user_id: str,
+        thread_id: str,
+    ) -> None:
+        if zep_user_id not in self._zep_ready_users:
+            self.zep.ensure_user(user_id=zep_user_id, metadata={"app_user_id": owner_id})
+            self._zep_ready_users.add(zep_user_id)
+        if thread_id not in self._zep_ready_threads:
+            self.zep.ensure_thread(user_id=zep_user_id, thread_id=thread_id)
+            self._zep_ready_threads.add(thread_id)
+
     def _ensure_seed_synced(
         self,
         simulation_id: str,
@@ -461,8 +477,6 @@ class MemoryService:
         artifact = self.store.get_knowledge_artifact(simulation_id) or {}
         messages = self._build_seed_messages(simulation_id, artifact)
         if messages:
-            self.zep.ensure_user(user_id=zep_user_id, metadata={"session_id": simulation_id})
-            self.zep.ensure_thread(user_id=zep_user_id, thread_id=thread_id)
             self.zep.add_messages(thread_id=thread_id, messages=messages)
         self.store.save_memory_sync_state(
             simulation_id,
@@ -479,7 +493,7 @@ class MemoryService:
     def _zep_ids_for_session(self, simulation_id: str) -> tuple[str, str, str]:
         session = self.store.get_console_session(simulation_id) or {}
         owner_id = str(session.get("user_id") or simulation_id).strip() or simulation_id
-        zep_user_id = f"miroworld::{owner_id}::{simulation_id}"
+        zep_user_id = f"miroworld::{owner_id}"
         thread_id = f"session::{simulation_id}"
         return owner_id, zep_user_id, thread_id
 

@@ -40,6 +40,73 @@ def test_hosted_memory_uses_zep_when_zep_cloud_env_is_present(monkeypatch, tmp_p
     assert service.memory_backend == "zep-cloud"
 
 
+def test_zep_user_ids_are_stable_per_authenticated_user(tmp_path: Path) -> None:
+    service = MemoryService(
+        Settings(
+            simulation_db_path=str(tmp_path / "simulation.db"),
+            app_state_backend="postgres",
+            zep_api_key="zep-test-key",
+        )
+    )
+    service.store.get_console_session = lambda _session_id: {"user_id": "user-123"}  # type: ignore[method-assign]
+
+    owner_id, zep_user_id, thread_id = service._zep_ids_for_session("session-456")
+
+    assert owner_id == "user-123"
+    assert zep_user_id == "miroworld::user-123"
+    assert thread_id == "session::session-456"
+
+
+def test_zep_sync_ensures_user_and_thread_only_once_per_process(tmp_path: Path) -> None:
+    service = MemoryService(
+        Settings(
+            simulation_db_path=str(tmp_path / "simulation.db"),
+            app_state_backend="postgres",
+            zep_api_key="zep-test-key",
+        )
+    )
+    sync_state: dict[str, int] = {"last_interaction_id": 0, "last_checkpoint_id": 0, "synced_events": 0}
+    ensure_user_calls: list[dict[str, object]] = []
+    ensure_thread_calls: list[dict[str, object]] = []
+    add_messages_calls: list[dict[str, object]] = []
+
+    service.store.get_console_session = lambda _session_id: {"user_id": "user-123"}  # type: ignore[method-assign]
+    service.store.get_memory_sync_state = lambda _session_id: dict(sync_state)  # type: ignore[method-assign]
+    service.store.get_knowledge_artifact = lambda _session_id: {"summary": "A new tax proposal was announced."}  # type: ignore[method-assign]
+    service.store.get_interactions_after_id = lambda _session_id, _last_id: []  # type: ignore[method-assign]
+    service.store.list_checkpoint_records_after_id = lambda _session_id, _last_id: []  # type: ignore[method-assign]
+    service.store.get_agents = lambda _session_id: []  # type: ignore[method-assign]
+
+    def _save_memory_sync_state(
+        _session_id: str,
+        *,
+        last_interaction_id: int,
+        synced_events: int,
+        last_checkpoint_id: int,
+    ) -> None:
+        sync_state.update(
+            {
+                "last_interaction_id": last_interaction_id,
+                "synced_events": synced_events,
+                "last_checkpoint_id": last_checkpoint_id,
+            }
+        )
+
+    service.store.save_memory_sync_state = _save_memory_sync_state  # type: ignore[method-assign]
+    service.zep.ensure_user = lambda **kwargs: ensure_user_calls.append(kwargs)  # type: ignore[method-assign]
+    service.zep.ensure_thread = lambda **kwargs: ensure_thread_calls.append(kwargs)  # type: ignore[method-assign]
+    service.zep.add_messages = lambda **kwargs: add_messages_calls.append(kwargs) or {}  # type: ignore[method-assign]
+
+    first = service._ensure_zep_synced("session-456")
+    second = service._ensure_zep_synced("session-456")
+
+    assert first["synced_events"] == 1
+    assert second["synced_events"] == 1
+    assert ensure_user_calls == [{"user_id": "miroworld::user-123", "metadata": {"app_user_id": "user-123"}}]
+    assert ensure_thread_calls == [{"user_id": "miroworld::user-123", "thread_id": "session::session-456"}]
+    assert len(add_messages_calls) == 1
+
+
 def test_postgres_store_scopes_session_state_by_authenticated_user(monkeypatch, tmp_path: Path) -> None:
     if not Settings().supabase_postgres_url:
         pytest.skip("Supabase session-pooler URL is not configured.")

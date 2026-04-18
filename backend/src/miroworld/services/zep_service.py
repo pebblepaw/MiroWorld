@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import requests
@@ -105,19 +106,48 @@ class ZepService:
         allow_conflict: bool = False,
     ) -> dict[str, Any]:
         self.ensure_enabled()
-        response = self._session.post(
-            f"{self._base_url}{path}",
-            headers=self._headers(),
-            json=payload,
-            timeout=60,
-        )
-        if allow_conflict and response.status_code in {400, 409}:
-            logger.debug("Zep conflict tolerated for %s: %s", path, response.text[:300])
-            return {}
+        max_attempts = 4
+        response: requests.Response | None = None
+        for attempt in range(1, max_attempts + 1):
+            response = self._session.post(
+                f"{self._base_url}{path}",
+                headers=self._headers(),
+                json=payload,
+                timeout=60,
+            )
+            if allow_conflict and response.status_code in {400, 409}:
+                logger.debug("Zep conflict tolerated for %s: %s", path, response.text[:300])
+                return {}
+            if response.status_code not in {429, 500, 502, 503, 504}:
+                break
+            if attempt >= max_attempts:
+                break
+            delay = self._retry_delay_seconds(response=response, attempt=attempt)
+            logger.warning(
+                "Retrying Zep request for %s after status %s (attempt %s/%s, sleep %.2fs)",
+                path,
+                response.status_code,
+                attempt,
+                max_attempts,
+                delay,
+            )
+            time.sleep(delay)
+
+        assert response is not None
         response.raise_for_status()
         if not response.content:
             return {}
         return response.json()
+
+    @staticmethod
+    def _retry_delay_seconds(*, response: requests.Response, attempt: int) -> float:
+        retry_after = str(response.headers.get("Retry-After") or "").strip()
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                logger.debug("Ignoring non-numeric Retry-After header from Zep: %s", retry_after)
+        return min(2.0** (attempt - 1), 8.0)
 
     def _headers(self) -> dict[str, str]:
         return {
