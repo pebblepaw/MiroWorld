@@ -40,7 +40,7 @@ from miroworld.services.persona_sampler import PersonaSampler
 from miroworld.services.report_service import ReportService
 from miroworld.services.simulation_service import SimulationService
 from miroworld.services.simulation_stream_service import SimulationStreamService
-from miroworld.services.storage import SimulationStore
+from miroworld.services.storage import SimulationStore, reset_store_user_context, set_store_user_context
 from miroworld.services.token_tracker import TokenTracker
 
 MAX_AFFECTED_GROUPS_CANDIDATES = 1000
@@ -1373,11 +1373,13 @@ class ConsoleService:
             },
         )
         self.store.upsert_console_session(session_id=session_id, mode=effective_mode, status="simulation_running")
+        session_owner_id = str((self.store.get_console_session(session_id) or {}).get("user_id") or "").strip() or None
 
         thread = threading.Thread(
             target=self._run_simulation_background,
             args=(
                 session_id,
+                session_owner_id,
                 subject_summary,
                 rounds,
                 sampled_rows,
@@ -2106,6 +2108,7 @@ class ConsoleService:
     def _run_simulation_background(
         self,
         session_id: str,
+        session_owner_id: str | None,
         subject_summary: str,
         rounds: int,
         sampled_rows: list[dict[str, Any]],
@@ -2114,6 +2117,7 @@ class ConsoleService:
         mode: str,
         controversy_boost: float = 0.0,
     ) -> None:
+        user_scope_token = set_store_user_context(session_owner_id) if session_owner_id else None
         try:
             runtime_settings = self._runtime_settings_for_session(session_id)
             simulation_service = SimulationService(runtime_settings)
@@ -2346,6 +2350,12 @@ class ConsoleService:
             )
             self.store.save_simulation_state_snapshot(session_id, failure_state)
             self.store.upsert_console_session(session_id=session_id, mode=mode, status="simulation_failed")
+        finally:
+            if user_scope_token is not None:
+                try:
+                    reset_store_user_context(user_scope_token)
+                except ValueError:
+                    pass
 
     def _merge_population_filters(self, request: Any, parsed_instructions: dict[str, Any], *, country: str) -> dict[str, Any]:
         hard_filters = parsed_instructions.get("hard_filters", {})

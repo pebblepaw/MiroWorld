@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 from miroworld.config import Settings, get_settings
+from miroworld.services import console_service as console_service_module
 from miroworld.services.console_service import ConsoleService
 from miroworld.services.storage import SimulationStore, reset_store_user_context, set_store_user_context
 import pytest
@@ -74,3 +75,69 @@ def test_postgres_store_scopes_session_state_by_authenticated_user(monkeypatch, 
         reset_store_user_context(token)
 
     get_settings.cache_clear()
+
+
+def test_simulation_background_rebinds_session_owner_context(monkeypatch, tmp_path: Path) -> None:
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "simulation.db"),
+        app_state_backend="sqlite",
+    )
+    service = ConsoleService(settings)
+
+    owner_id = f"user-{uuid.uuid4().hex[:8]}"
+    session_id = f"session-{uuid.uuid4().hex[:8]}"
+    observed_user_ids: list[str | None] = []
+
+    class _StopBackground(RuntimeError):
+        pass
+
+    class _FakeSimulationService:
+        def __init__(self, _settings: Settings) -> None:
+            pass
+
+        def build_context_bundles(self, **_: object) -> dict[str, object]:
+            return {}
+
+        def run_opinion_checkpoint(self, **_: object) -> list[dict[str, object]]:
+            return [{"agent_id": "agent-1", "metric_answers": {}}]
+
+    class _FakeMetricsService:
+        def __init__(self, _config_service: object) -> None:
+            pass
+
+        def compute_dynamic_metrics(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {}
+
+    monkeypatch.setattr(console_service_module, "SimulationService", _FakeSimulationService)
+    monkeypatch.setattr(console_service_module, "MetricsService", _FakeMetricsService)
+    monkeypatch.setattr(service, "_runtime_settings_for_session", lambda _session_id: settings)
+    monkeypatch.setattr(service, "_session_use_case", lambda _session_id: "public-policy-testing")
+    monkeypatch.setattr(service, "get_session_analysis_questions", lambda _session_id: {"questions": []})
+    monkeypatch.setattr(service, "_checkpoint_questions_for_use_case", lambda *_args, **_kwargs: [{"question": "Q"}])
+    monkeypatch.setattr(service, "_personality_modifiers_for_use_case", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(service, "_session_country_config", lambda _session_id: ("usa", {"name": "United States"}, None))
+    monkeypatch.setattr(service, "_flatten_dynamic_metrics_payload", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(service, "_agents_for_dynamic_metrics", lambda records: records)
+    monkeypatch.setattr(service.streams, "append_events", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service.streams, "ingest_events_incremental", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service.store, "get_console_session", lambda _session_id: {"session_id": session_id, "user_id": owner_id})
+    monkeypatch.setattr(service.store, "get_knowledge_artifact", lambda _session_id: {})
+    monkeypatch.setattr(
+        service.store,
+        "replace_checkpoint_records",
+        lambda *_args, **_kwargs: (observed_user_ids.append(service.store._current_user_id()), (_ for _ in ()).throw(_StopBackground())),
+    )
+
+    service._run_simulation_background(
+        session_id,
+        owner_id,
+        "Subject summary",
+        3,
+        [{"agent_id": "agent-1"}],
+        [{"agent_id": "agent-1"}],
+        tmp_path / "events.jsonl",
+        "live",
+    )
+
+    assert observed_user_ids == [owner_id]
+    assert service.store._current_user_id() is None
