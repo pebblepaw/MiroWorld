@@ -172,10 +172,12 @@ describe("Hosted OnboardingModal", () => {
       if (url.endsWith("/api/v2/countries/usa/download-status")) {
         downloadStatusCalls += 1;
         return makeResponse({
-          ...missingCatalog[1],
+          country: "usa",
           dataset_ready: true,
           download_required: false,
           download_status: "ready",
+          download_error: null,
+          missing_dependency: null,
         });
       }
 

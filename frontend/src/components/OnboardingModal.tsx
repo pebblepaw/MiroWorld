@@ -4,6 +4,7 @@ import { ArrowRight, Globe, ServerCog, Target, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/contexts/AppContext";
 import {
+  type CountryDatasetStatusResponse,
   createV2Session,
   downloadCountryDataset,
   getCountryDownloadStatus,
@@ -136,6 +137,18 @@ function buildCountryCatalog(countries: V2CountryResponse[]) {
   return merged;
 }
 
+function mergeCountryStatus(country: CountryCard, status: CountryDatasetStatusResponse): CountryCard {
+  return {
+    ...country,
+    available: Boolean(country.available || status.dataset_ready),
+    downloadError: status.download_error,
+    downloadRequired: Boolean(status.download_required),
+    downloadStatus: status.download_status,
+    launchReady: Boolean((country.available || status.dataset_ready) && status.dataset_ready),
+    missingDependency: status.missing_dependency,
+  };
+}
+
 function resolveInitialCountry(countryId: string, countries: CountryCard[]) {
   const requested = countries.find((country) => country.id === countryId && country.available);
   if (requested) {
@@ -218,13 +231,26 @@ export function OnboardingModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     const poll = async () => {
       try {
         const payload = await getCountryDownloadStatus(downloadingCountryId);
-        const nextCountry = toCountryCard(payload);
-
-        if (cancelled || !nextCountry) {
+        if (cancelled) {
           return;
         }
 
-        setCountries((current) => current.map((entry) => (entry.id === nextCountry.id ? nextCountry : entry)));
+        let nextCountry: CountryCard | null = null;
+        setCountries((current) =>
+          current.map((entry) => {
+            if (entry.id !== downloadingCountryId) {
+              return entry;
+            }
+            nextCountry = mergeCountryStatus(entry, payload);
+            return nextCountry;
+          }),
+        );
+
+        if (!nextCountry) {
+          setDownloadingCountryId(null);
+          setLaunchError(`Unable to resolve hosted dataset status for ${downloadingCountryId}.`);
+          return;
+        }
 
         if (nextCountry.launchReady || nextCountry.downloadStatus === "error") {
           setDownloadingCountryId(null);

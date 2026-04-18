@@ -61,6 +61,16 @@ export interface V2CountryResponse {
   missing_dependency: "huggingface_api_key" | null;
 }
 
+export interface CountryDatasetStatusResponse {
+  country: string;
+  dataset_ready: boolean;
+  download_required: boolean;
+  download_status: "ready" | "missing" | "downloading" | "error";
+  download_error: string | null;
+  missing_dependency: "huggingface_api_key" | null;
+  resolved_dataset_path?: string | null;
+}
+
 export interface V2ProviderResponse {
   name: V2ProviderId;
   models: string[];
@@ -1353,7 +1363,7 @@ export async function downloadCountryDataset(countryId: string): Promise<{ statu
   return parseJson(response);
 }
 
-export async function getCountryDownloadStatus(countryId: string): Promise<V2CountryResponse> {
+export async function getCountryDownloadStatus(countryId: string): Promise<CountryDatasetStatusResponse> {
   const response = await authenticatedFetch(`${API_BASE}/api/v2/countries/${encodeURIComponent(countryId)}/download-status`);
   return parseJson(response);
 }
