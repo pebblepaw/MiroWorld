@@ -27,7 +27,7 @@ type CountryCard = {
 };
 
 const HOSTED_PROVIDER: ModelProviderId = "google";
-const HOSTED_MODEL = "gemini-2.5-flash-lite";
+const HOSTED_MODEL = "gemini-2.5-flash";
 
 const FALLBACK_COUNTRIES: CountryCard[] = [
   {

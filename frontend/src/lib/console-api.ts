@@ -496,7 +496,7 @@ const STATIC_COUNTRIES: V2CountryResponse[] = [
 ];
 
 const STATIC_V2_PROVIDERS: V2ProviderResponse[] = [
-  { name: "gemini", models: ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], requires_api_key: true },
+  { name: "gemini", models: ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"], requires_api_key: true },
   { name: "openai", models: ["gpt-4o-mini", "gpt-4o"], requires_api_key: true },
   { name: "ollama", models: ["qwen3:4b-instruct-2507-q4_K_M", "llama3:8b"], requires_api_key: false },
 ];
@@ -505,7 +505,7 @@ const STATIC_MODEL_CATALOG: ConsoleModelProvider[] = [
   {
     id: "google",
     label: "Google Gemini",
-    default_model: "gemini-2.5-flash-lite",
+    default_model: "gemini-2.5-flash",
     default_embed_model: "nomic-embed-text",
     default_base_url: "",
     requires_api_key: true,

@@ -856,6 +856,101 @@ describe("Simulation", () => {
     expect(screen.getByText("Persisted thread title")).toBeInTheDocument();
   });
 
+  it("hydrates Screen 3 from recovered top threads in the backend state", async () => {
+    vi.stubEnv("VITE_BOOT_MODE", "live");
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/simulation/state")) {
+        return {
+          ok: true,
+          json: async () => ({
+            session_id: "session-screen3",
+            status: "running",
+            event_count: 6,
+            last_round: 2,
+            platform: "reddit",
+            planned_rounds: 3,
+            current_round: 2,
+            elapsed_seconds: 18,
+            estimated_total_seconds: 45,
+            estimated_remaining_seconds: 27,
+            counters: { posts: 2, comments: 1, reactions: 0, active_authors: 2 },
+            checkpoint_status: {
+              baseline: { status: "completed", completed_agents: 3, total_agents: 3 },
+              final: { status: "pending", completed_agents: 0, total_agents: 3 },
+            },
+            top_threads: [
+              {
+                post_id: "post-1",
+                title: "Housing affordability matters",
+                content: "The policy should reduce rent pressure for families.",
+                author_name: "Agent A",
+                round_no: 2,
+                likes: 3,
+                dislikes: 0,
+                comments: [
+                  {
+                    comment_id: "comment-1",
+                    author_name: "Agent B",
+                    content: "Transport access should be bundled with it.",
+                    round_no: 2,
+                    likes: 1,
+                    dislikes: 0,
+                  },
+                ],
+              },
+            ],
+            discussion_momentum: { approval_delta: 0.17, dominant_stance: "support" },
+            latest_metrics: {
+              approval_rate: { value: 77.2, label: "Approval Rate" },
+              net_sentiment: { value: 6.5, label: "Net Sentiment" },
+              round_progress: { round: 2, batch: 1, total_batches: 1, percentage: 100, label: "Round 2 (100%)" },
+              round_progress_label: "Round 2 (100%)",
+            },
+            recent_events: [{ event_type: "round_batch_flushed", round_no: 2, batch_index: 1, batch_count: 1 }],
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          session_id: "session-screen3",
+          status: "running",
+          event_count: 1,
+          last_round: 0,
+          platform: "reddit",
+          planned_rounds: 3,
+          current_round: 0,
+          elapsed_seconds: 0,
+          estimated_total_seconds: 45,
+          estimated_remaining_seconds: 45,
+          counters: { posts: 0, comments: 0, reactions: 0, active_authors: 0 },
+          checkpoint_status: {
+            baseline: { status: "completed", completed_agents: 3, total_agents: 3 },
+            final: { status: "pending", completed_agents: 0, total_agents: 3 },
+          },
+          top_threads: [],
+          discussion_momentum: { approval_delta: 0, dominant_stance: "mixed" },
+          latest_metrics: {},
+          recent_events: [],
+        }),
+      } as Response;
+    }) as typeof fetch;
+
+    render(
+      <AppProvider>
+        <SeedStage3Context />
+        <Simulation />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("Housing affordability matters")).toBeInTheDocument();
+    expect(screen.getByText("Transport access should be bundled with it.")).toBeInTheDocument();
+    expect(screen.getByText("Round 2 (100%)")).toBeInTheDocument();
+    expect(screen.getByText("77.2%")).toBeInTheDocument();
+  });
+
   it("clears stale Screen 3 state when the session changes", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -1121,9 +1216,11 @@ describe("Simulation", () => {
     fireEvent.click(screen.getByRole("button", { name: "10" }));
 
     await waitFor(() => expect(screen.getByText("~$2.75 cost")).toBeInTheDocument());
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("/api/v2/token-usage/session-screen3/estimate?agents=3&rounds=10"),
-    );
+    expect(
+      fetchSpy.mock.calls.some(([request]) =>
+        String(request).includes("/api/v2/token-usage/session-screen3/estimate?agents=3&rounds=10"),
+      ),
+    ).toBe(true);
   });
 
   it("uses the backend token estimate in demo mode", async () => {
@@ -1204,9 +1301,11 @@ describe("Simulation", () => {
     );
 
     expect(await screen.findByText("~$1.11 cost")).toBeInTheDocument();
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("/api/v2/token-usage/session-screen3/estimate?agents=3&rounds=3"),
-    );
+    expect(
+      fetchSpy.mock.calls.some(([request]) =>
+        String(request).includes("/api/v2/token-usage/session-screen3/estimate?agents=3&rounds=3"),
+      ),
+    ).toBe(true);
   });
 
   it("keeps the current demo-static ollama estimate at $0 and derives reaction counts from loaded threads", async () => {

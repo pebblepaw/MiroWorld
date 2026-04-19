@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     ollama_default_embed_model: str = "nomic-embed-text"
     ollama_default_base_url: str = "http://127.0.0.1:11434/v1/"
 
-    google_default_model: str = "gemini-2.5-flash-lite"
+    google_default_model: str = "gemini-2.5-flash"
     google_default_embed_model: str = "gemini-embedding-001"
     google_fallback_embed_models: str = "gemini-embedding-2-preview"
     google_default_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"

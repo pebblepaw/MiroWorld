@@ -336,11 +336,13 @@ def compute_top_cascade(posts: list[dict[str, Any]], comments: list[dict[str, An
         children = [build_comment_node(child) for child in comments_by_parent.get(_row_id(comment), []) if _row_id(child) != _row_id(comment)]
         likes, dislikes = _numeric_engagement(comment)
         stance = _row_stance(comment, agent)
+        round_no = _as_int(comment.get("round_no", 0))
         node = {
             "comment_id": _row_id(comment) or None,
             "author": actor_id or None,
             "author_name": _agent_name(agent, actor_id or "unknown"),
             "stance": stance,
+            "round_no": round_no,
             "content": _clean_text(comment.get("content") or comment.get("body")) or None,
             "body": _clean_text(comment.get("body") or comment.get("content")) or None,
             "likes": likes,
@@ -381,6 +383,7 @@ def compute_top_cascade(posts: list[dict[str, Any]], comments: list[dict[str, An
         title = _clean_text(post.get("title")) or _summarize_text(content, 80) or f"Post {post_id}"
         stance = _row_stance(post, agent)
         engagement_score = _engagement_score(post) + comment_count + sum(abs(delta) for delta in discussion_deltas)
+        round_no = _as_int(post.get("round_no", 0))
         viral_posts.append(
             {
                 "post_id": post_id,
@@ -388,6 +391,7 @@ def compute_top_cascade(posts: list[dict[str, Any]], comments: list[dict[str, An
                 "author_name": _agent_name(agent, actor_id or "unknown"),
                 "stance": stance,
                 "segment": stance,
+                "round_no": round_no,
                 "title": title,
                 "content": content or None,
                 "body": _clean_text(post.get("body") or content) or None,

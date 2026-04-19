@@ -2254,6 +2254,13 @@ class ConsoleService:
                     int(token_usage_payload.get("cached_tokens", 0) or 0),
                 )
             self.streams.ingest_events_incremental(session_id, events_path)
+            self._recover_missing_simulation_stream_events(
+                session_id,
+                rounds=rounds,
+                metrics_service=metrics_service,
+                elapsed_seconds=int(simulation_result.get("elapsed_seconds", 0) or 0),
+                estimated_remaining_seconds=checkpoint_estimate,
+            )
             final_bundles = self._build_final_checkpoint_bundles(session_id, context_bundles)
             final_started_at = time.monotonic()
             self.streams.append_events(
@@ -2356,6 +2363,101 @@ class ConsoleService:
                     reset_store_user_context(user_scope_token)
                 except ValueError:
                     pass
+
+    def _recover_missing_simulation_stream_events(
+        self,
+        session_id: str,
+        *,
+        rounds: int,
+        metrics_service: MetricsService,
+        elapsed_seconds: int,
+        estimated_remaining_seconds: int,
+    ) -> None:
+        existing_events = self.store.list_simulation_events(session_id)
+        if any(
+            str(event.get("event_type") or "").strip().lower()
+            in {"post_created", "comment_created", "round_batch_flushed"}
+            for event in existing_events
+        ):
+            return
+
+        interactions = self.store.get_interactions(session_id)
+        if not interactions:
+            return
+
+        posts = [
+            row
+            for row in interactions
+            if str(row.get("action_type", "")).lower() in {"create_post", "post_created", "post"}
+        ]
+        comments = [
+            row
+            for row in interactions
+            if "comment" in str(row.get("action_type", "")).lower()
+            or str(row.get("type", "")).lower() == "comment"
+        ]
+        observed_rounds = sorted(
+            {
+                int(row.get("round_no", 0) or 0)
+                for row in interactions
+                if int(row.get("round_no", 0) or 0) > 0
+            }
+        )
+        if not observed_rounds and not posts and not comments:
+            return
+
+        active_authors = {
+            str(row.get("actor_agent_id") or "").strip()
+            for row in interactions
+            if str(row.get("actor_agent_id") or "").strip()
+        }
+        cascades = metrics_service.compute_cascades(posts, comments, self._agents_for_metrics(session_id))
+        current_state = self.streams.get_state(session_id)
+        synthetic_events: list[dict[str, Any]] = []
+
+        for round_no in observed_rounds:
+            synthetic_events.append(
+                {
+                    "event_type": "round_batch_flushed",
+                    "session_id": session_id,
+                    "round_no": round_no,
+                    "round": round_no,
+                    "batch_index": 1,
+                    "batch": 1,
+                    "batch_count": 1,
+                    "total_batches": 1,
+                    "percentage": 100.0,
+                    "label": f"Round {round_no} (100%)",
+                }
+            )
+
+        synthetic_events.append(
+            {
+                "event_type": "metrics_updated",
+                "session_id": session_id,
+                "round_no": observed_rounds[-1] if observed_rounds else max(0, int(rounds)),
+                "elapsed_seconds": max(0, int(elapsed_seconds)),
+                "estimated_total_seconds": max(0, int(elapsed_seconds) + max(0, int(estimated_remaining_seconds))),
+                "estimated_remaining_seconds": max(0, int(estimated_remaining_seconds)),
+                "counters": {
+                    "posts": len(posts),
+                    "comments": len(comments),
+                    "reactions": 0,
+                    "active_authors": len(active_authors),
+                },
+                "discussion_momentum": current_state.get(
+                    "discussion_momentum",
+                    {"approval_delta": 0.0, "dominant_stance": "mixed"},
+                ),
+                "top_threads": list(cascades.get("top_threads") or []),
+                "metrics": current_state.get("latest_metrics", {}),
+            }
+        )
+        logger.warning(
+            "Recovering hosted simulation stream for %s from persisted interactions because no discourse events were stored.",
+            session_id,
+        )
+        self.streams.append_events(session_id, synthetic_events)
 
     def _merge_population_filters(self, request: Any, parsed_instructions: dict[str, Any], *, country: str) -> dict[str, Any]:
         hard_filters = parsed_instructions.get("hard_filters", {})

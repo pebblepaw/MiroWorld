@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import logging
 import re
 from typing import Any
 
@@ -9,6 +10,8 @@ from miroworld.services.config_service import ConfigService
 from miroworld.services.llm_client import GeminiChatClient
 from miroworld.services.storage import SimulationStore
 from miroworld.services.zep_service import ZepService
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryService:
@@ -77,12 +80,25 @@ class MemoryService:
             return deepcopy(cached)
 
         if self.zep.enabled:
-            context = self._search_zep_context(
-                simulation_id,
-                normalized_query,
-                normalized_limit,
-                agent_id=agent_id,
-            )
+            try:
+                context = self._search_zep_context(
+                    simulation_id,
+                    normalized_query,
+                    normalized_limit,
+                    agent_id=agent_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Falling back to local hosted context for %s because Zep lookup failed: %s",
+                    simulation_id,
+                    exc,
+                )
+                context = self._search_local_context(
+                    simulation_id,
+                    normalized_query,
+                    normalized_limit,
+                    agent_id=agent_id,
+                )
         else:
             context = self._search_local_context(
                 simulation_id,

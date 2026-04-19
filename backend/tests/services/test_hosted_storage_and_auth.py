@@ -335,3 +335,92 @@ def test_postgres_replace_interactions_handles_null_user_scope_without_typed_nul
     assert observed[0] == ("DELETE FROM interactions WHERE simulation_id = %s", ("sim-null-user",))
     assert observed[1] == ("DELETE FROM report_cache WHERE simulation_id = %s", ("sim-null-user",))
     assert observed[2] == ("DELETE FROM memory_sync_state WHERE simulation_id = %s", ("sim-null-user",))
+
+
+def test_simulation_stream_recovery_rebuilds_threads_from_interactions(tmp_path: Path) -> None:
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "simulation.db"),
+        app_state_backend="sqlite",
+    )
+    service = ConsoleService(settings)
+    session_id = "session-stream-recovery"
+
+    service.store.upsert_simulation(session_id, "Policy summary", rounds=2, agent_count=2, runtime="oasis")
+    service.store.replace_agents(
+        session_id,
+        [
+            {
+                "agent_id": "agent-a",
+                "persona": {"name": "Agent A"},
+                "opinion_pre": 4.0,
+                "opinion_post": 6.0,
+            },
+            {
+                "agent_id": "agent-b",
+                "persona": {"name": "Agent B"},
+                "opinion_pre": 5.0,
+                "opinion_post": 6.5,
+            },
+        ],
+    )
+    service.store.replace_interactions(
+        session_id,
+        [
+            {
+                "round_no": 1,
+                "actor_agent_id": "agent-a",
+                "target_agent_id": None,
+                "action_type": "create_post",
+                "title": "Housing affordability matters",
+                "content": "The policy should reduce rent pressure for families.",
+                "delta": 0.5,
+            },
+            {
+                "round_no": 1,
+                "actor_agent_id": "agent-b",
+                "target_agent_id": "agent-a",
+                "action_type": "comment",
+                "content": "Transport access should be bundled with it.",
+                "delta": 0.2,
+            },
+            {
+                "round_no": 2,
+                "actor_agent_id": "agent-b",
+                "target_agent_id": None,
+                "action_type": "create_post",
+                "title": "Tax offsets for SMEs",
+                "content": "Small firms need time-limited support.",
+                "delta": 0.3,
+            },
+        ],
+    )
+    service.streams.append_events(
+        session_id,
+        [
+            {
+                "event_type": "checkpoint_completed",
+                "session_id": session_id,
+                "checkpoint_kind": "baseline",
+                "completed_agents": 2,
+                "total_agents": 2,
+            }
+        ],
+    )
+
+    metrics_service = console_service_module.MetricsService(console_service_module.ConfigService(settings))
+    service._recover_missing_simulation_stream_events(
+        session_id,
+        rounds=2,
+        metrics_service=metrics_service,
+        elapsed_seconds=24,
+        estimated_remaining_seconds=8,
+    )
+
+    state = service.streams.get_state(session_id)
+    event_types = [item["event_type"] for item in service.store.list_simulation_events(session_id)]
+
+    assert "round_batch_flushed" in event_types
+    assert state["top_threads"]
+    assert state["top_threads"][0]["title"] == "Housing affordability matters"
+    assert state["counters"]["posts"] == 2
+    assert state["counters"]["comments"] == 1

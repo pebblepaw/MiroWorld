@@ -159,6 +159,25 @@ def test_search_agent_context_is_scoped_to_agent_activity(tmp_path: Path) -> Non
     assert [item["checkpoint_kind"] for item in result["checkpoint_records"]] == ["final", "baseline"]
 
 
+def test_search_simulation_context_falls_back_to_local_when_zep_lookup_fails(tmp_path: Path) -> None:
+    settings = Settings(
+        simulation_db_path=str(tmp_path / "simulation.db"),
+        app_state_backend="postgres",
+        zep_api_key="zep-test-key",
+    )
+    store = SimulationStore(settings.simulation_db_path)
+    session_id = _seed_memory_store(store)
+
+    service = MemoryService(settings)
+    service._search_zep_context = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("rate limited"))  # type: ignore[method-assign]
+
+    result = service.search_simulation_context(session_id, "transport affordability", limit=4)
+
+    assert result["zep_context_used"] is False
+    assert result["episodes"]
+    assert result["episodes"][0]["source_kind"] == "transcript"
+
+
 def test_format_checkpoint_records_preserves_baseline_and_final_sections_under_limit(tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
     service = MemoryService(settings)

@@ -55,6 +55,63 @@ type FeedThread = {
   comments: FeedComment[];
 };
 
+function flattenTopThreadComments(
+  comments: unknown,
+  fallbackRoundNo: number,
+  accumulator: FeedComment[] = [],
+): FeedComment[] {
+  if (!Array.isArray(comments)) {
+    return accumulator;
+  }
+  for (const item of comments) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const payload = item as Record<string, unknown>;
+    const roundNo = Number(payload.round_no ?? fallbackRoundNo);
+    const normalizedRound = Number.isFinite(roundNo) ? roundNo : fallbackRoundNo;
+    accumulator.push({
+      id: String(payload.comment_id ?? payload.id ?? `comment-${accumulator.length + 1}`),
+      actorName: String(payload.author_name ?? payload.actor_name ?? payload.author ?? "Agent"),
+      content: String(payload.content ?? payload.body ?? ""),
+      roundNo: normalizedRound,
+      likes: Number(payload.likes ?? payload.upvotes ?? 0),
+      dislikes: Number(payload.dislikes ?? payload.downvotes ?? 0),
+    });
+    flattenTopThreadComments(payload.comments, normalizedRound, accumulator);
+  }
+  return accumulator;
+}
+
+function topThreadToFeedThread(thread: Record<string, unknown>, index: number): FeedThread {
+  const roundNo = Number(thread.round_no ?? 0);
+  const normalizedRound = Number.isFinite(roundNo) && roundNo > 0 ? roundNo : index + 1;
+  const postId = thread.post_id ?? thread.id ?? `thread-${index + 1}`;
+  const content = String(thread.content ?? thread.body ?? "");
+  const title = String(thread.title ?? (content.slice(0, 72) || `Discussion ${index + 1}`));
+  const authorName = String(thread.author_name ?? thread.actor_name ?? thread.author ?? "Agent");
+  const comments = flattenTopThreadComments(thread.comments, normalizedRound);
+  const activityRounds = Array.from(
+    new Set(
+      [normalizedRound, ...comments.map((comment) => comment.roundNo).filter((value) => Number.isFinite(value) && value > 0)],
+    ),
+  ).sort((left, right) => left - right);
+  return {
+    id: `thread-${String(postId)}`,
+    postId,
+    actorName: authorName,
+    actorSubtitle: String(thread.author_subtitle ?? thread.author ?? "Sampled persona"),
+    actorOccupation: String(thread.author_occupation ?? ""),
+    title,
+    content,
+    roundNo: normalizedRound,
+    activityRounds: activityRounds.length > 0 ? activityRounds : [normalizedRound],
+    likes: Number(thread.likes ?? thread.upvotes ?? 0),
+    dislikes: Number(thread.dislikes ?? thread.downvotes ?? 0),
+    comments,
+  };
+}
+
 type ActorTone = {
   avatarBg: string;
   avatarText: string;
@@ -401,6 +458,24 @@ export default function Simulation() {
   }, [feedThreads.length, setFeedThreads, simPosts]);
 
   useEffect(() => {
+    if (feedThreads.length > 0 || simPosts.length > 0) {
+      return;
+    }
+    const topThreads = simulationState?.top_threads;
+    if (!Array.isArray(topThreads) || topThreads.length === 0) {
+      return;
+    }
+    const hydratedThreads = topThreads
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+      .map((thread, index) => topThreadToFeedThread(thread, index));
+    if (hydratedThreads.length === 0) {
+      return;
+    }
+    setFeedThreads(hydratedThreads);
+    hydratedFeedRef.current = true;
+  }, [feedThreads.length, setFeedThreads, simPosts.length, simulationState?.top_threads]);
+
+  useEffect(() => {
     if (isLiveBootMode() || !sessionId) {
       return;
     }
@@ -715,6 +790,16 @@ export default function Simulation() {
     closeStream();
     const source = new EventSource(buildSimulationStreamUrl(activeSessionId));
     streamRef.current = source;
+    const handleStreamMessage = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload && typeof payload === "object") {
+          handleSimulationEvent(payload as Record<string, unknown>);
+        }
+      } catch {
+        // Ignore malformed replay frames instead of killing the live stream.
+      }
+    };
     const eventTypes = [
       "run_started",
       "checkpoint_started",
@@ -735,6 +820,8 @@ export default function Simulation() {
         handleSimulationEvent(JSON.parse(event.data));
       });
     });
+    source.addEventListener("event", handleStreamMessage as EventListener);
+    source.onmessage = handleStreamMessage;
     source.addEventListener("heartbeat", () => undefined);
     source.onerror = () => {
       source.close();
@@ -1448,16 +1535,36 @@ function mergeSimulationMetricsState(
   const normalized = normalizeMetricsPayload(payload);
   return {
     ...base,
+    session_id: String(payload.session_id ?? base.session_id ?? ""),
+    status: String(payload.status ?? base.status ?? "running"),
+    event_count: Number(payload.event_count ?? base.event_count ?? 0),
+    last_round: Number(payload.last_round ?? base.last_round ?? 0),
+    platform: typeof payload.platform === "string" ? payload.platform : base.platform,
+    planned_rounds: Number(payload.planned_rounds ?? base.planned_rounds ?? 0),
+    current_round: Number(payload.current_round ?? base.current_round ?? 0),
+    elapsed_seconds: Number(payload.elapsed_seconds ?? base.elapsed_seconds ?? 0),
+    estimated_total_seconds: Number(payload.estimated_total_seconds ?? base.estimated_total_seconds ?? 0),
+    estimated_remaining_seconds: Number(payload.estimated_remaining_seconds ?? base.estimated_remaining_seconds ?? 0),
     counters: {
       posts: Number(normalized.posts ?? base.counters.posts ?? 0),
       comments: Number(normalized.comments ?? base.counters.comments ?? 0),
       reactions: Number(normalized.reactions ?? base.counters.reactions ?? 0),
       active_authors: Number(normalized.active_authors ?? base.counters.active_authors ?? 0),
     },
+    checkpoint_status:
+      payload.checkpoint_status && typeof payload.checkpoint_status === "object"
+        ? (payload.checkpoint_status as SimulationState["checkpoint_status"])
+        : base.checkpoint_status,
+    top_threads: Array.isArray(payload.top_threads) ? (payload.top_threads as Array<Record<string, unknown>>) : base.top_threads,
+    discussion_momentum:
+      payload.discussion_momentum && typeof payload.discussion_momentum === "object"
+        ? (payload.discussion_momentum as Record<string, unknown>)
+        : base.discussion_momentum,
     latest_metrics: {
       ...(base.latest_metrics ?? {}),
       ...normalized,
     },
+    recent_events: Array.isArray(payload.recent_events) ? (payload.recent_events as Array<Record<string, unknown>>) : base.recent_events,
   };
 }
 
@@ -1467,7 +1574,7 @@ function normalizeMetricsPayload(payload: Record<string, unknown> | undefined): 
   }
 
   const normalized: Record<string, unknown> = {};
-  const rawMetrics = payload.metrics;
+  const rawMetrics = payload.metrics ?? payload.latest_metrics;
   const metricSource =
     rawMetrics && typeof rawMetrics === "object"
       ? (rawMetrics as Record<string, unknown>)

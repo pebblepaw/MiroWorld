@@ -140,7 +140,7 @@ describe("Hosted OnboardingModal", () => {
     expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
       country: "usa",
       provider: "google",
-      model: "gemini-2.5-flash-lite",
+      model: "gemini-2.5-flash",
       use_case: "product-market-research",
     });
   });
@@ -214,7 +214,7 @@ describe("Hosted OnboardingModal", () => {
     expect(createRequestBody).toMatchObject({
       country: "usa",
       provider: "google",
-      model: "gemini-2.5-flash-lite",
+      model: "gemini-2.5-flash",
       use_case: "public-policy-testing",
     });
   });
