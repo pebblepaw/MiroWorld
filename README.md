@@ -9,9 +9,7 @@
     <a href="https://pebblepaw.github.io/MiroWorld/"><img src="https://img.shields.io/badge/GitHub%20Pages-Demo-0a66c2?logo=github&logoColor=white" alt="GitHub Pages Demo" /></a>
     <a href="Poster.png"><img src="https://img.shields.io/badge/Poster-Img-red?logo=adobeacrobatreader&logoColor=white" alt="Poster Img" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a></p>
-
-
-
+    
 ## Overview
 
 MiroWorld is a next generation Population Simulation Engine. Powered by NVIDIA's demographically-grounded Nemotron-Persona datasets, simulate entire countries, starting with Singapore and the USA. 
@@ -20,7 +18,9 @@ Upload a policy proposal or business idea. Watch AI citizens post, argue, and re
 
 Export actionable reports, or chat directly with your harshest critics and biggest advocates.
 
-**The world’s biggest focus group. On demand.**
+> The world’s biggest focus group. On demand.
+
+## Demo Video
 
 <p align="center">
   <a href="https://youtu.be/hMA_ZYjBpuI">
