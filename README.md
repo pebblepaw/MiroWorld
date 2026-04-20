@@ -1,12 +1,16 @@
 <p align="center">
-  <img width="1600" height="454" alt="banner" src="https://github.com/user-attachments/assets/f3e99bcd-e931-4d60-b152-816b24e889c4" />
+  <img width="1600" alt="banner" src="https://github.com/user-attachments/assets/f3e99bcd-e931-4d60-b152-816b24e889c4" />
 </p>
 
 <!-- <h1 align="center">MiroWorld</h1> -->
 
-<p align="center"><a href="https://pebblepaw.github.io/MiroWorld/"><img src="https://img.shields.io/badge/GitHub%20Pages-Demo-0a66c2?logo=github&logoColor=white" alt="GitHub Pages Demo" /></a>
-  <a href="Poster.png"><img src="https://img.shields.io/badge/Poster-Img-red?logo=adobeacrobatreader&logoColor=white" alt="Poster Img" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a></p>
+  <p align="center">
+        <a href="https://youtu.be/hMA_ZYjBpuI"><img src="https://img.shields.io/badge/YouTube-Demo-FF0000?logo=youtube&logoColor=white" alt="YouTube Demo" /></a>
+    <a href="https://pebblepaw.github.io/MiroWorld/"><img src="https://img.shields.io/badge/GitHub%20Pages-Demo-0a66c2?logo=github&logoColor=white" alt="GitHub Pages Demo" /></a>
+    <a href="Poster.png"><img src="https://img.shields.io/badge/Poster-Img-red?logo=adobeacrobatreader&logoColor=white" alt="Poster Img" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a></p>
+
+
 
 ## Overview
 
@@ -16,7 +20,15 @@ Upload a policy proposal or business idea. Watch AI citizens post, argue, and re
 
 Export actionable reports, or chat directly with your harshest critics and biggest advocates.
 
-> The world’s biggest focus group. On demand.
+**The world’s biggest focus group. On demand.**
+
+<p align="center">
+  <a href="https://youtu.be/hMA_ZYjBpuI">
+    <img src="https://github.com/user-attachments/assets/13183951-942b-446a-9d34-408df341655c" width="1600"/>
+  </a>
+  <br/>
+  <b>Click to watch demo walkthrough</b>
+</p>
 
 ## Cached Demo 
 
