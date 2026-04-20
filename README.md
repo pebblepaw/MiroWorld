@@ -24,11 +24,29 @@ Export actionable reports, or chat directly with your harshest critics and bigge
 
 <p align="center">
   <a href="https://youtu.be/hMA_ZYjBpuI">
-    <img src="https://github.com/user-attachments/assets/13183951-942b-446a-9d34-408df341655c" width="1600"/>
+    <img src="https://github.com/user-attachments/assets/13183951-942b-446a-9d34-408df341655c" width="1200"/>
   </a>
   <br/>
-  <b>Click to watch demo walkthrough</b>
+  <a href="https://youtu.be/hMA_ZYjBpuI">
+     <b>Watch the full demo walkthrough</b>
+  </a>
 </p>
+
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/7c9e3b71-a325-4cea-93ec-2144a8d1ceb4" width="600"/>
+    </td>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/af9756c9-bac2-48e5-bd95-06988a127fa9" width="600"/>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <b>Sample Screens</b>
+    </td>
+  </tr>
+</table>
 
 ## Cached Demo 
 
