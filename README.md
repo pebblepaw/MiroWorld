@@ -20,6 +20,10 @@ Export actionable reports, or chat directly with your harshest critics and bigge
 
 > The world’s biggest focus group. On demand.
 
+### Quick Note for CS5224 Assessors
+
+This repository contains the primary open-sourced local version of the project. The hosted cloud deployment is maintained separately on the branch `hosted-supabase-zep-staging`, because it uses a different backend infrastructure stack (Supabase, ZepCloud, AWS), while preserving identical functionality. 
+
 ## Demo Video
 
 <p align="center">
